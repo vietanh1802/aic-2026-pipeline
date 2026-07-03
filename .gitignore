@@ -1,0 +1,48 @@
+# ===== Secrets / env =====
+.env
+.env.*
+!.env.example
+*.local
+
+# Google service account keys
+service-account*.json
+**/service-account*.json
+
+# ===== Python (backend) =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ===== Large data / model artifacts (provide out-of-band, too big for git) =====
+# FAISS indexes, the keyframe database, id->path maps and the ~294k keyframe images.
+backend/app/data/*
+!backend/app/data/README.md
+backend/app/static/images/
+
+# ===== Node (frontend, drive-video-proxy) =====
+node_modules/
+dist/
+dist-ssr/
+
+# ===== Logs =====
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== Editor / OS =====
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
