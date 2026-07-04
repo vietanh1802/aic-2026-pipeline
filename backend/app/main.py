@@ -1,4 +1,4 @@
-"""FastAPI backend for the AIC 2025 keyframe retrieval demo.
+"""FastAPI backend for the AIC 2026 keyframe retrieval demo.
 
 The keyframe "database" (``data/temp.json`` — one record per keyframe with its
 image path, transcript/content, OCR text, etc.) is loaded once at startup. The

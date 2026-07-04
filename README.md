@@ -1,6 +1,6 @@
-# Scavenger — Video Query Finder (AIC 2025)
+# Scavenger — Video Query Finder (AIC 2026)
 
-A text-to-video **keyframe retrieval** system built for the **AI Challenge (AIC) 2025**.
+A text-to-video **keyframe retrieval** system built for the **AI Challenge (AIC) 2026**.
 You describe a scene in natural language and the system finds the matching moments
 across a large video archive, then lets you jump straight to that point in the
 original video.
