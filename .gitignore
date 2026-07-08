@@ -35,6 +35,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ===== Local experiment notebooks (kept out of the repo) =====
+notebooks/K01_retrieval_demo.ipynb
+notebooks/K01_beit3_demo.ipynb
+
 # ===== Editor / OS =====
 .vscode/*
 !.vscode/extensions.json
