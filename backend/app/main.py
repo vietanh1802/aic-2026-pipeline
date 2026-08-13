@@ -6,7 +6,7 @@ Endpoints:
   POST /ensemble-search   Alg.3 — search → rerank từng model → ensemble
   POST /single-search     Một model duy nhất (beit3 hoặc clip) — phục vụ Q4
   POST /temporal-search   Alg.4 — cặp frame bắt đầu/kết thúc
-  GET  /status            Còn thiếu file gì, đang ở chế độ demo hay thật
+  GET  /status            Còn thiếu file gì
   GET  /health            Kiểm tra sống
 
 Đã BỎ toàn bộ endpoint cũ: /text-search, /text-no-agent-search, /faiss-search,
@@ -34,7 +34,6 @@ from app.preprocess import (
     temporal_search,
     system_status,
     MODEL_NAMES,
-    DEMO_MODE,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,12 +51,10 @@ class SearchResultEx(SearchResult):
     frame_idx: Optional[int]   = None
     timestamp: Optional[str]   = None
     routes:    Optional[dict]  = None
-    demo:      Optional[bool]  = None
 
 
 class SearchResponseEx(SearchResponse):
-    results:   List[SearchResultEx]
-    demo_mode: bool = False
+    results: List[SearchResultEx]
 
 
 class EnsembleSearchRequest(BaseModel):
@@ -116,7 +113,6 @@ class TemporalSearchResponse(BaseModel):
     end_url:         Optional[str] = None
     n_left:          Optional[int] = None
     n_right:         Optional[int] = None
-    demo:            Optional[bool] = None
     error:           Optional[str] = None
 
 
@@ -156,7 +152,6 @@ def _make_response(results: list[dict], query_type: str, t0: datetime) -> Search
         query_type=query_type,
         processing_time=(datetime.now() - t0).total_seconds(),
         max_distance=max((r["distance"] for r in results), default=0.0),
-        demo_mode=DEMO_MODE,
     )
 
 
@@ -230,14 +225,14 @@ async def temporal_search_endpoint(req: TemporalSearchRequest):
         raise HTTPException(500, f"Temporal search error: {e}")
 
 
-@app.get("/status", summary="Còn thiếu file gì, đang chạy demo hay thật")
+@app.get("/status", summary="Còn thiếu file gì")
 def status():
     return system_status()
 
 
 @app.get("/health")
 def health():
-    return {"ok": True, "demo_mode": DEMO_MODE}
+    return {"ok": True}
 
 
 @app.get("/")
@@ -249,7 +244,6 @@ def root():
         "pipeline": "search → rerank (per-model) → ensemble → temporal",
         "endpoints": ["/ensemble-search", "/single-search", "/temporal-search",
                       "/status", "/health", "/docs"],
-        "demo_mode": DEMO_MODE,
     }
 
 

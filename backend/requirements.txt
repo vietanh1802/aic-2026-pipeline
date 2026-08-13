@@ -1,29 +1,16 @@
-# ─── API ─────────────────────────────────────────────────────────────────────
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 python-dotenv==1.0.0
 
-# ─── Truy hồi ────────────────────────────────────────────────────────────────
 torch
 numpy
 faiss-cpu
 Pillow
 
-# CLIP ViT-bigG-14 (nhánh coarse-grained)
 open_clip_torch
 
-# BEiT3-Large (nhánh fine-grained).
-# timm phải là 0.4.12 — modeling_finetune.py của microsoft/unilm dùng API cũ,
-# timm mới đổi chữ ký create_model và sẽ vỡ. torchscale là backbone của BEiT3.
 timm==0.4.12
 torchscale==0.2.0
 transformers
-sentencepiece          # XLMRobertaTokenizer đọc beit3.spm
-
-# ─── Đã bỏ ───────────────────────────────────────────────────────────────────
-# sentence-transformers  chỉ dùng cho /faiss-search cũ (đã xoá)
-# pandas                 chỉ dùng gom nhóm theo video ở các endpoint cũ (đã xoá)
-# pymongo                không endpoint nào dùng
-# azure-ai-inference     chỉ app/agent.py dùng — file đó giờ mồ côi, không ai import
-# opencv-python          backend không xử lý ảnh, chỉ đọc index
+sentencepiece

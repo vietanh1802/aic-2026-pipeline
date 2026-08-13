@@ -19,8 +19,10 @@ function App() {
   const maxDistance = useSearchStore((state) => state.maxDistance);
   const totalTime = useSearchStore((state) => state.totalTime);
   const resultLimit = useQueryStore((state) => state.resultLimit);
-  const rank = useQueryStore((state) => state.rank);
-  const uniqueKeyword = useQueryStore((state) => state.uniqueKeyword);
+  const topM = useQueryStore((state) => state.topM);
+  const useRerank = useQueryStore((state) => state.useRerank);
+  const searchType = useQueryStore((state) => state.searchType);
+  const singleModel = useQueryStore((state) => state.singleModel);
   const [showPopup, setShowPopup] = useState<boolean>(false);
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [startTime, setStartTime] = useState<number>(0);
@@ -28,121 +30,42 @@ function App() {
 
   const [sortFrameBy, setSortFrameBy] = useState<SortType>("accuracy");
   const queryText = useQueryStore((state) => state.queryText);
-  const filter = useQueryStore((state) => state.filter);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [result, setResult] = useState<SearchResult | null>(null);
 
-  const doTextSearch = async () => {
+  // Alg.3 (ensemble) hoặc chạy 1 model đơn (Q4) — khớp đúng /ensemble-search
+  // và /single-search hiện có trong main.py. Không còn text-search/faiss-
+  // search/combined-search/ocr-search/filter-search — các endpoint đó đã bị
+  // xóa khỏi backend (xem docstring main.py).
+  const doSearch = async () => {
     setIsLoading(true);
     try {
-      const response = await videoSearchApi.searchByText(
-        queryText,
-        Number(resultLimit),
-        rank,
-        uniqueKeyword
-      );
+      const response =
+        searchType === "single"
+          ? await videoSearchApi.singleSearch(
+              queryText,
+              singleModel,
+              Number(resultLimit),
+              topM,
+              useRerank
+            )
+          : await videoSearchApi.ensembleSearch(
+              queryText,
+              Number(resultLimit),
+              topM,
+              useRerank
+            );
       console.log(response);
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  const doTextSearchNoAgent = async () => {
-    setIsLoading(true);
-    try {
-      const response = await videoSearchApi.searchByTextNoAgent(
-        queryText,
-        Number(resultLimit),
-        rank,
-        uniqueKeyword
-      );
-      console.log(response);
-      useSearchStore.getState().setTotalTime(response.processing_time);
-      useSearchStore.getState().setResults(response.results);
-      useSearchStore.getState().setMaxDistance(response.max_distance);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  const doOCRsearch = async () => {
-    setIsLoading(true);
-    try {
-      const response = await videoSearchApi.searchByOCR(
-        queryText,
-        Number(resultLimit),
-        rank,
-        uniqueKeyword
-      );
-      console.log(response);
-      useSearchStore.getState().setTotalTime(response.processing_time);
-      useSearchStore.getState().setResults(response.results);
-      useSearchStore.getState().setMaxDistance(response.max_distance);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  const doCombinedSearch = async () => {
-    setIsLoading(true);
-    try {
-      const response = await videoSearchApi.searchByCombined(
-        queryText,
-        Number(resultLimit),
-        rank,
-        uniqueKeyword
-      );
-      console.log(response);
-      useSearchStore.getState().setTotalTime(response.processing_time);
-      useSearchStore.getState().setResults(response.results);
-      useSearchStore.getState().setMaxDistance(response.max_distance);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  const doFaissSearch = async () => {
-    setIsLoading(true);
-    try {
-      const response = await videoSearchApi.searchByFaiss(
-        queryText,
-        Number(resultLimit),
-        rank,
-        uniqueKeyword
-      );
-      console.log(response);
-      useSearchStore.getState().setTotalTime(response.processing_time);
-      useSearchStore.getState().setResults(response.results);
-      useSearchStore.getState().setMaxDistance(response.max_distance);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const doFilter = async () => {
-    setIsLoading(true);
-    try {
-      const response = await videoSearchApi.filterSearch(
-        filter.object,
-        filter.action,
-        filter.color,
-        filter.ocr,
-        Number(resultLimit)
-      );
-      console.log(response);
-      useSearchStore.getState().setTotalTime(response.processing_time);
-      useSearchStore.getState().setResults(response.results);
-      useSearchStore.getState().setMaxDistance(response.max_distance);
+      if (response.demo_mode) {
+        console.warn(
+          "[demo_mode] Backend chưa có beit3.index/clip.index thật — " +
+            "kết quả là dữ liệu giả tất định theo query, chỉ để test UI."
+        );
+      }
     } catch (err) {
       console.error("Search failed:", err);
     } finally {
@@ -267,14 +190,7 @@ function App() {
 
       {/* Sticky Query Input */}
       <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-gray-300 shadow-xl rounded-xl z-40">
-        <QueryInput
-          doTextSearch={doTextSearch}
-          doTextSearchNoAgent={doTextSearchNoAgent}
-          doFaissSearch={doFaissSearch}
-          doCombinedSearch={doCombinedSearch}
-          doOCRsearch={doOCRsearch}
-          doFilter={doFilter}
-        />
+        <QueryInput doSearch={doSearch} />
       </div>
     </div>
   );

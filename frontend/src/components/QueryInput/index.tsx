@@ -3,115 +3,52 @@ import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import {
   useQueryStore,
-  // type QueryType,
   type SearchType,
   type TranslateLanguage,
 } from "../../store/queryStore";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "../ui/dialog";
+import type { ModelName } from "../../types/api";
 import { useState } from "react";
 
 interface QueryInputProps {
-  doTextSearch: () => void;
-  doFaissSearch: () => void;
-  doCombinedSearch: () => void;
-  doOCRsearch: () => void;
-  doFilter: () => void;
-  doTextSearchNoAgent: () => void;
+  doSearch: () => void;
 }
 
-export default function QueryInput({
-  doTextSearch,
-  doFaissSearch,
-  doCombinedSearch,
-  doOCRsearch,
-  doFilter,
-  doTextSearchNoAgent,
-}: QueryInputProps) {
-  // const queryType = useQueryStore((state) => state.queryType);
-  // const setQueryType = useQueryStore((state) => state.setQueryType);
+export default function QueryInput({ doSearch }: QueryInputProps) {
   const resultLimit = useQueryStore((state) => state.resultLimit);
   const setResultLimit = useQueryStore((state) => state.setResultLimit);
   const queryText = useQueryStore((state) => state.queryText);
   const setQueryText = useQueryStore((state) => state.setQueryText);
+
   const searchType = useQueryStore((state) => state.searchType);
   const setSearchType = useQueryStore((state) => state.setSearchType);
+  const singleModel = useQueryStore((state) => state.singleModel);
+  const setSingleModel = useQueryStore((state) => state.setSingleModel);
 
-  const rank = useQueryStore((state) => state.rank);
-  const setRank = useQueryStore((state) => state.setRank);
-
-  const filter = useQueryStore((state) => state.filter);
-  const setFilter = useQueryStore((state) => state.setFilter);
+  const topM = useQueryStore((state) => state.topM);
+  const setTopM = useQueryStore((state) => state.setTopM);
+  const useRerank = useQueryStore((state) => state.useRerank);
+  const setUseRerank = useQueryStore((state) => state.setUseRerank);
 
   const translateLang = useQueryStore((state) => state.translateLang);
   const setTranslateLang = useQueryStore((state) => state.setTranslateLang);
   const queryTranslated = useQueryStore((state) => state.queryTranslated);
-  const setQueryTranslated = useQueryStore((state) => state.setQueryTranslated);
-
-  const uniqueKeyword = useQueryStore((state) => state.uniqueKeyword);
-  const setUniqueKeyword = useQueryStore((state) => state.setUniqueKeyword);
+  const setQueryTranslated = useQueryStore(
+    (state) => state.setQueryTranslated
+  );
   const [isTranslated, setisTranslated] = useState<boolean>(false);
-
-  // const queryTypeOptions: DropdownOption[] = [
-  //   {
-  //     id: 1,
-  //     label: "Text",
-  //     value: "text",
-  //     leadingIcon: <img src="/text.svg" />,
-  //   },
-  //   {
-  //     id: 2,
-  //     label: "Frame",
-  //     value: "frame",
-  //     leadingIcon: <img src="/video.svg" />,
-  //   },
-  //   {
-  //     id: 3,
-  //     label: "Audio",
-  //     value: "audio",
-  //     leadingIcon: <img src="/audio.svg" />,
-  //   },
-  // ];
-
-  const searchFunction = async () => {
-    if (searchType == "text-search") {
-      doTextSearch();
-    } else if (searchType == "faiss-search") {
-      doFaissSearch();
-    } else if (searchType == "combined-search") {
-      doCombinedSearch();
-    } else if (searchType == "ocr-search") {
-      doOCRsearch();
-    } else {
-      doTextSearchNoAgent();
-    }
-  };
 
   const handleTranslate = async () => {
     if (!queryText) return;
-
-    // Determine target language based on your translateLang state
     const targetLang = translateLang === "vi-en" ? "en" : "vi";
-
     const res = await fetch(
       `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(
         queryText
       )}`
     );
-
     const data = await res.json();
     const translated = data[0];
-
-    // Extract text from the nested array structure
     const texts = translated.map((item: string[]) => item[0]);
     const queryTranslated = texts.join("");
-
     setQueryTranslated(queryTranslated);
     setisTranslated(true);
   };
@@ -121,35 +58,31 @@ export default function QueryInput({
     { id: 1, label: "50", value: "50" },
     { id: 2, label: "100", value: "100" },
     { id: 3, label: "500", value: "500" },
-    { id: 4, label: "1000", value: "1000" },
-    { id: 5, label: "5000", value: "5000" },
-    { id: 6, label: "10000", value: "10000" },
   ];
-  const rankOptions: DropdownOption[] = [
-    { id: 0, label: "1", value: "1" },
-    { id: 1, label: "2", value: "2" },
-    { id: 2, label: "3", value: "3" },
-    { id: 3, label: "4", value: "4" },
-    { id: 4, label: "5", value: "5" },
-    { id: 5, label: "6", value: "6" },
-    { id: 6, label: "7", value: "7" },
-    { id: 7, label: "10", value: "10" },
-    { id: 8, label: "15", value: "15" },
-    { id: 9, label: "20", value: "20" },
-    { id: 10, label: "25", value: "25" },
-    { id: 11, label: "30", value: "30" },
+
+  const topMOptions: DropdownOption[] = [
+    { id: 0, label: "20", value: "20" },
+    { id: 1, label: "50", value: "50" }, // paper dùng M=50
+    { id: 2, label: "100", value: "100" },
+    { id: 3, label: "200", value: "200" },
   ];
+
   const transLangOptions: DropdownOption[] = [
     { id: 0, label: "vi-en", value: "vi-en" as TranslateLanguage },
     { id: 1, label: "en-vi", value: "en-vi" as TranslateLanguage },
   ];
 
+  // Khớp đúng /ensemble-search (Alg.3 đầy đủ) và /single-search (Q4: so
+  // model đơn với ensemble). Đã bỏ Text/No-Agent/Faiss/Combined/OCR Search —
+  // các endpoint tương ứng không còn tồn tại ở backend.
   const searchOptions: DropdownOption[] = [
-    { id: 0, label: "Text Search", value: "text-search" as SearchType },
-    { id: 1, label: "No Agent Search", value: "no-agent" as SearchType },
-    { id: 2, label: "Faiss Search", value: "faiss-search" as SearchType },
-    { id: 3, label: "Combined Search", value: "combined-search" as SearchType },
-    { id: 4, label: "OCR Search", value: "ocr-search" as SearchType },
+    { id: 0, label: "Ensemble (BEiT3+CLIP)", value: "ensemble" as SearchType },
+    { id: 1, label: "Single Model", value: "single" as SearchType },
+  ];
+
+  const modelOptions: DropdownOption[] = [
+    { id: 0, label: "BEiT3", value: "beit3" as ModelName },
+    { id: 1, label: "CLIP", value: "clip" as ModelName },
   ];
 
   return (
@@ -175,8 +108,8 @@ export default function QueryInput({
         />
       </div>
 
-      <div className="w-full flex flex-row justify-between">
-        <div className="flex flex-row gap-x-4 items-center font-baloo">
+      <div className="w-full flex flex-row justify-between flex-wrap gap-y-3">
+        <div className="flex flex-row gap-x-4 items-center font-baloo flex-wrap gap-y-2">
           <div className="items-center">
             <p className="font-bold">Show Top:</p>
             <Dropdown
@@ -187,26 +120,42 @@ export default function QueryInput({
               dropDirection="up"
             />
           </div>
+
           <div className="items-center">
-            <p className="font-bold">Rank</p>
+            <p className="font-bold">Top-M mỗi model</p>
             <Dropdown
-              options={rankOptions}
-              value={String(rank)}
-              onChange={(opt) => setRank(opt.value)}
-              dropDownWidth={80}
+              options={topMOptions}
+              value={String(topM)}
+              onChange={(opt) => setTopM(Number(opt.value))}
+              dropDownWidth={90}
               dropDirection="up"
             />
           </div>
 
-          <div className="">
-            <p className="font-bold">Unique Keywords</p>
-            <input
-              type="text"
-              value={uniqueKeyword} // bind state value
-              onChange={(e) => setUniqueKeyword(e.target.value)} // update state
-              className="border p-2 rounded"
-            />
+          <div className="flex flex-col items-start">
+            <p className="font-bold">Rerank (Alg.2)</p>
+            <label className="flex items-center gap-x-1 cursor-pointer p-2">
+              <input
+                type="checkbox"
+                checked={useRerank}
+                onChange={(e) => setUseRerank(e.target.checked)}
+              />
+              <span className="text-sm">bật</span>
+            </label>
           </div>
+
+          {searchType === "single" && (
+            <div className="items-center">
+              <p className="font-bold">Model</p>
+              <Dropdown
+                options={modelOptions}
+                value={singleModel}
+                onChange={(opt) => setSingleModel(opt.value as ModelName)}
+                dropDownWidth={100}
+                dropDirection="up"
+              />
+            </div>
+          )}
         </div>
         <div className="flex flex-row items-center gap-x-3">
           <div>
@@ -251,91 +200,7 @@ export default function QueryInput({
           className="p-3 w-full rounded-[4px] bg-[#F8F8F8] border-2 border-[#E3E3E3]"
           placeholder="Enter your query"
         />
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button
-              leadingIcon={<img src="/filter.svg" />}
-              className="bg-red-400 hover:bg-red-600 p-2 transition-all duration-300"
-            >
-              Filter
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="font-baloo text-2xl bg-white">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">Filter Search</DialogTitle>
-              <DialogDescription>
-                Refine your search by specifying objects, actions, and colors.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="flex flex-col gap-4 mt-4 text-xl">
-              {/* Objects */}
-              <div>
-                <label className="block font-medium text-gray-700">
-                  Objects
-                </label>
-                <input
-                  type="text"
-                  value={filter.object}
-                  onChange={(e) => setFilter({ object: e.target.value })}
-                  placeholder="e.g., car, tree, person"
-                  className="mt-1 block w-full rounded-md border border-gray-300 p-2"
-                />
-              </div>
-
-              {/* Actions */}
-              <div>
-                <label className="block font-medium text-gray-700">
-                  Actions
-                </label>
-                <input
-                  type="text"
-                  value={filter.action}
-                  onChange={(e) => setFilter({ action: e.target.value })}
-                  placeholder="e.g., running, eating"
-                  className="mt-1 block w-full rounded-md border border-gray-300 p-2"
-                />
-              </div>
-
-              {/* Colors */}
-              <div>
-                <label className="block font-medium text-gray-700">Color</label>
-                <input
-                  type="text"
-                  value={filter.color}
-                  onChange={(e) => setFilter({ color: e.target.value })}
-                  placeholder="e.g., red, blue"
-                  className="mt-1 block w-full rounded-md border border-gray-300 p-2"
-                />
-              </div>
-
-              {/* OCR */}
-              <div>
-                <label className="block font-medium text-gray-700">OCR</label>
-                <input
-                  type="text"
-                  value={filter.ocr}
-                  onChange={(e) => setFilter({ ocr: e.target.value })}
-                  placeholder="e.g., "
-                  className="mt-1 block w-full rounded-md border border-gray-300 p-2"
-                />
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <Button
-                onClick={async () => {
-                  doFilter();
-                }}
-                className="bg-blue-500 hover:bg-blue-600"
-              >
-                Filters Search
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        <Button onClick={searchFunction}>Search</Button>
+        <Button onClick={doSearch}>Search</Button>
       </div>
     </div>
   );

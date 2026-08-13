@@ -26,11 +26,11 @@ Model — verify từ paper gốc:
   Fine-grained   (ref [51]): BEiT3-Large, beit3_large_patch16_384_coco_retrieval.pth
   Coarse-grained (ref [41]): OpenCLIP ViT-bigG-14 (laion2b_s39b_b160k)
 
-CHẾ ĐỘ DEMO: khi chưa có file index/metadata, module tự sinh dữ liệu giả để
-frontend chạy được. Xem phần DEMO_MODE ở cuối file.
+Nếu chưa có file index/metadata, các hàm search trả về danh sách rỗng — không
+sinh dữ liệu giả. Xem GET /status (system_status()) để biết còn thiếu file gì.
 """
 
-import os, json, sys, zlib, subprocess as _sp
+import os, json, sys, subprocess as _sp
 from typing import Optional
 
 import numpy as np
@@ -62,8 +62,17 @@ META_PATH      = os.path.join(INDEX_DIR, "keyframe_metadata.json")
 # Mapping json sinh từ notebook có URL tuyệt đối localhost:8000 nhúng cứng.
 # Ta chỉ lấy TÊN FILE rồi ghép lại theo biến này → đổi chỗ lưu ảnh (Backblaze,
 # CDN) chỉ cần đổi env, KHÔNG phải index lại 873 video.
+#
+# FIX: trỏ về /static (root) thay vì /static/images vì ảnh nằm trong các thư
+# mục con AIC2026_frames_p5_0XX/ — _image_url() dùng _name2relpath để giữ đủ
+# cấu trúc thư mục con đó.
 IMAGE_BASE_URL = os.environ.get("AIC_IMAGE_BASE_URL",
-                                "http://localhost:8000/static/images")
+                                "http://localhost:8000/static")
+
+# Marker dùng để trích relative path từ URL mapping (e.g.
+# "http://localhost:8000/static/AIC2026_frames_p5_016/file.jpg"
+# → "AIC2026_frames_p5_016/file.jpg")
+_STATIC_MARKER = "/static/"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -94,10 +103,58 @@ _name2meta:   dict[str, dict] = {}
 _clipid2meta: dict[int, dict] = {}
 _video_frames: dict[str, list[dict]] = {}   # video → keyframe sắp theo frame_idx
 
+# Bảng tra: basename → relative path dưới /static/
+# Dùng để tái hiện URL đầy đủ (kể cả thư mục con) từ mapping gốc của notebook.
+# Ví dụ: "file.jpg" → "AIC2026_frames_p5_016/file.jpg"
+_name2relpath: dict[str, str] = {}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Loaders
 # ─────────────────────────────────────────────────────────────────────────────
+class _Beit3Tokenizer:
+    """Port trực tiếp thuật toán XLMRobertaTokenizer (transformers 4.0.1,
+    Apache 2.0 License — https://huggingface.co/transformers/v4.0.1/_modules/
+    transformers/models/xlm_roberta/tokenization_xlm_roberta.html) bằng
+    sentencepiece thuần, KHÔNG qua transformers.XLMRobertaTokenizer.
+
+    Lý do: transformers mới nhất đổi API constructor (vocab_file → vocab),
+    còn các bản cũ đủ để giữ API cũ thì kéo theo tokenizers không có wheel
+    Windows Python 3.12 (cần Rust compiler để build từ source). Port thẳng
+    logic đã verify, tự chủ hoàn toàn, không phụ thuộc version transformers.
+
+    Interface giống hệt XLMRobertaTokenizer(text, return_tensors="pt")
+    ["input_ids"] — encode_text_beit3() KHÔNG cần đổi gì cả.
+    """
+
+    def __init__(self, spm_path: str):
+        import sentencepiece as spm
+        self.sp = spm.SentencePieceProcessor()
+        self.sp.Load(spm_path)
+        # fairseq special tokens: <s>=0 <pad>=1 </s>=2 <unk>=3 — verify từ
+        # chính source 4.0.1: "self.fairseq_tokens_to_ids = {'<s>': 0,
+        # '<pad>': 1, '</s>': 2, '<unk>': 3}", "self.fairseq_offset = 1"
+        self.bos_id, self.pad_id, self.eos_id, self.unk_id = 0, 1, 2, 3
+        self.fairseq_offset = 1
+
+    def _convert_token_to_id(self, token: str) -> int:
+        """Verify từ 4.0.1: 'spm_id = self.sp_model.PieceToId(token);
+        return spm_id + self.fairseq_offset if spm_id else self.unk_token_id'"""
+        spm_id = self.sp.PieceToId(token)
+        return spm_id + self.fairseq_offset if spm_id else self.unk_id
+
+    def __call__(self, text: str, return_tensors: str = "pt") -> dict:
+        """Verify từ 4.0.1 build_inputs_with_special_tokens (single sequence):
+        '[self.cls_token_id] + token_ids_0 + [self.sep_token_id]'
+        cls_token_id = bos_id = 0, sep_token_id = eos_id = 2."""
+        pieces = self.sp.EncodeAsPieces(text)
+        ids = [self._convert_token_to_id(p) for p in pieces]
+        input_ids = [self.bos_id] + ids + [self.eos_id]
+        if return_tensors == "pt":
+            import torch
+            return {"input_ids": torch.tensor([input_ids], dtype=torch.long)}
+        return {"input_ids": [input_ids]}
+
 
 def _load_beit3():
     """Nạp BEiT3-Large retrieval (ref [51], nhánh fine-grained).
@@ -148,7 +205,6 @@ def _load_beit3():
 
     from timm.models import create_model
     import modeling_finetune  # noqa: F401 — kích hoạt @register_model
-    from transformers import XLMRobertaTokenizer
 
     print(f"[preprocess] Loading {BEIT3_MODEL_NAME}...")
     model = create_model(BEIT3_MODEL_NAME, pretrained=False)
@@ -159,7 +215,7 @@ def _load_beit3():
     model.eval().to(DEVICE)
 
     _beit3_model     = model
-    _beit3_tokenizer = XLMRobertaTokenizer(spm_path)
+    _beit3_tokenizer = _Beit3Tokenizer(spm_path)
     print(f"[preprocess] BEiT3-Large loaded on {DEVICE} "
           f"(missing={len(missing)}, unexpected={len(unexpected)})")
 
@@ -176,6 +232,30 @@ def _load_clip():
         print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE}")
 
 
+def _build_relpath_from_map(mapping: dict) -> None:
+    """Trích relative path dưới /static/ từ URL gốc trong mapping và lưu vào
+    _name2relpath.  Cần chạy mỗi khi nạp mapping để _image_url() trả đúng
+    URL kể cả khi ảnh nằm trong thư mục con (AIC2026_frames_p5_0XX/).
+
+    Ví dụ URL gốc (notebook sinh ra):
+      "http://localhost:8000/static/AIC2026_frames_p5_016/file.jpg"
+    → rel_path = "AIC2026_frames_p5_016/file.jpg"
+    → _name2relpath["file.jpg"] = "AIC2026_frames_p5_016/file.jpg"
+
+    setdefault: nếu cùng tên file xuất hiện ở cả 2 mapping (beit3 + clip),
+    giữ entry đầu tiên — chúng phải trỏ cùng file nên không quan trọng thứ tự.
+    """
+    for url in mapping.values():
+        if not url:
+            continue
+        fname = os.path.basename(url)
+        if not fname:
+            continue
+        idx = url.find(_STATIC_MARKER)
+        rel = url[idx + len(_STATIC_MARKER):] if idx >= 0 else fname
+        _name2relpath.setdefault(fname, rel)
+
+
 def _load_indexes():
     global _beit3_index, _clip_index, _beit3_map, _clip_map
     if _beit3_index is None and os.path.exists(BEIT3_IDX_PATH):
@@ -183,12 +263,14 @@ def _load_indexes():
         if os.path.exists(BEIT3_MAP_PATH):
             with open(BEIT3_MAP_PATH, encoding="utf-8") as f:
                 _beit3_map = json.load(f)
+            _build_relpath_from_map(_beit3_map)
         print(f"[preprocess] BEiT3 FAISS: {_beit3_index.ntotal} vectors")
     if _clip_index is None and os.path.exists(CLIP_IDX_PATH):
         _clip_index = faiss.read_index(CLIP_IDX_PATH)
         if os.path.exists(CLIP_MAP_PATH):
             with open(CLIP_MAP_PATH, encoding="utf-8") as f:
                 _clip_map = json.load(f)
+            _build_relpath_from_map(_clip_map)
         print(f"[preprocess] CLIP FAISS: {_clip_index.ntotal} vectors")
 
 
@@ -222,7 +304,19 @@ def _model_parts(model_name: str):
 
 
 def _image_url(name: str) -> str:
-    return f"{IMAGE_BASE_URL.rstrip('/')}/{name}"
+    """Tạo URL phục vụ ảnh.
+
+    Tra _name2relpath để lấy lại đường dẫn đầy đủ dưới /static/ (kể cả thư
+    mục con).  Nếu không có trong bảng tra (ảnh không qua mapping), dùng name
+    trực tiếp — fallback an toàn.
+
+    Ví dụ:
+      name     = "L21_V015-0042-003729.jpg"
+      rel_path = "AIC2026_frames_p5_016/L21_V015-0042-003729.jpg"
+      URL      = "http://localhost:8000/static/AIC2026_frames_p5_016/L21_V015-0042-003729.jpg"
+    """
+    rel = _name2relpath.get(name, name)
+    return f"{IMAGE_BASE_URL.rstrip('/')}/{rel}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -462,12 +556,11 @@ def ensemble_search(query: str, top_k: int = 100, top_m: int = 50,
 
     models=None dùng mọi model có index. Truyền ["beit3"] hoặc ["clip"] để chạy
     một model duy nhất — phục vụ Q4 (so model đơn với ensemble).
+
+    Nếu chưa có index nào, per_model rỗng → trả về [] (không sinh dữ liệu giả).
     """
     _load_indexes()
     _load_meta()
-
-    if DEMO_MODE:
-        return _demo_results(query, top_k, models)
 
     per_model: dict[str, list[dict]] = {}
     for name in (models or list(MODEL_NAMES)):
@@ -507,9 +600,6 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     """Trả cặp (frame bắt đầu, frame kết thúc) quanh keyframe neo."""
     _load_indexes()
     _load_meta()
-
-    if DEMO_MODE:
-        return _demo_temporal(query_start, anchor_name)
 
     index, _, encode_fn, id_field = _model_parts(model_name)
     if index is None or not _meta:
@@ -593,86 +683,11 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  CHẾ ĐỘ DEMO — chạy frontend khi chưa có index
-#
-#  Bật khi:  AIC_DEMO=1  HOẶC  không tìm thấy file index nào.
-#  Sinh dữ liệu giả TẤT ĐỊNH theo truy vấn (cùng query → cùng kết quả), để
-#  frontend test phân trang / sắp xếp / chọn frame mà không cần 1.29GB model.
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _indexes_exist() -> bool:
-    return os.path.exists(BEIT3_IDX_PATH) or os.path.exists(CLIP_IDX_PATH)
-
-
-DEMO_MODE = (os.environ.get("AIC_DEMO", "").strip() in ("1", "true", "True")
-             or not _indexes_exist())
-
-_DEMO_VIDEOS = [f"L{g:02d}_V{v:03d}" for g in range(21, 31) for v in (1, 15, 42)]
-
-
-def _demo_rng(seed_text: str):
-    import random
-    return random.Random(zlib.crc32(seed_text.encode("utf-8")))
-
-
-def _demo_results(query: str, top_k: int, models: Optional[list[str]]) -> list[dict]:
-    rng   = _demo_rng(query)
-    names = models or list(MODEL_NAMES)
-    out   = []
-    for i in range(min(top_k, 100)):
-        video = rng.choice(_DEMO_VIDEOS)
-        shot  = rng.randint(1, 300)
-        fidx  = rng.randint(100, 39000)
-        name  = f"{video}-{shot:04d}-{fidx:06d}.jpg"
-        secs  = fidx / 25.0
-        routes = {n: {"rank": rng.randint(1, 50),
-                      "score": round(rng.uniform(0.15, 0.45), 4)}
-                  for n in names if rng.random() > 0.3}
-        out.append({
-            "frame":     name,
-            "name":      name,
-            "url":       _image_url(name),
-            "distance":  round(95.0 - i * 0.7 + rng.random(), 2),
-            "video":     video,
-            "frame_idx": fidx,
-            "timestamp": f"{int(secs // 60):02d}:{int(secs % 60):02d}",
-            "routes":    routes or {names[0]: {"rank": i + 1, "score": 0.3}},
-            "demo":      True,
-        })
-    return out
-
-
-def _demo_temporal(query_start: str, anchor_name: str) -> dict:
-    rng   = _demo_rng(anchor_name + query_start)
-    video = anchor_name.split("-")[0]
-    fi1   = rng.randint(100, 30000)
-    fi2   = fi1 + rng.randint(30, 400)
-    n1    = f"{video}-0001-{fi1:06d}.jpg"
-    n2    = f"{video}-0001-{fi2:06d}.jpg"
-    return {
-        "video":           video,
-        "start_frame":     n1,
-        "end_frame":       n2,
-        "start_ts":        f"{fi1 // 25 // 60:02d}:{fi1 // 25 % 60:02d}",
-        "end_ts":          f"{fi2 // 25 // 60:02d}:{fi2 // 25 % 60:02d}",
-        "start_frame_idx": fi1,
-        "end_frame_idx":   fi2,
-        "combined_score":  round(rng.uniform(40, 90), 2),
-        "start_url":       _image_url(n1),
-        "end_url":         _image_url(n2),
-        "n_left":          rng.randint(1, 20),
-        "n_right":         rng.randint(1, 20),
-        "demo":            True,
-    }
-
-
 def system_status() -> dict:
     """Tình trạng từng thành phần — dùng cho /status, để biết còn thiếu gì."""
     _load_indexes()
     _load_meta()
     return {
-        "demo_mode":       DEMO_MODE,
         "device":          DEVICE,
         "index_dir":       INDEX_DIR,
         "image_base_url":  IMAGE_BASE_URL,
@@ -688,8 +703,9 @@ def system_status() -> dict:
             "beit3": _beit3_index.ntotal if _beit3_index is not None else 0,
             "clip":  _clip_index.ntotal  if _clip_index  is not None else 0,
         },
-        "keyframes": len(_meta),
-        "videos":    len(_video_frames),
+        "keyframes":   len(_meta),
+        "videos":      len(_video_frames),
+        "relpath_map": len(_name2relpath),
         "models": {
             "fine_grained":   f"BEiT3-Large coco_retrieval 1024-dim "
                               f"({'loaded' if _beit3_model else 'lazy'})",
