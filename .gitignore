@@ -8,6 +8,12 @@
 service-account*.json
 **/service-account*.json
 
+# Deployment credentials: Drive service account, TLS keys, SSH keys.
+# `.env.deploy` is already covered by the `.env.*` rule above.
+secrets/
+*.pem
+!**/node_modules/**/*.pem
+
 # ===== Python (backend) =====
 __pycache__/
 *.py[cod]
@@ -38,6 +44,12 @@ pnpm-debug.log*
 # ===== Local experiment notebooks (kept out of the repo) =====
 notebooks/K01_retrieval_demo.ipynb
 notebooks/K01_beit3_demo.ipynb
+
+# ===== Mockups, brainstorm sessions, scratch files =====
+# .superpowers/ holds hi-fi mockups plus preview-server state (pid, tokens).
+# .tmp/ holds partially downloaded ZIPs (*.part) and pytest caches.
+.superpowers/
+.tmp/
 
 # ===== Editor / OS =====
 .vscode/*

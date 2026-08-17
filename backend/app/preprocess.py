@@ -74,6 +74,9 @@ IMAGE_BASE_URL = os.environ.get("AIC_IMAGE_BASE_URL",
 # → "AIC2026_frames_p5_016/file.jpg")
 _STATIC_MARKER = "/static/"
 
+# Thư mục ảnh trên đĩa — để biết keyframe đã có file jpg chưa (xem _has_image).
+IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "images"))
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ─── Model config ────────────────────────────────────────────────────────────
@@ -88,6 +91,14 @@ CLIP_PRETRAINED  = "laion2b_s39b_b160k"
 ENSEMBLE_WEIGHTS = {"beit3": 0.5, "clip": 0.5}
 
 MODEL_NAMES = ("beit3", "clip")
+
+# Model chạy khi caller không chỉ định. AIC_MODELS=beit3 để chạy một nhánh khi
+# chưa tải weights CLIP ViT-bigG-14 (~10GB). Lọc theo MODEL_NAMES để tên gõ sai
+# không lọt vào.
+ACTIVE_MODELS = tuple(
+    n for n in (m.strip() for m in os.environ.get("AIC_MODELS", "").split(","))
+    if n in MODEL_NAMES
+) or MODEL_NAMES
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Lazy globals — chỉ nạp khi có request đầu tiên, để server khởi động nhanh
@@ -319,6 +330,20 @@ def _image_url(name: str) -> str:
     return f"{IMAGE_BASE_URL.rstrip('/')}/{rel}"
 
 
+def _has_image(name: str) -> bool:
+    """Keyframe này đã có file jpg trên đĩa chưa.
+
+    Index phủ đủ 868,524 frame nhưng ảnh tải riêng theo ZIP hàng chục GB, nên
+    phần lớn kết quả trỏ tới ảnh chưa có — UI cần biết để vẽ placeholder.
+    Stat từng file (≤500 lần/query) thay vì cache danh sách, để đúng cả khi ZIP
+    đang được giải nén lúc server chạy.
+    """
+    # rel tính từ gốc /static/ (vd "images/x.jpg"), còn IMAGES_DIR = <static>/images.
+    rel = _name2relpath.get(name, name)
+    static_root = os.path.dirname(IMAGES_DIR)
+    return os.path.exists(os.path.join(static_root, rel.replace("/", os.sep)))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Text encoding
 # ─────────────────────────────────────────────────────────────────────────────
@@ -541,6 +566,7 @@ def _merge_ensemble(per_model: dict[str, list[dict]], top_k: int) -> list[dict]:
             "frame_idx": ref.get("frame_idx"),
             "timestamp": ref.get("timestamp", ""),
             "routes":    detail[key]["routes"],
+            "has_image": _has_image(key),
         })
     return results
 
@@ -563,7 +589,7 @@ def ensemble_search(query: str, top_k: int = 100, top_m: int = 50,
     _load_meta()
 
     per_model: dict[str, list[dict]] = {}
-    for name in (models or list(MODEL_NAMES)):
+    for name in (models or list(ACTIVE_MODELS)):
         if name not in MODEL_NAMES:
             continue
         hits = _search_one(name, query, top_m)
@@ -687,11 +713,21 @@ def system_status() -> dict:
     """Tình trạng từng thành phần — dùng cho /status, để biết còn thiếu gì."""
     _load_indexes()
     _load_meta()
+    # Số ảnh thật trên đĩa — cho biết vì sao nhiều kết quả có has_image=false.
+    try:
+        n_images = sum(1 for _ in os.scandir(IMAGES_DIR)
+                       if _.is_file() and _.name.lower().endswith(".jpg"))
+    except OSError:
+        n_images = 0
+
     return {
         "device":          DEVICE,
         "index_dir":       INDEX_DIR,
+        "images_dir":      IMAGES_DIR,
         "image_base_url":  IMAGE_BASE_URL,
         "pipeline_order":  "search → rerank (per-model) → ensemble",
+        "active_models":   list(ACTIVE_MODELS),
+        "images_on_disk":  n_images,
         "files": {
             "beit3.index":            os.path.exists(BEIT3_IDX_PATH),
             "clip.index":             os.path.exists(CLIP_IDX_PATH),

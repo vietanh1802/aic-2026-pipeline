@@ -91,7 +91,9 @@ function calculateSimilarityScore(
   return { percentage, backgroundColor };
 }
 
-// Extract timestamp from frame filename
+// Chỉ dùng làm dự phòng: regex coi số cuối tên file là milliseconds, nhưng số
+// đó là frame index — "K19_V001-0000-29.jpg" ra "00:00.29" thay vì 00:00:00.966
+// (frame 29 @30fps). Ưu tiên trường `timestamp` của backend, xem frameTimestamp().
 export function extractTimestamp(filename: string): string {
   const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
   const timestampMatch = nameWithoutExt.match(/-(\d+)$/);
@@ -149,15 +151,32 @@ export function extractTimestamp(filename: string): string {
 //   );
 // }
 
+// Timestamp từ backend, parse tên file chỉ khi backend không trả trường này.
+function frameTimestamp(result: SearchResult): string {
+  return result.timestamp || extractTimestamp(result.frame);
+}
+
+// Keyframe chưa tải ảnh: vẫn hiện ranking/tên/timestamp thay vì <img> vỡ.
+function MissingFrame({ name }: { name: string }) {
+  return (
+    <div className="w-full h-full min-h-[96px] rounded-[4px] bg-gray-200 border-2 border-dashed border-gray-400 flex flex-col items-center justify-center text-center px-2">
+      <span className="text-gray-500 text-xs font-semibold">
+        Chưa tải ảnh
+      </span>
+      <span className="text-gray-400 text-[10px] break-all leading-tight mt-0.5">
+        {name}
+      </span>
+    </div>
+  );
+}
+
 export default function FrameDisplay({
   results,
   maxDistance,
   isLoading,
   onClick,
 }: FrameDisplayProps2) {
-  const timestamp = results.map((result) => {
-    return extractTimestamp(result.frame);
-  });
+  const timestamp = results.map(frameTimestamp);
   const minDistance = Math.min(...results.map((r) => r.distance));
   const sub = results.map((result) => {
     return calculateSimilarityScore(result.distance, maxDistance, minDistance);
@@ -175,11 +194,28 @@ export default function FrameDisplay({
               >
                 <div className="font-bold">{result.name}</div>
                 <div className="relative w-full h-full ">
-                  <img
-                    src={result.url}
-                    alt={`Frame at ${timestamp[index]}`}
-                    className="w-full h-full rounded-[4px]"
-                  />
+                  {result.has_image === false ? (
+                    <MissingFrame name={result.name} />
+                  ) : (
+                    <img
+                      src={result.url}
+                      alt={`Frame at ${timestamp[index]}`}
+                      className="w-full h-full rounded-[4px]"
+                      // Dự phòng khi backend không trả has_image, hoặc ảnh biến
+                      // mất sau lúc search.
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                        e.currentTarget.nextElementSibling?.classList.remove(
+                          "hidden"
+                        );
+                      }}
+                    />
+                  )}
+                  {result.has_image !== false && (
+                    <div className="hidden absolute inset-0">
+                      <MissingFrame name={result.name} />
+                    </div>
+                  )}
                   <div className="absolute bottom-0 right-0 mr-1 mb-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">
                     <img
                       src="/search.svg"

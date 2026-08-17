@@ -46,11 +46,15 @@ class SearchResultEx(SearchResult):
 
     `routes` cho biết mỗi model xếp ảnh này ở hạng mấy — dòng nào cả hai model
     cùng thấy thì đáng tin hơn hẳn. UI nên tô màu theo số model có mặt.
+
+    `has_image` = ảnh đã tải về chưa. Index phủ đủ 868,524 frame nhưng ảnh tải
+    riêng theo ZIP hàng chục GB, nên UI cần cờ này để vẽ placeholder.
     """
     video:     Optional[str]   = None
     frame_idx: Optional[int]   = None
     timestamp: Optional[str]   = None
     routes:    Optional[dict]  = None
+    has_image: Optional[bool]  = None
 
 
 class SearchResponseEx(SearchResponse):

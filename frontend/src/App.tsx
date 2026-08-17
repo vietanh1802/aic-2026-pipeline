@@ -60,10 +60,15 @@ function App() {
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
-      if (response.demo_mode) {
+      // Backend không còn demo_mode (đã bỏ chế độ sinh dữ liệu giả); thay bằng
+      // has_image để biết bộ ảnh trên máy đã phủ hết kết quả chưa.
+      const missing = response.results.filter(
+        (r) => r.has_image === false
+      ).length;
+      if (missing > 0) {
         console.warn(
-          "[demo_mode] Backend chưa có beit3.index/clip.index thật — " +
-            "kết quả là dữ liệu giả tất định theo query, chỉ để test UI."
+          `[frames] ${missing}/${response.results.length} kết quả chưa có ảnh ` +
+            `trên đĩa → hiển thị placeholder. Tải thêm ZIP frame để đầy đủ.`
         );
       }
     } catch (err) {

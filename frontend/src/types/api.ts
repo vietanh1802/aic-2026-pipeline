@@ -32,6 +32,9 @@ export interface SearchResult {
   // routes: model nào tìm ra frame này, xếp hạng bao nhiêu trong model đó.
   // Dòng nào có mặt cả "beit3" lẫn "clip" đáng tin hơn dòng chỉ có 1 model.
   routes?: Record<string, RouteInfo>;
+  // Ảnh đã tải về chưa. Index phủ đủ 868k frame nhưng ảnh tải riêng theo ZIP,
+  // nên false là bình thường → FrameDisplay vẽ placeholder.
+  has_image?: boolean;
   demo?: boolean;
 }
 
