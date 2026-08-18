@@ -1,0 +1,93 @@
+name: aic2026
+
+services:
+  caddy:
+    build:
+      context: .
+      target: caddy
+    image: aic2026-caddy:local
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    depends_on:
+      - api
+      - drive-proxy
+    environment:
+      AIC_API_HOSTNAME: ${AIC_API_HOSTNAME:-aic-api.umaga.fun}
+      AIC_TLS_SNIPPET: ${AIC_TLS_SNIPPET:-tls_cloudflare}
+    ports:
+      - "${AIC_LOCAL_HTTP_PORT:-8080}:8080"
+      - "${AIC_PUBLIC_HTTP_PORT:-80}:80"
+      - "${AIC_PUBLIC_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  api:
+    build:
+      context: .
+      target: api
+    image: aic2026-api:local
+    restart: unless-stopped
+    environment:
+      AIC_INDEX_DIR: /opt/aic/indexes
+      AIC_IMAGES_DIR: /opt/aic/static/images
+      AIC_IMAGE_BASE_URL: ${AIC_IMAGE_BASE_URL:-https://aic-frames.umaga.fun}
+      AIC_CORS_ORIGINS: ${AIC_CORS_ORIGINS:-https://aic.umaga.fun}
+      AIC_MODELS: ${AIC_MODELS:-}
+      AIC_WARMUP: ${AIC_WARMUP:-1}
+      HF_HOME: /opt/aic/model-cache/huggingface
+      TORCH_HOME: /opt/aic/model-cache/torch
+      XDG_CACHE_HOME: /opt/aic/model-cache/xdg
+    expose:
+      - "8000"
+    volumes:
+      - "${AIC_HOST_INDEX_DIR:-/opt/aic/indexes}:/opt/aic/indexes:ro"
+      - "${AIC_HOST_IMAGES_DIR:-/opt/aic/static/images}:/opt/aic/static/images:ro"
+      - "${AIC_HOST_MODEL_CACHE_DIR:-/opt/aic/model-cache}:/opt/aic/model-cache"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  drive-proxy:
+    build:
+      context: .
+      target: drive-proxy
+    image: aic2026-drive-proxy:local
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    environment:
+      PORT: 5000
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-AIzaSyAWUVtVvwOTA52orDVhTU9b9xrBwx7pWH0}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    expose:
+      - "5000"
+    volumes:
+      - ./secrets:/run/secrets/aic:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  caddy_data:
+  caddy_config:

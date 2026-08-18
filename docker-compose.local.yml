@@ -1,0 +1,17 @@
+services:
+  caddy:
+    environment:
+      AIC_API_HOSTNAME: :8080
+      AIC_TLS_SNIPPET: no_tls
+    ports: !override
+      - "${AIC_LOCAL_HTTP_PORT:-18080}:8080"
+      - "${AIC_PUBLIC_HTTP_PORT:-18081}:80"
+      - "${AIC_PUBLIC_HTTPS_PORT:-18443}:443"
+
+  api:
+    environment:
+      AIC_WARMUP: ${AIC_WARMUP:-0}
+    volumes:
+      - "${AIC_HOST_INDEX_DIR:-./backend/app/indexes}:/opt/aic/indexes:ro"
+      - "${AIC_HOST_IMAGES_DIR:-./backend/app/static/images}:/opt/aic/static/images:ro"
+      - "${AIC_HOST_MODEL_CACHE_DIR:-./.tmp/model-cache}:/opt/aic/model-cache"

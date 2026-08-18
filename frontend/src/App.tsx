@@ -12,7 +12,61 @@ import { useQueryStore } from "./store/queryStore";
 import VideoPopup from "./components/VideoPopUp";
 import { videoSearchApi } from "./types/api";
 import { formatResultByVideoID } from "./helpers/formatResult.helper";
-import type { SearchResult } from "./types/api";
+import type { HealthResponse, SearchResult } from "./types/api";
+import KeyframeFPS from "./mapping/fps_map.json";
+
+type BackendHealth = {
+  status: "checking" | "starting" | "ready" | "offline" | "failed";
+  message: string;
+  detail?: string;
+};
+type VideoId = keyof typeof KeyframeFPS;
+
+function videoIdFromFrame(frame: string): string {
+  return frame.match(/^([LK]\d{2}_V\d{3})/)?.[1] ?? "";
+}
+
+function frameIdFromName(name: string): string {
+  const baseName = name.replace(/\.[^/.]+$/, "");
+  return baseName.split("-").slice(1).join("-");
+}
+
+function frameIndexFromResult(result: SearchResult): number {
+  if (typeof result.frame_idx === "number") {
+    return result.frame_idx;
+  }
+  return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
+}
+
+function startMsFromResult(result: SearchResult): number {
+  const videoId = videoIdFromFrame(result.frame) as VideoId;
+  const fps = KeyframeFPS[videoId] as number | undefined;
+  if (!fps) {
+    return 0;
+  }
+  return (frameIndexFromResult(result) / fps) * 1000;
+}
+
+function describeBackendHealth(health: HealthResponse): BackendHealth {
+  if (!health.ok) {
+    return { status: "offline", message: "API offline" };
+  }
+  if (health.warmup.state === "failed") {
+    return {
+      status: "failed",
+      message: "API warm-up failed",
+      detail: health.warmup.error ?? undefined,
+    };
+  }
+  if (health.warmup.state !== "ready") {
+    return {
+      status: "starting",
+      message: "API starting",
+      detail: "Loading indexes and models",
+    };
+  }
+  return { status: "ready", message: "API ready" };
+}
 
 function App() {
   const results = useSearchStore((state) => state.results);
@@ -33,12 +87,60 @@ function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [result, setResult] = useState<SearchResult | null>(null);
+  const [backendHealth, setBackendHealth] = useState<BackendHealth>({
+    status: "checking",
+    message: "Checking API",
+  });
+  const isSearchDisabled = backendHealth.status !== "ready";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const pollHealth = async () => {
+      try {
+        const health = await videoSearchApi.getHealth();
+        if (!cancelled) {
+          setBackendHealth(describeBackendHealth(health));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBackendHealth({
+            status: "offline",
+            message: "API offline",
+            detail: err instanceof Error ? err.message : "Health check failed",
+          });
+        }
+      }
+    };
+
+    void pollHealth();
+    const interval = window.setInterval(() => {
+      void pollHealth();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const healthClassName = {
+    checking: "border-gray-300 bg-white text-gray-700",
+    starting: "border-amber-300 bg-amber-50 text-amber-800",
+    ready: "border-emerald-300 bg-emerald-50 text-emerald-800",
+    offline: "border-red-300 bg-red-50 text-red-800",
+    failed: "border-red-300 bg-red-50 text-red-800",
+  }[backendHealth.status];
 
   // Alg.3 (ensemble) hoặc chạy 1 model đơn (Q4) — khớp đúng /ensemble-search
   // và /single-search hiện có trong main.py. Không còn text-search/faiss-
   // search/combined-search/ocr-search/filter-search — các endpoint đó đã bị
   // xóa khỏi backend (xem docstring main.py).
   const doSearch = async () => {
+    if (isSearchDisabled) {
+      console.warn(`[health] Search blocked: ${backendHealth.message}`);
+      return;
+    }
     setIsLoading(true);
     try {
       const response =
@@ -90,9 +192,10 @@ function App() {
   >({});
   useEffect(() => {
     if (sortFrameBy == "video_id" && results) {
-      setgroupedResult(formatResultByVideoID(results));
-      console.log(groupedResult);
-      console.log(Object.keys(groupedResult).length);
+      const grouped = formatResultByVideoID(results);
+      setgroupedResult(grouped);
+      console.log(grouped);
+      console.log(Object.keys(grouped).length);
     }
   }, [sortFrameBy, results]);
 
@@ -111,6 +214,15 @@ function App() {
             />
           </div>
         )}
+        <div
+          className={`absolute top-0 right-0 z-999 max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}
+          title={backendHealth.detail}
+        >
+          <span>{backendHealth.message}</span>
+          {backendHealth.detail && (
+            <span className="ml-2 font-normal">{backendHealth.detail}</span>
+          )}
+        </div>
       </div>
 
       {/* Project Description (only when no results) */}
@@ -121,12 +233,10 @@ function App() {
       )}
       {showPopup && result !== null && (
         <VideoPopup
-          src={`/${videoUrl}.mp4`}
           videoId={videoUrl}
           frameId={frameId}
           startAt={startTime}
           onClose={() => setShowPopup(false)}
-          result={result}
           setStartAt={setStartTime}
         />
       )}
@@ -138,16 +248,9 @@ function App() {
             maxDistance={maxDistance}
             isLoading={isLoading}
             onClick={(result) => {
-              const msMatch = result.frame.match(/-(\d+)\.jpg$/);
-              const ms = msMatch ? parseInt(msMatch[1]) : 0;
-              const baseName = result.name.replace(/\.[^/.]+$/, "");
-              const frameId = baseName.split("-").slice(1).join("-");
-
-              const videoIdMatch = result.frame.match(/^([LK]\d{2}_V\d{3})/);
-              const videoId = videoIdMatch ? videoIdMatch[1] : "";
-              setframeId(frameId);
-              setVideoUrl(videoId);
-              setStartTime(ms);
+              setframeId(frameIdFromName(result.name));
+              setVideoUrl(videoIdFromFrame(result.frame));
+              setStartTime(startMsFromResult(result));
               setShowPopup(true);
               setResult(result);
             }}
@@ -172,17 +275,9 @@ function App() {
                   maxDistance={maxDistance}
                   isLoading={isLoading}
                   onClick={(result) => {
-                    const msMatch = result.frame.match(/-(\d+)\.jpg$/);
-                    const ms = msMatch ? parseInt(msMatch[1]) : 0;
-                    const baseName = result.name.replace(/\.[^/.]+$/, "");
-                    const frameId = baseName.split("-").slice(1).join("-");
-
-                    const videoIdMatch =
-                      result.frame.match(/^([LK]\d{2}_V\d{3})/);
-                    const videoId = videoIdMatch ? videoIdMatch[1] : "";
-                    setframeId(frameId);
-                    setVideoUrl(videoId);
-                    setStartTime(ms);
+                    setframeId(frameIdFromName(result.name));
+                    setVideoUrl(videoIdFromFrame(result.frame));
+                    setStartTime(startMsFromResult(result));
                     setShowPopup(true);
                     setResult(result);
                   }}
@@ -195,7 +290,10 @@ function App() {
 
       {/* Sticky Query Input */}
       <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-gray-300 shadow-xl rounded-xl z-40">
-        <QueryInput doSearch={doSearch} />
+        <QueryInput
+          doSearch={doSearch}
+          disabled={isSearchDisabled || isLoading}
+        />
       </div>
     </div>
   );

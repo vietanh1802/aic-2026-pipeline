@@ -84,9 +84,17 @@ export interface SystemStatus {
   ensemble_weights: Record<string, number>;
 }
 
+export type WarmupState = "cold" | "warming" | "ready" | "failed";
+
+export interface WarmupStatus {
+  state: WarmupState;
+  seconds: number | null;
+  error: string | null;
+}
+
 export interface HealthResponse {
   ok: boolean;
-  demo_mode: boolean;
+  warmup: WarmupStatus;
 }
 
 export interface ApiError {

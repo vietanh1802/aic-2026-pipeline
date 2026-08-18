@@ -8,7 +8,6 @@ import {
 } from "../../store/submitStore";
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
-import { CSVLink } from "react-csv";
 import { getValues } from "../../helpers/getValues.helper";
 import { gapi } from "gapi-script";
 // ====== GOOGLE API CONFIG ======
@@ -24,9 +23,37 @@ const DISCOVERY_DOCS = [
 const FOLDER_ID = "1iBejYQg8sWKeFmu5gCuUIUIjus2aTUE9";
 // =================================
 
+type GoogleTokenResponse = {
+  access_token?: string;
+  error?: string;
+};
+
+type GoogleTokenClient = {
+  requestAccessToken: () => void;
+};
+
+type GoogleIdentity = {
+  accounts: {
+    oauth2: {
+      initTokenClient: (config: {
+        client_id: string;
+        scope: string;
+        callback: (response: GoogleTokenResponse) => void;
+      }) => GoogleTokenClient;
+    };
+  };
+};
+
+type WindowWithGoogleIdentity = Window & {
+  google?: GoogleIdentity;
+};
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : JSON.stringify(err);
+}
+
 interface SubmitFormData {
   videoId: string;
-  frameIdx: string;
   duration: number;
   startAt: number;
   setStartAt: (val: number) => void;
@@ -35,7 +62,6 @@ interface SubmitFormData {
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
   videoId,
-  frameIdx,
   duration,
   startAt,
   setStartAt,
@@ -43,17 +69,14 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
-  const [spreadsheetId, setSpreadsheetId] = useState<string | null>(null);
+  const [, setSpreadsheetId] = useState<string | null>(null);
 
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
-  const setSubmissionFileName = useSubmitStore(
-    (state) => state.setSubmissionFileName
-  );
 
   const submitType = useSubmitStore((state) => state.submitType);
   const setSubmitType = useSubmitStore((state) => state.setSubmitType);
 
-  const { task1, task2, task3, addTask1, addTask2, addTask3, clearAll } =
+  const { task1, task2, task3, addTask1, addTask2, addTask3 } =
     useSubmitTasks();
 
   const submitTypeOptions: DropdownOption[] = [
@@ -93,18 +116,17 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   // Hàm login bằng GIS -> trả access_token
   const getAccessToken = (): Promise<string> => {
     return new Promise((resolve, reject) => {
-      if (!(window as any).google) {
+      const google = (window as WindowWithGoogleIdentity).google;
+      if (!google) {
         reject("Google script chưa load");
         return;
       }
 
-      const tokenClient = (
-        window as any
-      ).google.accounts.oauth2.initTokenClient({
+      const tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
-        callback: (response: any) => {
-          if (response.error) {
+        callback: (response) => {
+          if (response.error || !response.access_token) {
             reject(response);
           } else {
             gapi.client.setToken({ access_token: response.access_token });
@@ -122,7 +144,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     try {
       await getAccessToken(); // login + set token cho gapi
 
-      let rows: any[] = [];
+      let rows: string[][] = [];
       let sheetTitle = submissionFileName || "";
 
       switch (submitType) {
@@ -149,7 +171,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           return;
       }
 
-      if (rows.length <= 1) {
+      if (rows.length < 1) {
         alert("Chưa có dữ liệu cho " + submitType);
         return;
       }
@@ -180,9 +202,9 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
       console.log("📝 Data appended");
 
       alert(`✅ Created new sheet trong folder ${FOLDER_ID}, ID: ${id}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("❌ Error creating sheet:", err);
-      alert("Failed: " + (err.message || JSON.stringify(err)));
+      alert("Failed: " + errorMessage(err));
     }
   };
 

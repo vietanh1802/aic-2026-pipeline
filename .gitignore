@@ -67,3 +67,19 @@ Thumbs.db
 backend/app/static/
 backend/app/indexes/
 backend/app/unilm_beit3/
+# ===== Deployment working files =====
+# Tracked on purpose: `deploy/p6/*.sh` (called by .github/workflows/deploy.yml and
+# power.yml) and `deploy/caddy/Caddyfile` (mounted by docker-compose.yml).
+# Everything else under deploy/ is a local log or a one-off phase script.
+deploy/PROGRESS.md
+deploy/HANDOFF.md
+deploy/check.sh
+deploy/p2/
+deploy/p4/
+deploy/p5/
+deploy/p7/
+docs/superpowers/specs/2026-08-17-aws-deploy-design.md
+
+# Organizer sample pack and Playwright run output: local only.
+sample-data/
+test-results/

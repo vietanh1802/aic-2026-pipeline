@@ -32,10 +32,28 @@ sinh dữ liệu giả. Xem GET /status (system_status()) để biết còn thi�
 
 import os, json, sys, subprocess as _sp
 from typing import Optional
+from urllib.parse import urlparse
 
 import numpy as np
 import faiss
 import torch
+
+# keyframe_metadata.json is 437 MB; json.load takes ~60s and blocks the process.
+# orjson parses the same file in ~15s. Optional: without it we fall back to the
+# stdlib and only startup gets slower.
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None
+
+
+def _read_json(path: str):
+    """Read JSON, preferring orjson. Returns exactly what json.load returns."""
+    if _orjson is not None:
+        with open(path, "rb") as f:
+            return _orjson.loads(f.read())
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Paths — khớp cấu trúc Drive AIC2026/ đã chốt
@@ -59,23 +77,31 @@ BEIT3_MAP_PATH = os.path.join(INDEX_DIR, "beit3_mapping.json")
 CLIP_MAP_PATH  = os.path.join(INDEX_DIR, "clip_mapping.json")
 META_PATH      = os.path.join(INDEX_DIR, "keyframe_metadata.json")
 
-# Mapping json sinh từ notebook có URL tuyệt đối localhost:8000 nhúng cứng.
-# Ta chỉ lấy TÊN FILE rồi ghép lại theo biến này → đổi chỗ lưu ảnh (Backblaze,
-# CDN) chỉ cần đổi env, KHÔNG phải index lại 873 video.
+# The notebook-generated mappings embed absolute localhost:8000 URLs. We keep
+# only the path below /static/ and re-join it against this variable, so moving
+# the images to S3 or a CDN is an env change rather than a re-index.
 #
-# FIX: trỏ về /static (root) thay vì /static/images vì ảnh nằm trong các thư
-# mục con AIC2026_frames_p5_0XX/ — _image_url() dùng _name2relpath để giữ đủ
-# cấu trúc thư mục con đó.
+# This points at /static, not /static/images, because the relative path taken
+# from the mapping already starts with "images/". Both mappings were checked
+# (868,524 + 105,817 entries): a single "images" prefix, flat, no subdirectories.
+# The S3 keys therefore mirror it as "images/<file>.jpg" and _image_url() needs
+# no change when serving from a CDN.
 IMAGE_BASE_URL = os.environ.get("AIC_IMAGE_BASE_URL",
                                 "http://localhost:8000/static")
 
-# Marker dùng để trích relative path từ URL mapping (e.g.
-# "http://localhost:8000/static/AIC2026_frames_p5_016/file.jpg"
-# → "AIC2026_frames_p5_016/file.jpg")
+# Marker used to cut the relative path out of a mapping URL, e.g.
+# "http://localhost:8000/static/images/K19_V001-0000-29.jpg"
+# -> "images/K19_V001-0000-29.jpg"
 _STATIC_MARKER = "/static/"
 
-# Thư mục ảnh trên đĩa — để biết keyframe đã có file jpg chưa (xem _has_image).
+# On-disk image directory, used by _has_image to tell whether a frame is present.
 IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "images"))
+
+# Are images served by this process, or by an external store (S3 behind a CDN)?
+# Derived from the host in IMAGE_BASE_URL: once it points outward we can no
+# longer stat the files.
+_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
+IMAGES_REMOTE = (urlparse(IMAGE_BASE_URL).hostname or "").lower() not in _LOCAL_HOSTS
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -272,15 +298,13 @@ def _load_indexes():
     if _beit3_index is None and os.path.exists(BEIT3_IDX_PATH):
         _beit3_index = faiss.read_index(BEIT3_IDX_PATH)
         if os.path.exists(BEIT3_MAP_PATH):
-            with open(BEIT3_MAP_PATH, encoding="utf-8") as f:
-                _beit3_map = json.load(f)
+            _beit3_map = _read_json(BEIT3_MAP_PATH)
             _build_relpath_from_map(_beit3_map)
         print(f"[preprocess] BEiT3 FAISS: {_beit3_index.ntotal} vectors")
     if _clip_index is None and os.path.exists(CLIP_IDX_PATH):
         _clip_index = faiss.read_index(CLIP_IDX_PATH)
         if os.path.exists(CLIP_MAP_PATH):
-            with open(CLIP_MAP_PATH, encoding="utf-8") as f:
-                _clip_map = json.load(f)
+            _clip_map = _read_json(CLIP_MAP_PATH)
             _build_relpath_from_map(_clip_map)
         print(f"[preprocess] CLIP FAISS: {_clip_index.ntotal} vectors")
 
@@ -290,8 +314,7 @@ def _load_meta():
     global _meta, _meta_loaded, _name2meta, _clipid2meta, _video_frames
     if _meta_loaded or not os.path.exists(META_PATH):
         return
-    with open(META_PATH, encoding="utf-8") as f:
-        _meta = json.load(f)
+    _meta = _read_json(META_PATH)
     _meta_loaded = True
 
     _name2meta   = {m["name"]: m for m in _meta}
@@ -321,23 +344,32 @@ def _image_url(name: str) -> str:
     mục con).  Nếu không có trong bảng tra (ảnh không qua mapping), dùng name
     trực tiếp — fallback an toàn.
 
-    Ví dụ:
-      name     = "L21_V015-0042-003729.jpg"
-      rel_path = "AIC2026_frames_p5_016/L21_V015-0042-003729.jpg"
-      URL      = "http://localhost:8000/static/AIC2026_frames_p5_016/L21_V015-0042-003729.jpg"
+    Example:
+      name      = "K19_V001-0000-29.jpg"
+      rel_path  = "images/K19_V001-0000-29.jpg"
+      local URL = "http://localhost:8000/static/images/K19_V001-0000-29.jpg"
+      S3 URL    = "https://aic-frames.umaga.fun/images/K19_V001-0000-29.jpg"
     """
     rel = _name2relpath.get(name, name)
     return f"{IMAGE_BASE_URL.rstrip('/')}/{rel}"
 
 
 def _has_image(name: str) -> bool:
-    """Keyframe này đã có file jpg trên đĩa chưa.
+    """Whether this result has an image the UI can display.
 
-    Index phủ đủ 868,524 frame nhưng ảnh tải riêng theo ZIP hàng chục GB, nên
-    phần lớn kết quả trỏ tới ảnh chưa có — UI cần biết để vẽ placeholder.
-    Stat từng file (≤500 lần/query) thay vì cache danh sách, để đúng cả khi ZIP
-    đang được giải nén lúc server chạy.
+    Served locally, we stat each file: the index covers all 868,524 frames but
+    the images arrive separately as tens of gigabytes of ZIPs, so most results
+    point at a file that is not there yet and the UI needs to know. We stat
+    rather than cache a listing so the answer stays correct while a ZIP is being
+    extracted underneath a running server.
+
+    Served remotely, stat is impossible and unnecessary: FrameDisplay already
+    falls back to a placeholder on image error. Carrying an 868k-name manifest
+    here just to predict what the browser discovers on its own is not worth it,
+    least of all for the few hours the seed job is running.
     """
+    if IMAGES_REMOTE:
+        return True
     # rel tính từ gốc /static/ (vd "images/x.jpg"), còn IMAGES_DIR = <static>/images.
     rel = _name2relpath.get(name, name)
     static_root = os.path.dirname(IMAGES_DIR)
@@ -709,22 +741,48 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     }
 
 
+def preload() -> None:
+    """Load indexes, metadata and the models named in ACTIVE_MODELS up front.
+
+    All of this is otherwise lazy-loaded on the first request: roughly 16 GB of
+    disk reads plus JSON parsing, several minutes in total. On a machine that is
+    stopped and started daily, that cost lands on whichever user searches first,
+    with no feedback. Calling this from the lifespan hook moves the wait off the
+    request path.
+
+    Idempotent: every _load_* helper already checks whether it has run.
+    """
+    _load_indexes()
+    _load_meta()
+    for name in ACTIVE_MODELS:
+        if name == "beit3":
+            _load_beit3()
+        elif name == "clip":
+            _load_clip()
+
+
 def system_status() -> dict:
     """Tình trạng từng thành phần — dùng cho /status, để biết còn thiếu gì."""
     _load_indexes()
     _load_meta()
-    # Số ảnh thật trên đĩa — cho biết vì sao nhiều kết quả có has_image=false.
-    try:
-        n_images = sum(1 for _ in os.scandir(IMAGES_DIR)
-                       if _.is_file() and _.name.lower().endswith(".jpg"))
-    except OSError:
-        n_images = 0
+    # How many images are actually on disk, which explains has_image=false runs.
+    # Meaningless once images live in an external store, so skip the scan.
+    if IMAGES_REMOTE:
+        n_images = None
+    else:
+        try:
+            n_images = sum(1 for _ in os.scandir(IMAGES_DIR)
+                           if _.is_file() and _.name.lower().endswith(".jpg"))
+        except OSError:
+            n_images = 0
 
     return {
         "device":          DEVICE,
         "index_dir":       INDEX_DIR,
         "images_dir":      IMAGES_DIR,
         "image_base_url":  IMAGE_BASE_URL,
+        "images_remote":   IMAGES_REMOTE,
+        "json_parser":     "orjson" if _orjson is not None else "json",
         "pipeline_order":  "search → rerank (per-model) → ensemble",
         "active_models":   list(ACTIVE_MODELS),
         "images_on_disk":  n_images,

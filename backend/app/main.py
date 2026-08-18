@@ -19,6 +19,9 @@ nửa dưới của sơ đồ online, sẽ thêm sau khi chốt Q5/Q6.
 """
 
 import os
+import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
@@ -33,6 +36,7 @@ from app.preprocess import (
     single_model_search,
     temporal_search,
     system_status,
+    preload,
     MODEL_NAMES,
 )
 
@@ -130,18 +134,71 @@ IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "
 # Tạo trước, nếu không StaticFiles ném lỗi ngay lúc khởi động khi thư mục chưa có.
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Warm-up
+#
+#  Indexes, metadata and models add up to roughly 16 GB of disk reads. They are
+#  otherwise lazy-loaded on the first request, so on a machine that is stopped
+#  and started daily the first user of the day waits minutes with no feedback.
+#
+#  This runs on a background thread rather than inline in the lifespan hook so
+#  uvicorn binds its port and answers /health immediately, letting the UI show
+#  that the machine is up and warming. A request arriving early still works:
+#  the search functions call the same idempotent loaders and simply wait.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_warm: dict = {"state": "cold", "seconds": None, "error": None}
+
+
+def _run_warmup() -> None:
+    t0 = time.monotonic()
+    _warm["state"] = "warming"
+    try:
+        preload()
+        _warm["state"] = "ready"
+    except Exception as exc:                  # noqa: BLE001 — surfaced on /health
+        _warm["state"] = "failed"
+        _warm["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        _warm["seconds"] = round(time.monotonic() - t0, 1)
+        print(f"[warmup] {_warm['state']} after {_warm['seconds']}s"
+              + (f" — {_warm['error']}" if _warm["error"] else ""))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if os.environ.get("AIC_WARMUP", "1") != "0":
+        threading.Thread(target=_run_warmup, name="warmup", daemon=True).start()
+    else:
+        _warm["state"] = "ready"
+        _warm["seconds"] = 0.0
+        print("[warmup] skipped (AIC_WARMUP=0)")
+    yield
+
+
 app = FastAPI(
     title="AI Challenge HCM 2026 – Video Moment Retrieval API",
     description="arXiv 2504.08384 · search → rerank (per-model) → ensemble → temporal",
     version="3.0.0",
+    lifespan=lifespan,
 )
 
 app.mount("/static/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
+# The frontend is served from a different origin than the API, so CORS is
+# required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is
+# convenient locally; production pins it to the frontend origin.
+#
+# allow_credentials=False: auth uses a Bearer token in the header, not cookies.
+# Credentials combined with allow_origins=["*"] is a pairing browsers reject.
+_cors_origins = [o.strip() for o in os.environ.get("AIC_CORS_ORIGINS", "").split(",")
+                 if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins or ["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -231,12 +288,19 @@ async def temporal_search_endpoint(req: TemporalSearchRequest):
 
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
-    return system_status()
+    return {**system_status(), "warmup": _warm}
 
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    """Liveness, plus how far along the warm-up is.
+
+    `ok` flips as soon as the process is running, which is what infrastructure
+    health checks want. `warmup.state` (cold -> warming -> ready | failed) tells
+    the UI whether to show a starting-up notice or accept queries. This is the
+    cost of running the machine on demand, and it is what the frontend polls.
+    """
+    return {"ok": True, "warmup": _warm}
 
 
 @app.get("/")

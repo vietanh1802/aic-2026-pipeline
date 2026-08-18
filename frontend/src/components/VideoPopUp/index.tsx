@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
-import type { SearchResult } from "../../types/api";
 import VideoDrive from "./VideoDisplay";
 import { getFileIdByVideoId } from "../../helpers/getFileIdByVideoId.helper";
 import { useSubmitStore, useSubmitTasks } from "../../store/submitStore";
@@ -12,23 +11,34 @@ import KeyframeFPS from "../../mapping/fps_map.json";
 import { extractTimestamp } from "../FrameDisplay";
 
 interface VideoPopupProps {
-  src: string;
   videoId: string;
   frameId: string;
   startAt: number; // in milliseconds
   onClose: () => void;
-  result: SearchResult;
   setStartAt: (val: number) => void;
 }
 type VideoId = keyof typeof KeyframeFPS;
+type MatchingKeyframe = {
+  smaller: string;
+  larger: string;
+};
+
+function getMatchingKeyframe(
+  videoId: string,
+  frameNum: number
+): MatchingKeyframe {
+  const match = findMatchingKeyframes(videoId, frameNum, KeyframeDB);
+  return {
+    smaller: match.smaller ?? "",
+    larger: match.larger ?? "",
+  };
+}
 
 export default function VideoPopup({
-  src,
   videoId,
   frameId,
   startAt,
   onClose,
-  result,
   setStartAt,
 }: VideoPopupProps) {
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
@@ -39,19 +49,18 @@ export default function VideoPopup({
 
   const [frameIdx, setFrameIdx] = useState<string>("");
 
-  const [duration, setDuration] = useState<number>(1);
+  // 0 = metadata not loaded yet. Previously this was 1 and the form below was
+  // gated on `duration !== 1`, which silently tied the submission form to the
+  // Drive metadata request being the only caller of onDuration.
+  const [duration, setDuration] = useState<number>(0);
   const frame_detect = KeyframeFPS[videoId as VideoId] as number;
 
   const computed = Number(parseInt(frameIdx) * frame_detect);
 
-  const [matching_keyframe, setMatching_keyframe] = useState<{
-    smaller?: string | undefined;
-    larger?: string | undefined;
-  }>(findMatchingKeyframes(videoId, computed, KeyframeDB));
-  useEffect(() => {
-    setMatching_keyframe(findMatchingKeyframes(videoId, computed, KeyframeDB));
-    console.log("matching_keyFrame", matching_keyframe);
-  }, [computed, matching_keyframe, videoId]);
+  const matching_keyframe = useMemo(
+    () => getMatchingKeyframe(videoId, Number.isFinite(computed) ? computed : 0),
+    [computed, videoId]
+  );
   const fileId = getFileIdByVideoId(videoId);
 
   const driveWatchUrl = `https://drive.google.com/file/d/${fileId}/view?t=${Math.floor(
@@ -103,6 +112,7 @@ export default function VideoPopup({
         </button>
         <div className="flex justify-center items-center">
           <VideoDrive
+            videoId={videoId}
             fileId={fileId}
             onDuration={(s) => setDuration(s)}
             onFrameIdx={(frameIdx) => setFrameIdx(frameIdx)}
@@ -113,11 +123,10 @@ export default function VideoPopup({
           />
         </div>
 
-        {duration !== 1 && (
+        {duration > 0 && (
           <div className="mt-[10px]">
             <SubmitForm
               videoId={videoId}
-              frameIdx={frameIdx}
               duration={duration}
               startAt={startAt / 1000}
               setStartAt={setStartAt}

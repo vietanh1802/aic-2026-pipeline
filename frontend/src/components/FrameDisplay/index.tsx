@@ -53,9 +53,7 @@ type FrameDisplayProps2 = {
 // }
 
 function calculateSimilarityScore(
-  distance: number,
-  maxDistance: number,
-  minDistance: number
+  distance: number
 ): {
   percentage: number;
   backgroundColor: string;
@@ -172,14 +170,12 @@ function MissingFrame({ name }: { name: string }) {
 
 export default function FrameDisplay({
   results,
-  maxDistance,
   isLoading,
   onClick,
 }: FrameDisplayProps2) {
   const timestamp = results.map(frameTimestamp);
-  const minDistance = Math.min(...results.map((r) => r.distance));
   const sub = results.map((result) => {
-    return calculateSimilarityScore(result.distance, maxDistance, minDistance);
+    return calculateSimilarityScore(result.distance);
   });
 
   return (
@@ -193,14 +189,15 @@ export default function FrameDisplay({
                 style={{ backgroundColor: sub[index].backgroundColor }}
               >
                 <div className="font-bold">{result.name}</div>
-                <div className="relative w-full h-full ">
+                <div className="relative w-full aspect-[3/2]">
                   {result.has_image === false ? (
                     <MissingFrame name={result.name} />
                   ) : (
                     <img
                       src={result.url}
                       alt={`Frame at ${timestamp[index]}`}
-                      className="w-full h-full rounded-[4px]"
+                      loading="lazy"
+                      className="w-full h-full rounded-[4px] object-cover"
                       // Dự phòng khi backend không trả has_image, hoặc ảnh biến
                       // mất sau lúc search.
                       onError={(e) => {

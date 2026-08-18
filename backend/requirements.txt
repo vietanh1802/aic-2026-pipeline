@@ -5,6 +5,10 @@ uvicorn[standard]>=0.32.1
 pydantic>=2.10.4
 python-dotenv>=1.0.0
 
+# keyframe_metadata.json is 437MB: json.load takes ~60s, orjson ~15s. Optional —
+# preprocess.py falls back to the stdlib, startup is just slower without it.
+orjson>=3.10
+
 torch
 numpy
 faiss-cpu

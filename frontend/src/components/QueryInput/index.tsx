@@ -11,9 +11,10 @@ import { useState } from "react";
 
 interface QueryInputProps {
   doSearch: () => void;
+  disabled?: boolean;
 }
 
-export default function QueryInput({ doSearch }: QueryInputProps) {
+export default function QueryInput({ doSearch, disabled = false }: QueryInputProps) {
   const resultLimit = useQueryStore((state) => state.resultLimit);
   const setResultLimit = useQueryStore((state) => state.setResultLimit);
   const queryText = useQueryStore((state) => state.queryText);
@@ -200,7 +201,9 @@ export default function QueryInput({ doSearch }: QueryInputProps) {
           className="p-3 w-full rounded-[4px] bg-[#F8F8F8] border-2 border-[#E3E3E3]"
           placeholder="Enter your query"
         />
-        <Button onClick={doSearch}>Search</Button>
+        <Button onClick={doSearch} disabled={disabled}>
+          Search
+        </Button>
       </div>
     </div>
   );

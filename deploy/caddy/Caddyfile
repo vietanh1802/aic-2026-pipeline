@@ -1,0 +1,19 @@
+(no_tls) {
+}
+
+(tls_cloudflare) {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+}
+
+{$AIC_API_HOSTNAME::8080} {
+	encode zstd gzip
+
+	@drive path /video/*
+	reverse_proxy @drive drive-proxy:5000
+
+	reverse_proxy api:8000
+
+	import {$AIC_TLS_SNIPPET:no_tls}
+}

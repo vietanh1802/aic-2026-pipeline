@@ -111,7 +111,7 @@ export const useSubmitTasks = create<SubmitTasks>((set) => ({
       // case 3: if last group is not full → add into it
       if (lastGroup.frameIdx.length < number_event) {
         return {
-          task3: state.task3.map((t, _) =>
+          task3: state.task3.map((t) =>
             t === lastGroup ? { ...t, frameIdx: [...t.frameIdx, frameIdx] } : t
           ),
         };

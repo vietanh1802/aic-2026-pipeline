@@ -1,0 +1,39 @@
+name: Power API EC2
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: start, stop, or status
+        required: true
+        type: choice
+        options:
+          - status
+          - start
+          - stop
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  AIC_BACKEND_URL: ${{ vars.AIC_BACKEND_URL || 'https://aic-api.umaga.fun' }}
+
+jobs:
+  power:
+    name: ${{ inputs.action }} API instance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run power action
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+          AIC_POWER_ACTION: ${{ inputs.action }}
+        run: bash deploy/p6/power.sh
