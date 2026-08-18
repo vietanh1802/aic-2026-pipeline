@@ -46,6 +46,14 @@ export interface SearchResponse {
   demo_mode?: boolean;
 }
 
+export interface TemporalCandidate {
+  name: string;
+  url: string;
+  frame_idx?: number;
+  timestamp?: string;
+  score?: number;
+}
+
 export interface TemporalSearchResult {
   video?: string;
   start_frame?: string;
@@ -59,6 +67,11 @@ export interface TemporalSearchResult {
   end_url?: string;
   n_left?: number;
   n_right?: number;
+  // MỚI — paper Figure 4c "Boundary Selection": danh sách ứng viên trái/phải
+  // để người dùng tự điều chỉnh nếu cặp đề xuất chưa đúng ý ("Users can
+  // review these suggestions and adjust them if necessary").
+  left_candidates?: TemporalCandidate[];
+  right_candidates?: TemporalCandidate[];
   demo?: boolean;
   error?: string;
 }

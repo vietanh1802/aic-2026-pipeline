@@ -100,6 +100,17 @@ class TemporalSearchRequest(BaseModel):
         }}
 
 
+class TemporalCandidate(BaseModel):
+    """1 frame ứng viên trái/phải — đủ data để UI cho người dùng click chọn
+    thay thế, khớp Figure 4c paper: 'Users can review these suggestions and
+    adjust them if necessary to refine the moment boundaries.'"""
+    name:      str
+    url:       str
+    frame_idx: Optional[int] = None
+    timestamp: Optional[str] = None
+    score:     Optional[float] = None
+
+
 class TemporalSearchResponse(BaseModel):
     video:           Optional[str] = None
     start_frame:     Optional[str] = None
@@ -113,6 +124,11 @@ class TemporalSearchResponse(BaseModel):
     end_url:         Optional[str] = None
     n_left:          Optional[int] = None
     n_right:         Optional[int] = None
+    # MỚI — Figure 4c "Boundary Selection": danh sách ứng viên để người dùng
+    # tự điều chỉnh nếu cặp start/end đề xuất chưa đúng ý. Optional nên không
+    # phá vỡ gì nếu preprocess.py chưa kịp cập nhật (mặc định None).
+    left_candidates:  Optional[List[TemporalCandidate]] = None
+    right_candidates: Optional[List[TemporalCandidate]] = None
     error:           Optional[str] = None
 
 
