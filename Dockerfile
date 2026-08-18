@@ -2,9 +2,15 @@
 
 FROM python:3.11-slim AS api
 
+# Supplied by CI from the VERSION file; the image never sees the repo root.
+ARG AIC_VERSION=0.0.0-dev
+ARG AIC_COMMIT=unknown
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    AIC_VERSION=${AIC_VERSION} \
+    AIC_COMMIT=${AIC_COMMIT}
 
 WORKDIR /srv/aic
 

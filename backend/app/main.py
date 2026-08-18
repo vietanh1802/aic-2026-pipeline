@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.models import SearchResult, SearchResponse
+from app.version import SHORT_COMMIT, VERSION
 from app.preprocess import (
     ensemble_search,
     single_model_search,
@@ -196,7 +197,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Challenge HCM 2026 – Video Moment Retrieval API",
     description="arXiv 2504.08384 · search → rerank (per-model) → ensemble → temporal",
-    version="3.0.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 
@@ -286,7 +287,6 @@ async def temporal_search_endpoint(req: TemporalSearchRequest):
     """
     if req.model not in MODEL_NAMES:
         raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
-    t0 = datetime.now()
     try:
         result = temporal_search(
             query_start=req.query_start,
@@ -316,14 +316,14 @@ def health():
     the UI whether to show a starting-up notice or accept queries. This is the
     cost of running the machine on demand, and it is what the frontend polls.
     """
-    return {"ok": True, "warmup": _warm}
+    return {"ok": True, "version": VERSION, "commit": SHORT_COMMIT, "warmup": _warm}
 
 
 @app.get("/")
 def root():
     return {
         "name":    "AI Challenge HCM 2026 – Video Moment Retrieval API",
-        "version": "3.0.0",
+        "version": VERSION,
         "paper":   "arXiv:2504.08384",
         "pipeline": "search → rerank (per-model) → ensemble → temporal",
         "endpoints": ["/ensemble-search", "/single-search", "/temporal-search",

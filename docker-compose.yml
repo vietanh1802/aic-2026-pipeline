@@ -28,6 +28,9 @@ services:
     build:
       context: .
       target: api
+      args:
+        AIC_VERSION: ${AIC_VERSION:-0.0.0-dev}
+        AIC_COMMIT: ${AIC_COMMIT:-unknown}
     image: aic2026-api:local
     restart: unless-stopped
     environment:

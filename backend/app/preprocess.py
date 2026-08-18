@@ -137,6 +137,11 @@ _name2meta:   dict[str, dict] = {}
 _clipid2meta: dict[int, dict] = {}
 _video_frames: dict[str, list[dict]] = {}   # video → keyframe sắp theo frame_idx
 
+# Bảng tra: basename → relative path dưới /static/
+# Dùng để tái hiện URL đầy đủ (kể cả thư mục con) từ mapping gốc của notebook.
+# Ví dụ: "file.jpg" → "AIC2026_frames_p5_016/file.jpg"
+_name2relpath: dict[str, str] = {}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Loaders
@@ -307,6 +312,25 @@ def _load_clip():
         _clip_tokenizer = open_clip.get_tokenizer(CLIP_MODEL_NAME)
         print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE} "
               f"(checkpoint local: {ckpt_path})")
+
+
+def _build_relpath_from_map(mapping: dict) -> None:
+    """Trích relative path dưới /static/ từ URL gốc trong mapping và lưu vào
+    _name2relpath.  Cần chạy mỗi khi nạp mapping để _image_url() trả đúng
+    URL kể cả khi ảnh nằm trong thư mục con (AIC2026_frames_p5_0XX/).
+
+    setdefault: nếu cùng tên file xuất hiện ở cả 2 mapping (beit3 + clip),
+    giữ entry đầu tiên — chúng phải trỏ cùng file nên không quan trọng thứ tự.
+    """
+    for url in mapping.values():
+        if not url:
+            continue
+        fname = os.path.basename(url)
+        if not fname:
+            continue
+        idx = url.find(_STATIC_MARKER)
+        rel = url[idx + len(_STATIC_MARKER):] if idx >= 0 else fname
+        _name2relpath.setdefault(fname, rel)
 
 
 def _load_indexes():
@@ -831,6 +855,7 @@ def system_status() -> dict:
         },
         "keyframes": len(_meta),
         "videos":    len(_video_frames),
+        "relpath_map": len(_name2relpath),
         "models": {
             "fine_grained":   f"BEiT3-Large coco_retrieval 1024-dim "
                               f"({'loaded' if _beit3_model else 'lazy'})",

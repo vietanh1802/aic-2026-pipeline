@@ -41,6 +41,15 @@ if [ "$ready" != "1" ]; then
   exit 1
 fi
 
+if [ -n "${AIC_EXPECTED_VERSION:-}" ]; then
+  deployed="$(jq -r '.version // "unknown"' "$tmp/health.json")"
+  echo "deployed version=$deployed expected=$AIC_EXPECTED_VERSION"
+  if [ "$deployed" != "$AIC_EXPECTED_VERSION" ]; then
+    echo "Backend serves $deployed but $AIC_EXPECTED_VERSION was deployed" >&2
+    exit 1
+  fi
+fi
+
 curl_json "$AIC_BACKEND_URL/status" > "$tmp/status.json"
 jq -e '
   (.files | all(.[]; . == true)) and
