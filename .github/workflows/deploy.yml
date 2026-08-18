@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - staging
+  pull_request:
+    branches:
+      - staging
   workflow_dispatch:
 
 concurrency:
@@ -35,31 +38,40 @@ jobs:
           fetch-depth: 0
 
       - id: read
-        name: Compare VERSION against the previous staging commit
+        name: Compare VERSION against what staging already has
         env:
-          BEFORE: ${{ github.event.before }}
           EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           new="$(tr -d "[:space:]" < VERSION)"
           test -n "$new" || { echo "VERSION is empty" >&2; exit 1; }
           echo "version=$new" >> "$GITHUB_OUTPUT"
           echo "new=$new"
 
-          if [ "$EVENT" != "push" ] || [ -z "$BEFORE" ] \
-             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            echo "no previous commit to compare against; accepting $new"
+          # A pull request is compared against the tip of its base branch; a push
+          # against whatever staging pointed at before it. Without the pull_request
+          # arm the gate would pass unconditionally on every PR and prove nothing.
+          case "$EVENT" in
+            push)         ref="$BEFORE" ;;
+            pull_request) ref="$BASE_SHA" ;;
+            *)            echo "event $EVENT is not gated; accepting $new"; exit 0 ;;
+          esac
+
+          if [ -z "$ref" ] || [ "$ref" = "0000000000000000000000000000000000000000" ]; then
+            echo "no baseline to compare against; accepting $new"
             exit 0
           fi
 
-          if ! old="$(git show "$BEFORE:VERSION" 2>/dev/null | tr -d "[:space:]")" \
+          if ! old="$(git show "$ref:VERSION" 2>/dev/null | tr -d "[:space:]")" \
              || [ -z "$old" ]; then
-            echo "previous commit has no VERSION; accepting $new"
+            echo "$ref carries no VERSION; accepting $new"
             exit 0
           fi
-          echo "old=$old"
+          echo "old=$old (from $ref)"
 
           if [ "$old" = "$new" ]; then
-            echo "VERSION is still $new. Bump it before deploying to staging." >&2
+            echo "VERSION is still $new. Bump it before this reaches staging." >&2
             exit 1
           fi
 
@@ -129,6 +141,7 @@ jobs:
   deploy-frontend:
     name: Deploy Cloudflare Pages
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     needs:
       - check-frontend
       - check-backend
@@ -156,6 +169,7 @@ jobs:
   deploy-backend:
     name: Deploy backend by SSM
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     needs:
       - version-guard
       - deploy-frontend

@@ -50,17 +50,21 @@ services:
       - "${AIC_HOST_IMAGES_DIR:-/opt/aic/static/images}:/opt/aic/static/images:ro"
       - "${AIC_HOST_MODEL_CACHE_DIR:-/opt/aic/model-cache}:/opt/aic/model-cache"
     healthcheck:
+      # A 200 from /health only says the process is up: it answers even when the
+      # warm-up thread has died, which once let `docker ps` report healthy while
+      # the API could not serve a single query. Gate on warmup.state instead.
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+          "import json, sys, urllib.request; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5))['warmup']['state'] == 'ready' else 1)",
         ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      # Warm-up reads ~16 GB and takes 90-145s; below this it is starting, not sick.
+      start_period: 240s
 
   drive-proxy:
     build:
