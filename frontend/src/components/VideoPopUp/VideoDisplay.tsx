@@ -5,16 +5,11 @@ import { useSubmitStore } from "../../store/submitStore";
 
 const env = (import.meta as { env?: Record<string, string | undefined> }).env;
 
-// Primary video store. Empty (local dev) falls straight through to Drive.
+// The only video store. Empty in local dev, which disables playback there.
 const VIDEO_BASE_URL = env?.VITE_VIDEO_BASE_URL ?? "";
-// drive-video-proxy, needed only for videos that are not publicly shared:
-// public files stream from the Drive API directly (verified: HTTP 206, ranged).
-const PROXY_BASE_URL = env?.VITE_PROXY_BASE_URL ?? "";
 
 interface DriveVideoProps {
   videoId: string; // e.g. "L30_V095" — builds the key in the video store
-  fileId: string; // Drive id, used by the fallback chain
-  apiKey?: string; // required to call the Drive API
   width?: number;
   height?: number;
   onDuration: (duration: number) => void;
@@ -30,8 +25,6 @@ interface DriveVideoProps {
 
 const VideoDrive: React.FC<DriveVideoProps> = ({
   videoId,
-  fileId,
-  apiKey = "AIzaSyAWUVtVvwOTA52orDVhTU9b9xrBwx7pWH0",
   width = 160,
   height = 120,
   onDuration,
@@ -50,29 +43,27 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
     setKeyframe(mapping_frame);
   }, [mapping_frame]);
 
-  // Sources tried in order. While the seed job runs (hours), a video not yet
-  // uploaded 404s and falls through to Drive, so there is no single cutover.
-  const sources = useMemo(
+  // S3 is the only source. All 1,478 videos are uploaded and remuxed with
+  // `-movflags +faststart`, so the moov atom sits ahead of the media data and a
+  // seek costs one range request.
+  //
+  // The Drive fallback that used to follow this was removed. The originals on
+  // Drive are not faststart, so `preload="metadata"` had to pull most of a
+  // 400 MB file before the player could report a duration. Whenever the S3
+  // request failed the player fell through to Drive and stalled for minutes with
+  // no indication of why. Failing here instead is both faster and legible, and
+  // the Link button in VideoPopUp still opens the file on Drive.
+  const src = useMemo(
     () =>
-      [
-        VIDEO_BASE_URL && videoId
-          ? `${VIDEO_BASE_URL.replace(/\/$/, "")}/${videoId}.mp4`
-          : null,
-        fileId
-          ? `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`
-          : null,
-        PROXY_BASE_URL && fileId
-          ? `${PROXY_BASE_URL.replace(/\/$/, "")}/video/${fileId}`
-          : null,
-      ].filter((s): s is string => Boolean(s)),
-    [videoId, fileId, apiKey]
+      VIDEO_BASE_URL && videoId
+        ? `${VIDEO_BASE_URL.replace(/\/$/, "")}/${videoId}.mp4`
+        : "",
+    [videoId]
   );
 
-  const [srcIdx, setSrcIdx] = useState(0);
   useEffect(() => {
-    setSrcIdx(0);
     setError(null);
-  }, [videoId, fileId]);
+  }, [videoId]);
 
   useEffect(() => {
     if (videoRef.current && jumpTo !== undefined) {
@@ -93,8 +84,8 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
     <div className="space-y-2 w-full font-baloo">
       <video
         ref={videoRef}
-        key={sources[srcIdx]}
-        src={sources[srcIdx]}
+        key={src}
+        src={src}
         width={width}
         height={height}
         controls
@@ -110,14 +101,10 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
           if (jumpTo !== undefined) e.currentTarget.currentTime = jumpTo;
         }}
         onError={() => {
-          if (srcIdx < sources.length - 1) {
-            console.warn(
-              `video source ${srcIdx + 1}/${sources.length} failed, trying next`
-            );
-            setSrcIdx((i) => i + 1);
-          } else {
-            setError("No working video source");
-          }
+          console.warn(`video ${videoId} could not be loaded from ${src}`);
+          setError(
+            `Không tải được ${videoId}.mp4 từ kho video. Dùng nút Link để mở trên Drive.`
+          );
         }}
       />
 

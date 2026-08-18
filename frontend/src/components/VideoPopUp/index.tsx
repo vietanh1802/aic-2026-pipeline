@@ -113,7 +113,6 @@ export default function VideoPopup({
         <div className="flex justify-center items-center">
           <VideoDrive
             videoId={videoId}
-            fileId={fileId}
             onDuration={(s) => setDuration(s)}
             onFrameIdx={(frameIdx) => setFrameIdx(frameIdx)}
             jumpTo={startAt / 1000}
