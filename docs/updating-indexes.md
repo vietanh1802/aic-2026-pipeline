@@ -66,11 +66,23 @@ The fix was to stage `open_clip_model.safetensors` into `/opt/aic/indexes/` so t
 already on the host inside the HuggingFace cache, so this was a local copy rather than a
 10.2 GB download.
 
-## Outstanding
+## Publishing weights to S3
 
-`open_clip_model.safetensors` is on the API host but **not yet in
-`s3://aic2026-artifacts/indexes/`**: the instance role has read-only access to that bucket, by
-design. Until it is published, a rebuilt instance syncing from S3 will not get the CLIP weights
-and will hit the read-only failure again. To publish it, grant `s3:PutObject` on
-`arn:aws:s3:::aic2026-artifacts/indexes/*` to `aic2026-api-ec2-role` long enough to run the
-upload, then remove it.
+`aic2026-api-ec2-role` is read-only on the artifacts bucket by design, so the API box cannot
+overwrite the canonical index set. Publishing a new weight file therefore needs a grant that is
+added and then taken away:
+
+```powershell
+aws iam put-role-policy --role-name aic2026-api-ec2-role --policy-name tmp-publish-indexes `
+  --policy-document file://deploy/p7/tmp-publish-indexes-policy.json --profile aic
+# run the upload from the host, verify with head-object, then:
+aws iam delete-role-policy --role-name aic2026-api-ec2-role --policy-name tmp-publish-indexes --profile aic
+```
+
+Pass the policy as `file://`. Inlining JSON on the command line fails on Windows with
+`MalformedPolicyDocument`, because the quotes are stripped before the CLI sees them. Allow a few
+seconds for the grant to propagate before the first upload attempt.
+
+The index set in S3 is now self-contained: 9 objects, 15.0 GiB, including
+`open_clip_model.safetensors`. A rebuilt instance that syncs from S3 gets everything the API
+needs and never downloads at run time.
