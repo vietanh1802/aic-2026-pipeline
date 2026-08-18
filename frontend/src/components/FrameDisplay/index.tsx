@@ -15,6 +15,11 @@ type FrameDisplayProps2 = {
   maxDistance: number;
   isLoading: boolean;
   onClick: (result: SearchResult) => void;
+  // MỚI — optional, không truyền thì nút "⏱" không hiện, không ảnh hưởng
+  // chỗ nào đang gọi <FrameDisplay ... /> mà chưa cập nhật. Dùng để chọn
+  // 1 frame làm mốc (anchor) cho Temporal Search (Alg.4) — xem
+  // TemporalSearchPanel.
+  onUseAsAnchor?: (result: SearchResult) => void;
 };
 
 // Calculate similarity percentage and return color
@@ -172,6 +177,7 @@ export default function FrameDisplay({
   results,
   isLoading,
   onClick,
+  onUseAsAnchor,
 }: FrameDisplayProps2) {
   const timestamp = results.map(frameTimestamp);
   const sub = results.map((result) => {
@@ -211,6 +217,22 @@ export default function FrameDisplay({
                   {result.has_image !== false && (
                     <div className="hidden absolute inset-0">
                       <MissingFrame name={result.name} />
+                    </div>
+                  )}
+                  {/* Dùng frame này làm mốc cho Temporal Search (Alg.4).
+                      stopPropagation() để không kích hoạt onClick cũ (mở
+                      VideoPopup). Đặt góc trên-phải để không đè nút search
+                      sẵn có ở góc dưới-phải. */}
+                  {onUseAsAnchor && (
+                    <div
+                      className="absolute top-0 right-0 mr-1 mt-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]"
+                      title="Dùng làm mốc cho Temporal Search"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUseAsAnchor(result);
+                      }}
+                    >
+                      ⏱
                     </div>
                   )}
                   <div className="absolute bottom-0 right-0 mr-1 mb-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">

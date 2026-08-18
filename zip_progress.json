@@ -115,19 +115,265 @@
       "jpg_skipped": 0
     },
     "1r8BvO5V-_7MGKx53-LEcCnVLR3zTMPSf": {
-      "name": "AIC2026_frames_p5_016.zip",
-      "status": "download_failed",
-      "error": "('Connection broken: IncompleteRead(1485340672 bytes read, 732738972 more expected)', IncompleteRead(1485340672 bytes read, 732738972 more expected))"
+      "status": "extracted",
+      "jpg_extracted": 11625,
+      "jpg_skipped": 0
     },
     "1fMmwMMx9vjXPwk2xx5Sp1ytov2qBIVYp": {
-      "name": "AIC2026_frames_p5_017.zip",
-      "status": "download_failed",
-      "error": "('Connection broken: IncompleteRead(1081884042 bytes read, 1076165351 more expected)', IncompleteRead(1081884042 bytes read, 1076165351 more expected))"
+      "status": "extracted",
+      "jpg_extracted": 11625,
+      "jpg_skipped": 0
     },
     "1ztAFPO7TZRUgJhF8E4KUh2iWxTyIleT7": {
+      "status": "extracted",
+      "jpg_extracted": 11625,
+      "jpg_skipped": 0
+    },
+    "1TnPRC_1-KmkI8cmTqf_2SsI7zBWhOK_L": {
+      "name": "AIC2026_frames_p1_001.zip",
+      "status": "extracted",
+      "jpg_extracted": 8517,
+      "jpg_skipped": 0
+    },
+    "1HODzIrKVSWa68oo0dsdNWopOd3TkMhRZ": {
+      "name": "AIC2026_frames_p1_002.zip",
+      "status": "extracted",
+      "jpg_extracted": 8439,
+      "jpg_skipped": 0
+    },
+    "1KMpuxL6jv-Llfg29Yz8h0xBMrUo6X5Oh": {
+      "name": "AIC2026_frames_p1_003.zip",
+      "status": "extracted",
+      "jpg_extracted": 9344,
+      "jpg_skipped": 0
+    },
+    "1miGxDPtFWsJOuk5dwu_36PQWSOmhTvuN": {
+      "name": "AIC2026_frames_p1_004.zip",
+      "status": "extracted",
+      "jpg_extracted": 8712,
+      "jpg_skipped": 0
+    },
+    "1mLekz8anD5yS4gtsgKnaXV4qWJOVE88x": {
+      "name": "AIC2026_frames_p1_005.zip",
+      "status": "extracted",
+      "jpg_extracted": 8818,
+      "jpg_skipped": 0
+    },
+    "1XWEpIiAM6mTuKGQ2L915vMWtfIbPQbV8": {
+      "name": "AIC2026_frames_p1_006.zip",
+      "status": "extracted",
+      "jpg_extracted": 8412,
+      "jpg_skipped": 0
+    },
+    "1DhhXb6Lz8kvaGaQK0j5GOY_57j92syoV": {
+      "name": "AIC2026_frames_p1_007.zip",
+      "status": "extracted",
+      "jpg_extracted": 9222,
+      "jpg_skipped": 0
+    },
+    "1NAnC4LlNi13TK6w8-9njBRx2yNiaM82Q": {
+      "name": "AIC2026_frames_p1_008.zip",
+      "status": "extracted",
+      "jpg_extracted": 9861,
+      "jpg_skipped": 0
+    },
+    "1_XO_aHI4R6A6yKBxbfvDHYm1WTQ4xihk": {
+      "name": "AIC2026_frames_p1_009.zip",
+      "status": "extracted",
+      "jpg_extracted": 9658,
+      "jpg_skipped": 0
+    },
+    "1HBQvpZlfqnPZpRM1ROBtLHvbbbiAnp_p": {
+      "name": "AIC2026_frames_p1_010.zip",
+      "status": "extracted",
+      "jpg_extracted": 9507,
+      "jpg_skipped": 0
+    },
+    "12mg-EDuGE9SZphjUbEyLTPFcmlLUd038": {
+      "name": "AIC2026_frames_p1_011.zip",
+      "status": "extracted",
+      "jpg_extracted": 9639,
+      "jpg_skipped": 0
+    },
+    "1utOUCT2JmQx2o0-vOG1EY0JUpWD4Xeum": {
+      "name": "AIC2026_frames_p1_012.zip",
+      "status": "extracted",
+      "jpg_extracted": 8996,
+      "jpg_skipped": 0
+    },
+    "1ILeDjCdhe1jdS3QSqktWDmnt0koRnPeB": {
+      "name": "AIC2026_frames_p4_005.zip",
+      "status": "extracted",
+      "jpg_extracted": 9332,
+      "jpg_skipped": 0
+    },
+    "1P-6j951w5EQ2f8k4-vdXcfjULHDSa5QJ": {
+      "name": "AIC2026_frames_p4_006.zip",
+      "status": "extracted",
+      "jpg_extracted": 9358,
+      "jpg_skipped": 0
+    },
+    "1Wh3zKxs41xmdas0Go4NvqN_z3TVFlZOg": {
+      "name": "AIC2026_frames_p4_007.zip",
+      "status": "extracted",
+      "jpg_extracted": 9359,
+      "jpg_skipped": 0
+    },
+    "1swSQ0FF2-FkshFfPGbhZYw3skyn7W19o": {
+      "name": "AIC2026_frames_p4_008.zip",
+      "status": "extracted",
+      "jpg_extracted": 9535,
+      "jpg_skipped": 0
+    },
+    "1yXJIZkRePVSIvYY9iqGegOfWJTbVnRJR": {
+      "name": "AIC2026_frames_p4_009.zip",
+      "status": "extracted",
+      "jpg_extracted": 15122,
+      "jpg_skipped": 0
+    },
+    "1jR2ia7Tiy-DUSIM4Ev7N64ZWYkqV4HhT": {
+      "name": "AIC2026_frames_p4_010.zip",
+      "status": "extracted",
+      "jpg_extracted": 14389,
+      "jpg_skipped": 0
+    },
+    "16c88iT38MnuH2Gmmup_GgXa1FBifatZG": {
+      "name": "AIC2026_frames_p4_011.zip",
+      "status": "extracted",
+      "jpg_extracted": 14572,
+      "jpg_skipped": 0
+    },
+    "11_FZXASBbq9M5fzBnf0V88q8ep-YVDWH": {
+      "name": "AIC2026_frames_p4_012.zip",
+      "status": "extracted",
+      "jpg_extracted": 14773,
+      "jpg_skipped": 0
+    },
+    "1jmgr1bsB58H87aaBdL6v8Uw_6wL6TK1y": {
+      "name": "AIC2026_frames_p4_013.zip",
+      "status": "extracted",
+      "jpg_extracted": 12715,
+      "jpg_skipped": 0
+    },
+    "1sjyj0wMoIakh6Mt9QslX2ctVED5RlRFR": {
+      "name": "AIC2026_frames_p4_014.zip",
+      "status": "extracted",
+      "jpg_extracted": 11267,
+      "jpg_skipped": 0
+    },
+    "1JirKoP0t2ZaHfpebA1ZREJ9-E4vLyAPQ": {
+      "name": "AIC2026_frames_p4_015.zip",
+      "status": "extracted",
+      "jpg_extracted": 76,
+      "jpg_skipped": 0
+    },
+    "1_66fcPW0ZeuaaKidrfvl3CmehXxkSrUe": {
+      "name": "AIC2026_frames_p5_001.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 15965
+    },
+    "1As6_0Sk2G6atKhk_CTT1f6RnEgkufQ1P": {
+      "name": "AIC2026_frames_p5_002.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 16484
+    },
+    "1hMSVh8ytmahDZ9wo-gG6ZDmsebtPY6_d": {
+      "name": "AIC2026_frames_p5_003.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 15864
+    },
+    "1MIQRs-Fybu6dZ-eso-7ZkJ7Hxpv9NoBw": {
+      "name": "AIC2026_frames_p5_004.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 15565
+    },
+    "1JvPHioyEsH_gpnM2XrrbXr0DE8lS6wwR": {
+      "name": "AIC2026_frames_p5_005.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 16233
+    },
+    "1tSR4teAFmpC-09bLXrhT3G1CvHBm3s65": {
+      "name": "AIC2026_frames_p5_006.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 16525
+    },
+    "178TQlD-tYboh6VzMefy0sYlLCk7RTt0q": {
+      "name": "AIC2026_frames_p5_007.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 16754
+    },
+    "1dtIciAITUs7frp3ki1B4YwR2lAY3Wlhw": {
+      "name": "AIC2026_frames_p5_008.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 17153
+    },
+    "1gta-n82eVIeLrpoC_W4N2er7IpK5gp2C": {
+      "name": "AIC2026_frames_p5_009.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 17171
+    },
+    "1pvuHwG558-CSkWJ20WggtvualXpkh-MR": {
+      "name": "AIC2026_frames_p5_010.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 17101
+    },
+    "1f0cBaGJkl-2OBFNJDHCEk2Lcp7pIu0EV": {
+      "name": "AIC2026_frames_p5_011.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 16851
+    },
+    "10jz4Hw4DutKxdNeHAmPPcQea2Pa-DAqB": {
+      "name": "AIC2026_frames_p5_012.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 17273
+    },
+    "1_Sc5nCppUvHuTugOCet24DXU7NDV-m2c": {
+      "name": "AIC2026_frames_p5_013.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 14848
+    },
+    "1nRw9rlogNuTd-SUhN08D5TY2uDmoG5X2": {
+      "name": "AIC2026_frames_p5_014.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 12727
+    },
+    "16iULK07MosHkkuQIKAsska7xxBH7Ztoo": {
+      "name": "AIC2026_frames_p5_015.zip",
+      "status": "extracted",
+      "jpg_extracted": 0,
+      "jpg_skipped": 11625
+    },
+    "1txVGgLQBQ6ZCdx21r_F7sMsJ9udMChGk": {
+      "name": "AIC2026_frames_p5_016.zip",
+      "status": "extracted",
+      "jpg_extracted": 11217,
+      "jpg_skipped": 0
+    },
+    "1bSlteyBs7yq4KoKqVJFV2_CrTYnlIssY": {
+      "name": "AIC2026_frames_p5_017.zip",
+      "status": "extracted",
+      "jpg_extracted": 12542,
+      "jpg_skipped": 0
+    },
+    "1mc4dz0KEGQfVNRVCaf8Fx7igsWXznscq": {
       "name": "AIC2026_frames_p5_018.zip",
-      "status": "download_failed",
-      "error": "('Connection broken: IncompleteRead(862627029 bytes read, 1126385774 more expected)', IncompleteRead(862627029 bytes read, 1126385774 more expected))"
+      "status": "extracted",
+      "jpg_extracted": 13547,
+      "jpg_skipped": 0
     }
   }
 }

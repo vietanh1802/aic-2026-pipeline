@@ -10,6 +10,7 @@ import ResultInfoAndSort, {
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore } from "./store/queryStore";
 import VideoPopup from "./components/VideoPopUp";
+import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
 import { formatResultByVideoID } from "./helpers/formatResult.helper";
 import type { HealthResponse, SearchResult } from "./types/api";
@@ -132,6 +133,21 @@ function App() {
     failed: "border-red-300 bg-red-50 text-red-800",
   }[backendHealth.status];
 
+  // ── Temporal Search (Alg.4) — anchor do người dùng tự chọn từ kết quả
+  // search đã có (paper: "the initially retrieved and reranked input frame
+  // corresponds to the correct reference frame"), kích hoạt qua nút "⏱"
+  // trên FrameDisplay. Không thay thế gì của search thường (ensemble/single).
+  const [showTemporalPanel, setShowTemporalPanel] = useState(false);
+  const [temporalAnchor, setTemporalAnchor] = useState<{
+    name: string;
+    url: string;
+  } | null>(null);
+
+  const handleUseAsAnchor = (result: SearchResult) => {
+    setTemporalAnchor({ name: result.name, url: result.url });
+    setShowTemporalPanel(true);
+  };
+
   // Alg.3 (ensemble) hoặc chạy 1 model đơn (Q4) — khớp đúng /ensemble-search
   // và /single-search hiện có trong main.py. Không còn text-search/faiss-
   // search/combined-search/ocr-search/filter-search — các endpoint đó đã bị
@@ -241,12 +257,22 @@ function App() {
         />
       )}
 
+      {/* Temporal Search Panel — Alg.4, mở khi bấm "⏱" trên 1 kết quả search */}
+      {showTemporalPanel && temporalAnchor && (
+        <TemporalSearchPanel
+          anchorName={temporalAnchor.name}
+          anchorUrl={temporalAnchor.url}
+          onClose={() => setShowTemporalPanel(false)}
+        />
+      )}
+
       {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
         <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[200px]">
           <FrameDisplay
             results={results}
             maxDistance={maxDistance}
             isLoading={isLoading}
+            onUseAsAnchor={handleUseAsAnchor}
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
@@ -274,6 +300,7 @@ function App() {
                   results={items}
                   maxDistance={maxDistance}
                   isLoading={isLoading}
+                  onUseAsAnchor={handleUseAsAnchor}
                   onClick={(result) => {
                     setframeId(frameIdFromName(result.name));
                     setVideoUrl(videoIdFromFrame(result.frame));

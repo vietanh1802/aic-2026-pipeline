@@ -25,9 +25,6 @@ THỨ TỰ (đã chốt, khác bản trước):
 Model — verify từ paper gốc:
   Fine-grained   (ref [51]): BEiT3-Large, beit3_large_patch16_384_coco_retrieval.pth
   Coarse-grained (ref [41]): OpenCLIP ViT-bigG-14 (laion2b_s39b_b160k)
-
-Nếu chưa có file index/metadata, các hàm search trả về danh sách rỗng — không
-sinh dữ liệu giả. Xem GET /status (system_status()) để biết còn thiếu file gì.
 """
 
 import os, json, sys, subprocess as _sp
@@ -139,11 +136,6 @@ _meta_loaded  = False
 _name2meta:   dict[str, dict] = {}
 _clipid2meta: dict[int, dict] = {}
 _video_frames: dict[str, list[dict]] = {}   # video → keyframe sắp theo frame_idx
-
-# Bảng tra: basename → relative path dưới /static/
-# Dùng để tái hiện URL đầy đủ (kể cả thư mục con) từ mapping gốc của notebook.
-# Ví dụ: "file.jpg" → "AIC2026_frames_p5_016/file.jpg"
-_name2relpath: dict[str, str] = {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,40 +249,64 @@ def _load_beit3():
           f"(missing={len(missing)}, unexpected={len(unexpected)})")
 
 
+def _ensure_clip_checkpoint() -> str:
+    """Tải checkpoint CLIP về INDEX_DIR (cùng pattern với BEiT3), CHỈ 1 LẦN —
+    tránh phải tải lại toàn bộ ~10GB mỗi lần server khởi động.
+
+    Root cause: open_clip.create_model_and_transforms(pretrained="laion2b_...")
+    (tag string) tự tải qua cache hệ thống mặc định của huggingface_hub — cache
+    đó không ổn định trong môi trường đang chạy (đổi ổ đĩa, venv mới, nhiều máy
+    khác nhau...), nên liên tục tải lại và bị HuggingFace giới hạn tốc độ
+    (rate limit) do quá nhiều request tải file lớn.
+
+    Fix: tải tường minh 1 lần vào INDEX_DIR — cùng thư mục bền vững đã dùng
+    cho beit3 checkpoint — rồi truyền THẲNG local path vào open_clip thay vì
+    tag string. open_clip's create_model() có nhánh "elif os.path.exists(
+    pretrained): checkpoint_path = pretrained" — dùng local path là cách dùng
+    chính thức, không phải hack.
+
+    Dùng huggingface_hub.hf_hub_download() (không phải curl thuần như BEiT3)
+    vì file này lưu qua HF Xet storage (verify từ trang model chính thức:
+    "Xet efficiently stores Large Files inside Git") — URL tĩnh đơn giản
+    không tải đúng được, cần đúng client hf_hub_download để resolve.
+    """
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    ckpt_path = os.path.join(INDEX_DIR, "open_clip_model.safetensors")
+    if not os.path.exists(ckpt_path):
+        print("[preprocess] Downloading CLIP checkpoint (~10.2GB, chỉ 1 lần "
+              f"vào {ckpt_path})...")
+        from huggingface_hub import hf_hub_download
+        downloaded = hf_hub_download(
+            repo_id="laion/CLIP-ViT-bigG-14-laion2B-39B-b160k",
+            filename="open_clip_model.safetensors",
+            local_dir=INDEX_DIR,
+        )
+        # hf_hub_download có thể trả về path khác đôi chút tuỳ version (vd có
+        # symlink vào cache trước rồi copy) — đảm bảo file cuối nằm đúng tên
+        # đã khai báo ở ckpt_path để lần sau os.path.exists() check đúng chỗ.
+        if os.path.abspath(downloaded) != os.path.abspath(ckpt_path) and os.path.exists(downloaded):
+            os.replace(downloaded, ckpt_path)
+        print(f"[preprocess] CLIP checkpoint đã lưu tại {ckpt_path}")
+    return ckpt_path
+
+
 def _load_clip():
-    """Nạp OpenCLIP ViT-bigG-14 (ref [41], nhánh coarse-grained)."""
+    """Nạp OpenCLIP ViT-bigG-14 (ref [41], nhánh coarse-grained).
+
+    Tải checkpoint tường minh vào INDEX_DIR qua _ensure_clip_checkpoint()
+    thay vì để open_clip tự tải qua cache hệ thống mặc định — xem giải thích
+    đầy đủ trong docstring hàm đó.
+    """
     global _clip_model, _clip_proc, _clip_tokenizer
     if _clip_model is None:
         import open_clip
+        ckpt_path = _ensure_clip_checkpoint()
         _clip_model, _, _clip_proc = open_clip.create_model_and_transforms(
-            CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED, device=DEVICE)
+            CLIP_MODEL_NAME, pretrained=ckpt_path, device=DEVICE)
         _clip_model.eval()
         _clip_tokenizer = open_clip.get_tokenizer(CLIP_MODEL_NAME)
-        print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE}")
-
-
-def _build_relpath_from_map(mapping: dict) -> None:
-    """Trích relative path dưới /static/ từ URL gốc trong mapping và lưu vào
-    _name2relpath.  Cần chạy mỗi khi nạp mapping để _image_url() trả đúng
-    URL kể cả khi ảnh nằm trong thư mục con (AIC2026_frames_p5_0XX/).
-
-    Ví dụ URL gốc (notebook sinh ra):
-      "http://localhost:8000/static/AIC2026_frames_p5_016/file.jpg"
-    → rel_path = "AIC2026_frames_p5_016/file.jpg"
-    → _name2relpath["file.jpg"] = "AIC2026_frames_p5_016/file.jpg"
-
-    setdefault: nếu cùng tên file xuất hiện ở cả 2 mapping (beit3 + clip),
-    giữ entry đầu tiên — chúng phải trỏ cùng file nên không quan trọng thứ tự.
-    """
-    for url in mapping.values():
-        if not url:
-            continue
-        fname = os.path.basename(url)
-        if not fname:
-            continue
-        idx = url.find(_STATIC_MARKER)
-        rel = url[idx + len(_STATIC_MARKER):] if idx >= 0 else fname
-        _name2relpath.setdefault(fname, rel)
+        print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE} "
+              f"(checkpoint local: {ckpt_path})")
 
 
 def _load_indexes():
@@ -614,8 +630,6 @@ def ensemble_search(query: str, top_k: int = 100, top_m: int = 50,
 
     models=None dùng mọi model có index. Truyền ["beit3"] hoặc ["clip"] để chạy
     một model duy nhất — phục vụ Q4 (so model đơn với ensemble).
-
-    Nếu chưa có index nào, per_model rỗng → trả về [] (không sinh dữ liệu giả).
     """
     _load_indexes()
     _load_meta()
@@ -725,6 +739,22 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
         best, best_score = (anchor, anchor), 0.0
 
     m1, m2 = best
+
+    # Paper Section 3.6.1, Figure 4c ("Boundary Selection"): "Users can review
+    # these suggestions and adjust them if necessary to refine the moment
+    # boundaries." — trả thêm danh sách ứng viên trái/phải (không chỉ đếm số
+    # lượng như trước) để UI dựng được bước review/điều chỉnh này. left/right
+    # đã có sẵn đủ dữ liệu từ vòng lặp mở rộng phía trên, chỉ thêm bước đóng
+    # gói — KHÔNG đổi thuật toán chọn cặp tốt nhất, KHÔNG bớt field cũ nào.
+    def _candidate(m: dict, s: float) -> dict:
+        return {
+            "name":      m["name"],
+            "url":       _image_url(m["name"]),
+            "frame_idx": m.get("frame_idx"),
+            "timestamp": m.get("timestamp_str", ""),
+            "score":     round(s * 100, 2),
+        }
+
     return {
         "video":           video,
         "start_frame":     m1["name"],
@@ -738,6 +768,8 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
         "end_url":         _image_url(m2["name"]),
         "n_left":          len(left),
         "n_right":         len(right),
+        "left_candidates":  [_candidate(m, s) for m, s in left],
+        "right_candidates": [_candidate(m, s) for m, s in right],
     }
 
 
@@ -797,9 +829,8 @@ def system_status() -> dict:
             "beit3": _beit3_index.ntotal if _beit3_index is not None else 0,
             "clip":  _clip_index.ntotal  if _clip_index  is not None else 0,
         },
-        "keyframes":   len(_meta),
-        "videos":      len(_video_frames),
-        "relpath_map": len(_name2relpath),
+        "keyframes": len(_meta),
+        "videos":    len(_video_frames),
         "models": {
             "fine_grained":   f"BEiT3-Large coco_retrieval 1024-dim "
                               f"({'loaded' if _beit3_model else 'lazy'})",
