@@ -17,6 +17,28 @@ curl_json() {
     "$@"
 }
 
+# Warm-up reads about 16 GB, and while it does the box is saturated enough that
+# Cloudflare intermittently gives up on the origin and answers 520 or 525. That
+# is load, not a broken deployment, but a single failed request used to be
+# enough to roll a good build back. Retry before believing the failure.
+#
+# Each attempt writes to a scratch file and only a complete, successful response
+# reaches stdout. Letting the caller redirect `retry` directly would open the
+# target once and append every partial attempt into it, producing a body that
+# parses as neither one response nor the other.
+retry() {
+  local attempt out="$tmp/.retry-body"
+  for attempt in $(seq 1 "${AIC_SMOKE_RETRIES:-6}"); do
+    if "$@" > "$out"; then
+      cat "$out"
+      return 0
+    fi
+    echo "  request failed, retry $attempt/${AIC_SMOKE_RETRIES:-6}" >&2
+    sleep "${AIC_SMOKE_RETRY_DELAY:-10}"
+  done
+  return 1
+}
+
 echo "Smoke: waiting for backend warm-up at $AIC_BACKEND_URL"
 ready=0
 for _ in $(seq 1 48); do
@@ -50,25 +72,31 @@ if [ -n "${AIC_EXPECTED_VERSION:-}" ]; then
   fi
 fi
 
-curl_json "$AIC_BACKEND_URL/status" > "$tmp/status.json"
+retry curl_json "$AIC_BACKEND_URL/status" > "$tmp/status.json"
 jq -e '
   (.files | all(.[]; . == true)) and
   (.vectors.beit3 > 0) and
   (.keyframes > 0)
 ' "$tmp/status.json" > /dev/null
 
-curl --fail --silent --show-error --location \
-  --user-agent "$UA" \
-  --header "Accept: application/json" \
-  --header "Content-Type: application/json" \
-  --data "{\"query\":\"$QUERY\",\"limit\":10,\"top_m\":100,\"use_rerank\":true}" \
-  "$AIC_BACKEND_URL/ensemble-search" > "$tmp/search.json"
+search() {
+  curl --fail --silent --show-error --location \
+    --user-agent "$UA" \
+    --header "Accept: application/json" \
+    --header "Content-Type: application/json" \
+    --data "{\"query\":\"$QUERY\",\"limit\":10,\"top_m\":100,\"use_rerank\":true}" \
+    "$AIC_BACKEND_URL/ensemble-search"
+}
+retry search > "$tmp/search.json"
 
 jq -e '.returned_results > 0 and (.results | length > 0)' "$tmp/search.json" > /dev/null
 
-curl --fail --silent --show-error --location \
-  --user-agent "$UA" \
-  --output /dev/null \
-  "$AIC_FRONTEND_URL"
+frontend() {
+  curl --fail --silent --show-error --location \
+    --user-agent "$UA" \
+    --output /dev/null \
+    "$AIC_FRONTEND_URL"
+}
+retry frontend
 
 echo "Smoke passed"
