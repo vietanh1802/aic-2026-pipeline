@@ -1,0 +1,101 @@
+name: Update indexes
+
+# Steps 3 to 5 of docs/updating-indexes.md, on a button.
+#
+# Step 2 — publishing the regenerated index set from a workstation to
+# s3://aic2026-artifacts/indexes/ — is not here and cannot be: the files are
+# 15 GB and live on the operator's machine. Run that first, then this.
+on:
+  workflow_dispatch:
+    inputs:
+      delete_removed:
+        description: Remove host files that no longer exist in S3 (--delete)
+        required: false
+        type: boolean
+        default: false
+      expect_keyframes:
+        description: Fail if the reloaded index does not report this many keyframes (optional)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # A deploy also recreates the API container. Overlapping the two would restart
+  # the container mid-sync and leave it reading a half-written index set.
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  AIC_BACKEND_URL: ${{ vars.AIC_BACKEND_URL || 'https://aic-api.umaga.fun' }}
+
+jobs:
+  update-indexes:
+    name: Sync index set from S3 and reload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Capture API instance state
+        id: instance
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          state="$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$AIC_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "API instance is $state"
+
+      # The box is stopped between sessions to keep the credit from draining, so
+      # an index update has to be able to wake it.
+      - name: Start API instance when needed
+        if: steps.instance.outputs.state == 'stopped'
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+          AIC_POWER_ACTION: start
+        run: bash deploy/p6/power.sh
+
+      - name: Wait for SSM
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          for _ in $(seq 1 30); do
+            online="$(aws ssm describe-instance-information \
+              --region "$AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$AIC_INSTANCE_ID" \
+              --query 'length(InstanceInformationList)' \
+              --output text)"
+            if [ "$online" = "1" ]; then
+              echo "SSM agent online"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "SSM agent did not come online" >&2
+          exit 1
+
+      - name: Sync indexes and restart API
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes/' }}
+          AIC_REMOTE_INDEX_DIR: ${{ vars.AIC_REMOTE_INDEX_DIR || '/opt/aic/indexes' }}
+          AIC_REMOTE_APP_DIR: ${{ vars.AIC_REMOTE_APP_DIR || '/opt/aic/app' }}
+          AIC_SYNC_DELETE: ${{ inputs.delete_removed }}
+        run: bash deploy/p6/ssm-sync-indexes.sh
+
+      - name: Verify the reloaded index set
+        env:
+          AIC_EXPECT_KEYFRAMES: ${{ inputs.expect_keyframes }}
+        run: bash deploy/p6/verify-indexes.sh
