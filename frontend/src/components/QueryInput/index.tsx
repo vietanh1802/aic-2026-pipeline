@@ -73,12 +73,15 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     { id: 1, label: "en-vi", value: "en-vi" as TranslateLanguage },
   ];
 
-  // Khớp đúng /ensemble-search (Alg.3 đầy đủ) và /single-search (Q4: so
-  // model đơn với ensemble). Đã bỏ Text/No-Agent/Faiss/Combined/OCR Search —
-  // các endpoint tương ứng không còn tồn tại ở backend.
+  // Khớp đúng /ensemble-search (Alg.3 đầy đủ), /single-search (Q4: so model
+  // đơn với ensemble), /temporal-search-text (Alg.4) và /trake-search-text
+  // (N sự kiện tuần tự) — 2 cái sau nhận query bằng cách tách 1 chuỗi theo
+  // dấu "." ở backend, khung nhập KHÔNG đổi gì (vẫn 1 ô input như cũ).
   const searchOptions: DropdownOption[] = [
     { id: 0, label: "Ensemble (BEiT3+CLIP)", value: "ensemble" as SearchType },
     { id: 1, label: "Single Model", value: "single" as SearchType },
+    { id: 2, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
+    { id: 3, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
   ];
 
   const modelOptions: DropdownOption[] = [
@@ -194,12 +197,28 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         </div>
       </div>
 
+      {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
+          text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}
+      {(searchType === "temporal" || searchType === "trake") && (
+        <p className="text-xs text-gray-500 -mt-2">
+          {searchType === "temporal"
+            ? "Nhập đúng 2 đoạn, cách nhau bằng dấu \".\" — vd: \"người bước lên sân khấu. khán giả vỗ tay\""
+            : "Nhập từ 2 đoạn trở lên, theo thứ tự thời gian, cách nhau bằng dấu \".\" — vd: \"cắt nấm. cắt đậu hũ. bật bếp\""}
+        </p>
+      )}
+
       <div className="w-full flex flex-row gap-x-3">
         <input
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
           className="p-3 w-full rounded-[4px] bg-[#F8F8F8] border-2 border-[#E3E3E3]"
-          placeholder="Enter your query"
+          placeholder={
+            searchType === "temporal"
+              ? "vd: người bước lên sân khấu. khán giả vỗ tay"
+              : searchType === "trake"
+              ? "vd: cắt nấm. cắt đậu hũ. bật bếp"
+              : "Enter your query"
+          }
         />
         <Button onClick={doSearch} disabled={disabled}>
           Search

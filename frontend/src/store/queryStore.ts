@@ -4,11 +4,12 @@ import type { ModelName } from "../types/api";
 
 export type QueryType = "text" | "image" | "audio";
 
-// Khớp 3 endpoint thật của backend: /ensemble-search (Alg.3 đầy đủ),
-// /single-search (1 model, phục vụ Q4), /temporal-search (Alg.4).
-// Đã bỏ text-search/faiss-search/combined-search/ocr-search — endpoint không
-// còn tồn tại (xem main.py: "Đã BỎ toàn bộ endpoint cũ").
-export type SearchType = "ensemble" | "single";
+// Khớp 5 endpoint thật của backend: /ensemble-search (Alg.3 đầy đủ),
+// /single-search (1 model, phục vụ Q4), /temporal-search-text (Alg.4, 1 ô
+// nhập tách bằng dấu "."), /trake-search-text (N sự kiện tuần tự, cùng cách
+// tách). Đã bỏ text-search/faiss-search/combined-search/ocr-search — endpoint
+// không còn tồn tại (xem main.py: "Đã BỎ toàn bộ endpoint cũ").
+export type SearchType = "ensemble" | "single" | "temporal" | "trake";
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 

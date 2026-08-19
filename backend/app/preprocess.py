@@ -27,7 +27,7 @@ Model — verify từ paper gốc:
   Coarse-grained (ref [41]): OpenCLIP ViT-bigG-14 (laion2b_s39b_b160k)
 """
 
-import os, json, sys, time, subprocess as _sp
+import os, json, re, sys, time, subprocess as _sp
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -856,6 +856,321 @@ def preload() -> None:
             _load_beit3()
         elif name == "clip":
             _load_clip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TRAKE — tổng quát hóa Alg.4 từ 2 điểm (start/end) lên N sự kiện tuần tự.
+#  KHÔNG sửa temporal_search() ở trên (2 điểm, giữ nguyên) — đây là hàm MỚI,
+#  dùng cho câu hỏi TRAKE (N mốc thời gian trong CÙNG 1 video, theo thứ tự).
+#
+#  Merge lại sau khi nhánh bạn cùng team tách trước lúc hàm này được thêm —
+#  nguyên văn logic cũ, chỉ đổi MODEL_NAMES → ACTIVE_MODELS cho khớp quy ước
+#  mới (AIC_MODELS env var, phòng khi CLIP chưa tải xong vẫn chạy được BEiT3).
+#
+#  Thiết kế theo đúng đề xuất: chấm điểm ĐỘC LẬP từng event lên toàn bộ frame
+#  của video (không mở rộng 2 chiều từ 1 anchor như Alg.4 gốc — cách đó chỉ tự
+#  nhiên cho đúng 2 điểm), rồi post-processing bằng DP để chọn 1 frame/event
+#  sao cho frame_idx tăng dần đúng thứ tự VÀ tổng điểm N frame lớn nhất.
+#
+#  Complexity: brute-force thử mọi tổ hợp là O(F^N) — bùng nổ tổ hợp với F~vài
+#  trăm frame/video, N=4-5 event. DP giảm xuống O(N × F²): dp[i][j] = tổng
+#  điểm tốt nhất nếu event i chọn frame j, với ràng buộc có 1 chuỗi frame
+#  trước đó (event 0..i-1) đều đứng TRƯỚC frame j về thời gian.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def trake_search(queries: list[str], anchor_name: str, gap_c: int = 60,
+                 model_name: str = "clip") -> dict:
+    """N query tuần tự (E1, E2, ..., EN) → N frame theo đúng thứ tự thời gian
+    trong video của anchor, tổng điểm lớn nhất.
+
+    gap_c: khoảng cách tối đa (giây) giữa 2 event LIÊN TIẾP (áp theo từng cặp
+    kề nhau trong DP, không phải tổng toàn chuỗi — tránh 1 cặp bị giãn quá xa
+    trong khi các cặp khác vẫn hợp lý).
+    """
+    _load_indexes()
+    _load_meta()
+
+    index, _, encode_fn, id_field = _model_parts(model_name)
+    if index is None or not _meta:
+        return {"error": "Chưa nạp được index hoặc metadata"}
+
+    n = len(queries)
+    if n < 2:
+        return {"error": "Cần ít nhất 2 query cho TRAKE (nếu chỉ 2, dùng /temporal-search cũng được)"}
+
+    anchor = _name2meta.get(anchor_name)
+    if anchor is None:
+        return {"error": f"Không tìm thấy keyframe neo {anchor_name} trong metadata"}
+
+    video = anchor.get("video", "")
+    fps   = float(anchor.get("fps", 25.0))
+
+    frames = [m for m in _video_frames.get(video, []) if m.get(id_field, -1) >= 0]
+    F = len(frames)
+    if F == 0:
+        return {"error": f"Video {video} chưa có frame nào được index"}
+
+    # Bước 1 — chấm điểm ĐỘC LẬP từng event lên MỌI frame trong video.
+    q_embs = [encode_fn(q).ravel() for q in queries]
+
+    def score_frame(fid: int, q: np.ndarray) -> float:
+        """Giống hệt score_frame trong temporal_search() — reconstruct() rồi
+        dot product, chính xác tuyệt đối, không xấp xỉ."""
+        try:
+            vec = index.reconstruct(int(fid)).astype("float32").ravel()
+            return float(np.dot(q, vec))
+        except Exception:
+            return -1.0
+
+    scores = [[score_frame(frames[j][id_field], q_embs[i]) for j in range(F)]
+             for i in range(n)]
+
+    # Bước 2 — DP: dp[i][j] = tổng điểm tốt nhất nếu event i chọn frame j.
+    NEG = float("-inf")
+    dp   = [[NEG] * F for _ in range(n)]
+    back = [[-1]  * F for _ in range(n)]
+    for j in range(F):
+        dp[0][j] = scores[0][j]
+
+    gap_frames = gap_c * fps if gap_c else None
+
+    for i in range(1, n):
+        for j in range(F):
+            best_prev, best_val = -1, NEG
+            for k in range(j):   # k phải đứng TRƯỚC j — đảm bảo frame_idx tăng dần
+                if dp[i - 1][k] == NEG:
+                    continue
+                if gap_frames is not None and \
+                   (frames[j]["frame_idx"] - frames[k]["frame_idx"]) > gap_frames:
+                    continue
+                if dp[i - 1][k] > best_val:
+                    best_val, best_prev = dp[i - 1][k], k
+            if best_prev >= 0:
+                dp[i][j] = best_val + scores[i][j]
+                back[i][j] = best_prev
+
+    # Bước 3 — truy vết chuỗi tốt nhất.
+    last_j = max(range(F), key=lambda j: dp[n - 1][j])
+    if dp[n - 1][last_j] == NEG:
+        return {"error": "Không tìm được chuỗi frame hợp lệ theo đúng thứ tự "
+                         "trong ràng buộc gap_c — thử tăng gap_c."}
+
+    chosen_idx = [0] * n
+    j = last_j
+    for i in range(n - 1, -1, -1):
+        chosen_idx[i] = j
+        j = back[i][j]
+
+    # Candidate list mỗi event — top-10, để UI cho review/đổi (đúng tinh thần
+    # Figure 4c "Boundary Selection" đã áp dụng ở temporal_search()).
+    def top_candidates(i: int, k: int = 10) -> list[dict]:
+        order = sorted(range(F), key=lambda j: -scores[i][j])[:k]
+        return [{
+            "name": frames[j]["name"], "url": _image_url(frames[j]["name"]),
+            "frame_idx": frames[j].get("frame_idx"),
+            "timestamp": frames[j].get("timestamp_str", ""),
+            "score": round(scores[i][j] * 100, 2),
+        } for j in order]
+
+    events = []
+    for i in range(n):
+        j = chosen_idx[i]
+        events.append({
+            "name":      frames[j]["name"],
+            "url":       _image_url(frames[j]["name"]),
+            "frame_idx": frames[j].get("frame_idx"),
+            "timestamp": frames[j].get("timestamp_str", ""),
+            "score":     round(scores[i][j] * 100, 2),
+            "candidates": top_candidates(i),
+        })
+
+    return {
+        "video":          video,
+        "events":         events,
+        "combined_score": round(dp[n - 1][last_j] * 100, 2),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Auto-discovery candidate video — lớp NGOÀI, không đụng temporal_search()/
+#  trake_search() ở trên (2 hàm đó vẫn nguyên vẹn, được GỌI LẠI y nguyên bên
+#  dưới, không sửa dòng nào bên trong).
+#
+#  Paper (Sec 3.5) coi anchor là input CHO SẴN: "We assume that the initially
+#  retrieved and reranked input frame corresponds to the correct reference
+#  frame" — tức là bước chọn anchor vốn là giả định đơn giản hóa của paper,
+#  KHÔNG được paper tự động hóa. Phần dưới đây tự động hóa đúng bước đó, dựa
+#  trên nhận xét: cả temporal_search() lẫn trake_search() chỉ cần biết ĐÚNG
+#  VIDEO (anchor.get("video")/get("fps")) — trake_search() không hề dùng vị
+#  trí frame cụ thể của anchor cho việc tính DP, chỉ cần 1 frame bất kỳ thuộc
+#  đúng video đó.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _discover_candidate_videos(queries: list[str], model_name: str,
+                               top_m: int, min_score: float = 0.10) -> list[dict]:
+    """Chạy _search_one() (đã có, dùng chung với ensemble_search) cho TỪNG
+    query trong `queries`, group theo video.
+
+    ĐIỂM = TẦN SUẤT (frequency), không phải MAX cosine score qua các query —
+    mỗi video được +1 cho MỖI query có ÍT NHẤT 1 frame trong video đó đạt
+    điểm >= min_score (ngưỡng dùng chung khái niệm sim_thr đã có ở
+    temporal_search()/trake_search()).
+
+    Lý do đổi từ MAX sang frequency: 1 video có thể được xếp hạng cao chỉ vì
+    1 query khớp rất mạnh, trong khi các query còn lại hoàn toàn không khớp
+    — dấu hiệu cho thấy video đó nhiều khả năng KHÔNG chứa đủ chuỗi sự kiện,
+    chỉ tình cờ giống 1 khoảnh khắc. Frequency (bao nhiêu query có match đạt
+    ngưỡng) phản ánh đúng "video này có khả năng chứa đủ chuỗi hay không"
+    hơn hẳn 1 con số MAX đơn lẻ dễ bị đánh lừa.
+
+    Trả về list [{video, anchor_name, discovery_score, discovery_score_sum}],
+    sort giảm dần theo discovery_score (tần suất, số nguyên 0..N), tie-break
+    bằng discovery_score_sum (tổng điểm các query đã khớp — video khớp nhiều
+    VÀ điểm cao hơn xếp trên video khớp nhiều nhưng điểm sát ngưỡng).
+    anchor_name là frame có điểm cao nhất trong số các query đã khớp video đó
+    (chỉ cần đúng video khi gọi lại temporal_search()/trake_search(), như đã
+    giải thích ở trên).
+    """
+    video_hits: dict[str, list[dict]] = {}
+    for q in queries:
+        hits = _search_one(model_name, q, top_m)
+        seen_this_query: set[str] = set()
+        for h in hits:
+            if h["score"] < min_score:
+                continue
+            v = h["video"]
+            if v in seen_this_query:
+                continue   # 1 video chỉ tính +1 tần suất / query, dù có nhiều frame khớp
+            seen_this_query.add(v)
+            video_hits.setdefault(v, []).append(h)
+
+    candidates = []
+    for v, hits in video_hits.items():
+        best_hit = max(hits, key=lambda h: h["score"])
+        candidates.append({
+            "video":               v,
+            "anchor_name":         best_hit["name"],
+            "discovery_score":     len(hits),                       # tần suất — số query đã khớp
+            "discovery_score_sum": round(sum(h["score"] for h in hits), 4),  # tie-break
+        })
+
+    candidates.sort(key=lambda c: (-c["discovery_score"], -c["discovery_score_sum"]))
+    return candidates
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tách 1 chuỗi query duy nhất (người dùng gõ trong 1 ô, cách nhau bằng dấu
+#  chấm) thành list các đoạn — phục vụ UI: khung nhập giữ nguyên 1 ô, không
+#  thêm field nào ở frontend.
+#
+#  Tách theo dấu "." + khoảng trắng theo sau (\.\s+), KHÔNG tách theo mọi dấu
+#  "." — để không cắt nhầm số thập phân ("3.5 giây" không có space ngay sau
+#  "." nên không bị tách) hay viết tắt liền số ("TP.HCM"). Đánh đổi: viết tắt
+#  CÓ space sau dấu chấm ("TP. Hồ Chí Minh") vẫn bị tách nhầm — chấp nhận được
+#  vì câu query mô tả cảnh hiếm khi dùng dạng viết tắt này.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _split_query_text(text: str) -> list[str]:
+    """'A. B.  C' -> ['A', 'B', 'C'] — trim khoảng trắng, bỏ đoạn rỗng."""
+    parts = re.split(r"\.\s+", text.strip())
+    return [p.strip().rstrip(".").strip() for p in parts if p.strip()]
+
+
+def temporal_search_candidates(query_start: str, query_end: str,
+                               top_m: int = 50, top_videos: int = 5,
+                               gap_c: int = 20, max_frames: int = 20,
+                               sim_thr: float = 0.10,
+                               model_name: str = "clip") -> list[dict]:
+    """Tự động khám phá top_videos video ứng viên (từ query_start + query_end
+    gộp lại), rồi gọi temporal_search() ĐÃ CÓ — y nguyên, không đổi — cho MỖI
+    video ứng viên. Trả về list kết quả, sort theo combined_score giảm dần.
+
+    Đây là bản KHÔNG CẦN anchor_name thủ công — bổ sung thêm bên cạnh
+    temporal_search() (vẫn giữ nguyên, endpoint /temporal-search cũ không đổi
+    gì), phục vụ trường hợp muốn tự động hóa thay vì bắt người dùng bấm chọn
+    1 frame trước.
+
+    Dùng lại sim_thr (đã có sẵn cho temporal_search() phía dưới) làm min_score
+    lúc khám phá video — cùng 1 khái niệm "đủ tốt", không cần thêm tham số
+    riêng.
+    """
+    _load_indexes()
+    _load_meta()
+
+    candidates = _discover_candidate_videos([query_start, query_end],
+                                            model_name, top_m,
+                                            min_score=sim_thr)[:top_videos]
+    results = []
+    for c in candidates:
+        r = temporal_search(query_start, query_end, anchor_name=c["anchor_name"],
+                            gap_c=gap_c, max_frames=max_frames, sim_thr=sim_thr,
+                            model_name=model_name)
+        if "error" not in r:
+            # discovery_score = tần suất (bao nhiêu query khớp video này, số
+            # nguyên 0..N) — KHÔNG nhân 100 (không còn là cosine score 0..1).
+            r["discovery_score"]     = c["discovery_score"]
+            r["discovery_score_sum"] = c["discovery_score_sum"]
+            results.append(r)
+
+    results.sort(key=lambda r: -(r.get("combined_score") or 0))
+    return results
+
+
+def trake_search_candidates(queries: list[str], top_m: int = 50,
+                            top_videos: int = 5, gap_c: int = 60,
+                            min_score: float = 0.10,
+                            model_name: str = "clip") -> list[dict]:
+    """Tương tự temporal_search_candidates() nhưng cho N query (TRAKE). Gọi
+    trake_search() ĐÃ CÓ — y nguyên — cho mỗi video ứng viên.
+
+    min_score: ngưỡng "đủ tốt" lúc khám phá video (trake_search() bản thân
+    không có sim_thr như temporal_search(), nên tham số này tách riêng thay
+    vì tái dùng — cùng default 0.10 cho nhất quán toàn hệ thống).
+    """
+    _load_indexes()
+    _load_meta()
+
+    candidates = _discover_candidate_videos(queries, model_name, top_m,
+                                            min_score=min_score)[:top_videos]
+    results = []
+    for c in candidates:
+        r = trake_search(queries, anchor_name=c["anchor_name"], gap_c=gap_c,
+                         model_name=model_name)
+        if "error" not in r:
+            r["discovery_score"]     = c["discovery_score"]
+            r["discovery_score_sum"] = c["discovery_score_sum"]
+            results.append(r)
+
+    results.sort(key=lambda r: -(r.get("combined_score") or 0))
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Bản "1 ô nhập" — tách chuỗi rồi GỌI LẠI temporal_search_candidates()/
+#  trake_search_candidates() Ở TRÊN, KHÔNG ĐỔI GÌ bên trong 2 hàm đó. Phục vụ
+#  UI: người dùng gõ "A. B" (temporal) hoặc "A. B. C. D" (trake) trong 1 ô
+#  input duy nhất, không cần thêm field nào ở frontend.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def temporal_search_text(query: str, **kwargs) -> dict:
+    """Tách `query` thành đúng 2 đoạn (start, end) rồi gọi
+    temporal_search_candidates() y nguyên. Lỗi rõ ràng nếu không tách được
+    đúng 2 đoạn — không đoán/tự ghép nếu thiếu."""
+    parts = _split_query_text(query)
+    if len(parts) != 2:
+        return {"error": f"Cần đúng 2 đoạn cách nhau bằng dấu '.' cho temporal "
+                         f"search (start. end) — tách được {len(parts)} đoạn: {parts}"}
+    return {"results": temporal_search_candidates(parts[0], parts[1], **kwargs)}
+
+
+def trake_search_text(query: str, **kwargs) -> dict:
+    """Tách `query` thành N đoạn (N>=2) rồi gọi trake_search_candidates() y
+    nguyên. Lỗi rõ ràng nếu tách được ít hơn 2 đoạn."""
+    parts = _split_query_text(query)
+    if len(parts) < 2:
+        return {"error": f"Cần ít nhất 2 đoạn cách nhau bằng dấu '.' cho TRAKE "
+                         f"— tách được {len(parts)} đoạn: {parts}"}
+    return {"results": trake_search_candidates(parts, **kwargs)}
 
 
 def system_status() -> dict:
