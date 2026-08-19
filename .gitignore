@@ -66,6 +66,9 @@ Thumbs.db
 
 backend/app/static/
 backend/app/indexes/
+# Bộ index đã lọc theo phạm vi thi (vd indexes_L/ chỉ giữ mã L cho vòng 1).
+# Cũng vài GB như bộ gốc, và cũng sinh lại được từ nó.
+backend/app/indexes_*/
 backend/app/unilm_beit3/
 # ===== Deployment working files =====
 # Tracked on purpose: `deploy/p6/*.sh` (called by .github/workflows/deploy.yml and
