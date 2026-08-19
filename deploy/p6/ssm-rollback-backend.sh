@@ -3,8 +3,18 @@ set -euo pipefail
 
 : "${AIC_INSTANCE_ID:?AIC_INSTANCE_ID is required}"
 : "${AIC_DEPLOY_ID:?AIC_DEPLOY_ID is required}"
-: "${AIC_REMOTE_APP_DIR:=/opt/aic/app}"
+# The payload builder below reads this out of os.environ, so the default has
+# to be exported. Written as `: "${VAR:=default}"` it set a shell variable the
+# child process never saw, and the default only appeared to work because the
+# workflow always passes the value explicitly.
+export AIC_REMOTE_APP_DIR="${AIC_REMOTE_APP_DIR:-/opt/aic/app}"
 : "${AWS_REGION:?AWS_REGION is required}"
+# The 100s ceiling on `aws ssm wait command-executed` is not enough for a
+# deploy onto a box that was stopped between sessions: it pulls the image
+# cold and recreates the container. When the waiter gave up, the job failed
+# and the workflow stopped the instance out from under a command that was
+# still running.
+: "${AIC_SSM_TIMEOUT_SECONDS:=1800}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -54,10 +64,23 @@ command_id="$(
 )"
 
 echo "SSM rollback command_id=$command_id"
-aws ssm wait command-executed \
-  --region "$AWS_REGION" \
-  --command-id "$command_id" \
-  --instance-id "$AIC_INSTANCE_ID"
+deadline=$(( SECONDS + AIC_SSM_TIMEOUT_SECONDS ))
+status="Pending"
+while [ "$SECONDS" -lt "$deadline" ]; do
+  status="$(
+    aws ssm get-command-invocation \
+      --region "$AWS_REGION" \
+      --command-id "$command_id" \
+      --instance-id "$AIC_INSTANCE_ID" \
+      --query 'Status' \
+      --output text 2>/dev/null || echo Pending
+  )"
+  case "$status" in
+    Success|Failed|Cancelled|TimedOut) break ;;
+  esac
+  echo "  status=$status"
+  sleep 15
+done
 
 aws ssm get-command-invocation \
   --region "$AWS_REGION" \
@@ -65,3 +88,8 @@ aws ssm get-command-invocation \
   --instance-id "$AIC_INSTANCE_ID" \
   --query '{Status:Status,StandardOutputContent:StandardOutputContent,StandardErrorContent:StandardErrorContent}' \
   --output json
+
+if [ "$status" != "Success" ]; then
+  echo "SSM rollback finished with status=$status" >&2
+  exit 1
+fi
