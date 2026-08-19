@@ -64,6 +64,9 @@ class AutofillRequest(BaseModel):
     # client: the rules put each event's window at "usually under 10 frames",
     # so a one-second step would jump clean over it.
     step: int = Field(25, ge=1, le=2000)
+    # append       add rows until the basket reaches the target
+    # replace_auto drop the generated rows, then refill - for changing the step
+    # clear        drop the generated rows and stop
     mode: str = "append"
 
 
@@ -208,10 +211,15 @@ def autofill_answers(
     task = load_task(conn, task_id)
     target = min(payload.limit, rows_per_query(conn))
 
-    if payload.mode == "replace_auto":
-        conn.execute(
+    if payload.mode in ("replace_auto", "clear"):
+        removed = conn.execute(
             "DELETE FROM answers WHERE task_id = ? AND origin = 'auto'", (task_id,)
-        )
+        ).rowcount
+        if payload.mode == "clear":
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM answers WHERE task_id = ?", (task_id,)
+            ).fetchone()["n"]
+            return {"added": 0, "removed": removed, "total": total}
 
     rows = conn.execute(
         "SELECT * FROM answers WHERE task_id = ? ORDER BY sort_key, id", (task_id,)

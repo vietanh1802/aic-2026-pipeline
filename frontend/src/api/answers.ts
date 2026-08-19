@@ -62,8 +62,14 @@ export function reorderAnswer(
 
 export function autofillAnswers(
   taskId: number,
-  payload: { limit?: number; step?: number; mode?: "append" | "replace_auto" }
-): Promise<{ added: number; total: number }> {
+  payload: {
+    limit?: number;
+    step?: number;
+    // clear drops the generated rows and stops; replace_auto drops and refills
+    // in one call, which reads as a no-op from the UI.
+    mode?: "append" | "replace_auto" | "clear";
+  }
+): Promise<{ added: number; removed?: number; total: number }> {
   return apiFetch(`/api/tasks/${taskId}/answers/autofill`, {
     method: "POST",
     body: JSON.stringify(payload),

@@ -80,6 +80,7 @@ export default function AnswerBasket({
   };
 
   const anchor = rows[0];
+  const autoCount = rows.filter((row) => row.origin === "auto").length;
   const needed = Math.max(0, rowsPerQuery - rows.length);
   const span = Math.ceil(needed / 2) * step;
 
@@ -135,25 +136,29 @@ export default function AnswerBasket({
           </div>
           <div className="flex items-center gap-3 mt-2 flex-wrap">
             <span className="text-[11.5px] text-proto-muted">
-              {anchor
-                ? `${needed} dòng auto → đủ ${rowsPerQuery} · phủ ${Math.max(
+              {!anchor
+                ? "Thêm ít nhất một đáp án để làm mốc neo."
+                : needed === 0
+                ? `Đã đủ ${rowsPerQuery} dòng. Xoá dòng auto rồi đổi bước nếu muốn trải lại.`
+                : `${needed} dòng auto → đủ ${rowsPerQuery} · phủ ${Math.max(
                     0,
                     anchor.frames[0] - span
-                  )} → ${anchor.frames[0] + span}`
-                : "Thêm ít nhất một đáp án để làm mốc neo."}
+                  )} → ${anchor.frames[0] + span}`}
             </span>
             <span className="ml-auto flex gap-2">
+              {/* "Điền lại" used to send replace_auto, which deletes and
+                  refills in one call - from the outside that is 100 rows before
+                  and 100 rows after, indistinguishable from a dead button.
+                  Clearing is its own action now. */}
               <Button
                 size="xs"
                 variant="outline"
-                disabled={busy}
+                disabled={busy || autoCount === 0}
                 onClick={() =>
-                  void act(() =>
-                    autofillAnswers(task.id, { step, mode: "replace_auto" })
-                  )
+                  void act(() => autofillAnswers(task.id, { step, mode: "clear" }))
                 }
               >
-                Điền lại
+                Xoá {autoCount} dòng auto
               </Button>
               <Button
                 size="xs"

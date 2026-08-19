@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Button from "../Button";
 import { SuperSimple } from "./RangeForm";
 import {
@@ -92,33 +92,38 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     { id: 2, label: "Task 3 - TRAKE", value: "Task 3 - trake" as SubmitType },
   ];
 
-  // const escape = (val: string) => `"${val.replace(/"/g, "")}"`;
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
+  // Google is loaded on demand, not on mount.
+  //
+  // Both of these used to run in a useEffect the moment the video popup opened,
+  // so every single frame anyone inspected fetched accounts.google.com and
+  // initialised the Sheets and Drive discovery documents — third-party round
+  // trips in front of a video the user wanted to watch, for a button most
+  // sessions never press. Now the first click on Create Sheet pays that cost,
+  // once, and the promise is cached so a second click does not repeat it.
+  const googleReady = useRef<Promise<void> | null>(null);
 
-    script.onload = () => {
-      console.log("✅ GIS script loaded");
-    };
-  }, []);
-
-  // === INIT GOOGLE API + GIS ===
-  useEffect(() => {
-    function start() {
-      gapi.client
-        .init({
-          apiKey: API_KEY,
-          discoveryDocs: DISCOVERY_DOCS,
-        })
-        .then(() => {
-          console.log("✅ GAPI client initialized");
-        });
+  const loadGoogle = (): Promise<void> => {
+    if (googleReady.current) {
+      return googleReady.current;
     }
-    gapi.load("client", start);
-  }, []);
+    googleReady.current = new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        gapi.load("client", () => {
+          gapi.client
+            .init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS })
+            .then(() => resolve())
+            .catch(reject);
+        });
+      };
+      script.onerror = () => reject(new Error("Không tải được Google Identity"));
+      document.body.appendChild(script);
+    });
+    return googleReady.current;
+  };
 
   // Hàm login bằng GIS -> trả access_token
   const getAccessToken = (): Promise<string> => {
@@ -149,6 +154,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   // === GOOGLE SHEETS HANDLER ===
   const createSheet = async () => {
     try {
+      await loadGoogle(); // nạp GIS + gapi lần đầu bấm nút này
       await getAccessToken(); // login + set token cho gapi
 
       let rows: string[][] = [];
