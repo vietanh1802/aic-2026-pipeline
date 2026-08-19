@@ -355,6 +355,40 @@ function App() {
         </div>
       )}
 
+      {/* Temporal Search Results — Alg.4 text-query path */}
+      {(isLoading || (hasQueried && searchType === "temporal")) && (
+        <div className="max-w-[98%] mx-auto mb-[200px] px-4">
+          {isLoading ? (
+            <p className="text-sm text-gray-400 animate-pulse">Đang tìm kiếm…</p>
+          ) : temporalCandidates.length === 0 ? (
+            <p className="text-sm text-gray-500">Không tìm thấy kết quả.</p>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Tìm thấy{" "}
+              <strong className="text-gray-800">{temporalCandidates.length}</strong>{" "}
+              video ứng viên (Temporal Search) — giao diện chi tiết đang phát triển.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* TRAKE Search Results */}
+      {(isLoading || (hasQueried && searchType === "trake")) && (
+        <div className="max-w-[98%] mx-auto mb-[200px] px-4">
+          {isLoading ? (
+            <p className="text-sm text-gray-400 animate-pulse">Đang tìm kiếm…</p>
+          ) : trakeCandidates.length === 0 ? (
+            <p className="text-sm text-gray-500">Không tìm thấy kết quả.</p>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Tìm thấy{" "}
+              <strong className="text-gray-800">{trakeCandidates.length}</strong>{" "}
+              video ứng viên (TRAKE) — giao diện chi tiết đang phát triển.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Sticky Query Input */}
       <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-gray-300 shadow-xl rounded-xl z-40">
         <QueryInput
