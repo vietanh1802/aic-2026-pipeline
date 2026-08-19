@@ -31,7 +31,11 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r /tmp/requirements.txt
 
 COPY backend/app ./app
-RUN mkdir -p /opt/aic/indexes /opt/aic/static/images
+# scripts/ carries seed_team, which the deploy runs once against a fresh
+# database. Without it in the image there is no way to create the first
+# account, and there is no member-management screen by design.
+COPY backend/scripts ./scripts
+RUN mkdir -p /opt/aic/indexes /opt/aic/static/images /opt/aic/data
 
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

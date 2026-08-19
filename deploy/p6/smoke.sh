@@ -91,6 +91,39 @@ retry search > "$tmp/search.json"
 
 jq -e '.returned_results > 0 and (.results | length > 0)' "$tmp/search.json" > /dev/null
 
+# The collaboration layer. Search passing says nothing about it: it lives in the
+# same process but behind its own tables, and a deploy that loses the volume or
+# skips seeding leaves search perfectly healthy while nobody can sign in.
+SEED_USER="${AIC_SMOKE_USER:-nam}"
+SEED_PASSWORD="${AIC_SMOKE_PASSWORD:-password}"
+
+login() {
+  curl --fail --silent --show-error --location     --user-agent "$UA"     --header "Content-Type: application/json"     --data "{\"username\":\"$SEED_USER\",\"password\":\"$SEED_PASSWORD\"}"     "$AIC_BACKEND_URL/api/auth/login"
+}
+retry login > "$tmp/login.json"
+jq -e '.token | length > 20' "$tmp/login.json" > /dev/null
+token="$(jq -r '.token' "$tmp/login.json")"
+echo "signed in as $SEED_USER"
+
+# An unauthenticated /api/board must be refused. If this ever answers 200 the
+# whole board is public and no other check in this file would notice.
+code="$(
+  curl --silent --output /dev/null --write-out '%{http_code}'     --user-agent "$UA" "$AIC_BACKEND_URL/api/board"
+)"
+if [ "$code" != "401" ]; then
+  echo "GET /api/board without a token returned $code, expected 401" >&2
+  exit 1
+fi
+
+board() {
+  curl --fail --silent --show-error --location     --user-agent "$UA"     --header "Authorization: Bearer $token"     "$AIC_BACKEND_URL/api/board"
+}
+retry board > "$tmp/board.json"
+# `round` is null until a pack is imported, a legitimate state on a fresh
+# deploy - so this asserts the shape answered, not that a round exists.
+jq -e 'has("round") and (.tasks | type == "array")' "$tmp/board.json" > /dev/null
+echo "board tasks=$(jq -r '.tasks | length' "$tmp/board.json")"
+
 frontend() {
   curl --fail --silent --show-error --location \
     --user-agent "$UA" \

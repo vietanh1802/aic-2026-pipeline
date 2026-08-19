@@ -101,6 +101,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc -b
+      - run: npm test
       - run: npm run build
         env:
           VITE_API_BASE_URL: ${{ env.AIC_BACKEND_URL }}
@@ -137,6 +138,14 @@ jobs:
         run: |
           python -m pip install -r backend/requirements.txt
           PYTHONPATH=backend python -c "import app.main"
+
+      # ruff and a bare import say the module parses. They say nothing about
+      # the pack parser, autofill, the export row shapes or session handling —
+      # all of which are covered and none of which were run before this step.
+      - name: Pytest
+        run: |
+          python -m pip install pytest
+          cd backend && python -m pytest tests -q
 
   deploy-frontend:
     name: Deploy Cloudflare Pages

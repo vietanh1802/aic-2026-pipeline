@@ -36,6 +36,13 @@ services:
     environment:
       AIC_INDEX_DIR: /opt/aic/indexes
       AIC_IMAGES_DIR: /opt/aic/static/images
+      # The collaboration database. Bind-mounted to the host beside the
+      # indexes and images, not left in the container's writable layer: every
+      # deploy runs `compose up --force-recreate`, which would otherwise take
+      # the accounts, the imported pack and the whole round's answers with it.
+      # A host path rather than a named volume so it can be backed up with scp
+      # and inspected without `docker volume inspect`.
+      AIC_DB_PATH: /opt/aic/data/app.db
       AIC_IMAGE_BASE_URL: ${AIC_IMAGE_BASE_URL:-https://aic-frames.umaga.fun}
       AIC_CORS_ORIGINS: ${AIC_CORS_ORIGINS:-https://aic.umaga.fun}
       AIC_MODELS: ${AIC_MODELS:-}
@@ -49,6 +56,7 @@ services:
       - "${AIC_HOST_INDEX_DIR:-/opt/aic/indexes}:/opt/aic/indexes:ro"
       - "${AIC_HOST_IMAGES_DIR:-/opt/aic/static/images}:/opt/aic/static/images:ro"
       - "${AIC_HOST_MODEL_CACHE_DIR:-/opt/aic/model-cache}:/opt/aic/model-cache"
+      - "${AIC_HOST_DATA_DIR:-/opt/aic/data}:/opt/aic/data"
     healthcheck:
       # A 200 from /health only says the process is up: it answers even when the
       # warm-up thread has died, which once let `docker ps` report healthy while
