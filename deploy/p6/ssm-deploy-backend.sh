@@ -39,6 +39,11 @@ if docker image inspect aic2026-api:local >/dev/null 2>&1; then
   docker tag aic2026-api:local "$rollback_tag"
 fi
 
+# The database lives on the host beside the indexes. Docker would create the
+# directory itself, but only as root with no way to say what mode — making it
+# here keeps ownership predictable for backups.
+mkdir -p /opt/aic/data
+
 docker pull "$AIC_NEW_IMAGE"
 docker tag "$AIC_NEW_IMAGE" aic2026-api:local
 # A deploy killed between compose renaming the running container and creating
@@ -54,6 +59,18 @@ fi
 
 docker compose up -d --force-recreate api
 docker compose ps api
+
+# Seed the six accounts. Idempotent: an account that already exists keeps its
+# password, so this is a no-op on every deploy after the first. It has to run
+# here because there is no member-management screen — a fresh database with no
+# rows means nobody can sign in and there is no way to fix that from the UI.
+#
+# Best effort: the API is still warming up (90-145s) and the accounts are not
+# needed until a human logs in, so a failure here must not roll back a
+# perfectly good image. The smoke test is what decides that.
+if ! docker compose exec -T api python -m scripts.seed_team; then
+  echo "WARNING: seeding failed; run 'docker compose exec api python -m scripts.seed_team' by hand" >&2
+fi
 REMOTE
 
 command_payload="$tmp/command.json"

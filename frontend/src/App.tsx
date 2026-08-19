@@ -13,6 +13,13 @@ import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
 import { formatResultByVideoID } from "./helpers/formatResult.helper";
+import {
+  TemporalCandidates,
+  TrakeCandidates,
+} from "./components/CandidateResults";
+import { splitQueryParts } from "./helpers/candidates";
+import { addAnswer } from "./api/answers";
+import type { BoardTask } from "./api/board";
 import type {
   HealthResponse,
   SearchResult,
@@ -74,7 +81,14 @@ function describeBackendHealth(health: HealthResponse): BackendHealth {
   return { status: "ready", message: "API ready" };
 }
 
-function App() {
+function App({
+  activeTask = null,
+  onBasketChanged,
+}: {
+  /** The task claimed on the board, if any. Read-only context for the search. */
+  activeTask?: BoardTask | null;
+  onBasketChanged?: () => void;
+} = {}) {
   const results = useSearchStore((state) => state.results);
   const maxDistance = useSearchStore((state) => state.maxDistance);
   const totalTime = useSearchStore((state) => state.totalTime);
@@ -131,11 +145,11 @@ function App() {
   }, []);
 
   const healthClassName = {
-    checking: "border-gray-300 bg-white text-gray-700",
-    starting: "border-amber-300 bg-amber-50 text-amber-800",
-    ready: "border-emerald-300 bg-emerald-50 text-emerald-800",
-    offline: "border-red-300 bg-red-50 text-red-800",
-    failed: "border-red-300 bg-red-50 text-red-800",
+    checking: "border-proto-line bg-white text-proto-muted",
+    starting: "border-[#d4a017] bg-[#d4a017]/12 text-[#8a6a0f]",
+    ready: "border-[#5db872] bg-[#5db872]/12 text-[#3d7a4d]",
+    offline: "border-[#c64545] bg-[#c64545]/10 text-[#8f3030]",
+    failed: "border-[#c64545] bg-[#c64545]/10 text-[#8f3030]",
   }[backendHealth.status];
 
   // ── Temporal Search (Alg.4) — anchor do người dùng tự chọn từ kết quả
@@ -147,6 +161,27 @@ function App() {
     name: string;
     url: string;
   } | null>(null);
+
+  // Đề bài của BTC là văn bản chỉ đọc; ô search bên dưới là chữ người dùng tự
+  // gõ. Hai thứ không bao giờ trộn vào nhau — xem spec §6.2.
+  const handleAddToBasket = async (result: SearchResult) => {
+    if (!activeTask) {
+      console.warn("[basket] Chưa mở task nào từ bảng Board.");
+      return;
+    }
+    const video = videoIdFromFrame(result.frame);
+    const frame = Number(result.frame_idx ?? 0);
+    const frames =
+      activeTask.type === "trake"
+        ? Array.from({ length: activeTask.n_events ?? 1 }, () => frame)
+        : [frame];
+    try {
+      await addAnswer(activeTask.id, { video_id: video, frames });
+      onBasketChanged?.();
+    } catch (err) {
+      console.error("Không thêm được vào giỏ:", err);
+    }
+  };
 
   const handleUseAsAnchor = (result: SearchResult) => {
     setTemporalAnchor({ name: result.name, url: result.url });
@@ -243,6 +278,10 @@ function App() {
     }
   }, [results, hasQueried, setHasQueried, queryText, isLoading]);
 
+  // Nhãn E1…EN là chính các đoạn người dùng gõ, tách đúng luật của
+  // preprocess.py:_split_query_text.
+  const queryParts = splitQueryParts(queryText);
+
   const [groupedResult, setgroupedResult] = useState<
     Record<string, SearchResult[]>
   >({});
@@ -256,17 +295,29 @@ function App() {
   }, [sortFrameBy, results]);
 
   return (
-    <div className="relative min-h-screen bg-gray-50 p-2">
+    <div className="relative min-h-screen bg-proto-canvas p-2">
       {/* Header */}
       <div className="w-full relative">
         <Header />
         {hasQueried && (
           <div className="absolute top-0 left-1/2 transform -translate-x-1/2 z-999">
             <ResultInfoAndSort
-              numberOfResults={results.length}
+              numberOfResults={
+                searchType === "temporal"
+                  ? temporalCandidates.length
+                  : searchType === "trake"
+                  ? trakeCandidates.length
+                  : results.length
+              }
               sortBy={sortFrameBy}
               totalTime={totalTime}
               onSortChange={(option) => setSortFrameBy(option)}
+              unit={
+                searchType === "temporal" || searchType === "trake"
+                  ? "videos"
+                  : "frames"
+              }
+              queryParts={queryParts.length}
             />
           </div>
         )}
@@ -281,14 +332,56 @@ function App() {
         </div>
       </div>
 
+      {/* Đề bài của task đang mở — nguyên văn, chỉ đọc, không bao giờ dịch. */}
+      {activeTask && (
+        <div className="max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border border-proto-line font-baloo">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-proto-dark text-proto-canvas">
+              {activeTask.type === "qa" ? "Q&A" : activeTask.type.toUpperCase()}
+            </span>
+            <b className="text-sm text-proto-ink font-mono">
+              Task {activeTask.code}
+            </b>
+            <button
+              type="button"
+              className="text-[11.5px] text-proto-primary-active underline ml-auto"
+              onClick={() =>
+                useQueryStore.getState().setQueryText(
+                  activeTask.query_text.replace(/\s+/g, " ").trim()
+                )
+              }
+            >
+              Chép đề bài xuống ô search
+            </button>
+          </div>
+          <div className="text-[12.5px] text-proto-body leading-relaxed whitespace-pre-wrap">
+            {activeTask.query_text}
+          </div>
+          {activeTask.event_labels.length > 0 && (
+            <div className="flex flex-col gap-1 mt-2">
+              {activeTask.event_labels.map((label, index) => (
+                <div
+                  key={index}
+                  className="text-[11.5px] bg-proto-canvas border border-proto-line rounded-[6px] px-2 py-1"
+                >
+                  <b className="text-proto-primary-active">E{index + 1}</b> {label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Project Description (only when no results) */}
-      {!hasQueried && (
+      {!hasQueried && !activeTask && (
         <div className="max-w-4xl mx-auto mt-10">
           <ProjectDescription />
         </div>
       )}
       {showPopup && result !== null && (
         <VideoPopup
+          activeTask={activeTask}
+          onBasketChanged={onBasketChanged}
           videoId={videoUrl}
           frameId={frameId}
           startAt={startTime}
@@ -313,6 +406,7 @@ function App() {
             maxDistance={maxDistance}
             isLoading={isLoading}
             onUseAsAnchor={handleUseAsAnchor}
+            onAddToBasket={activeTask ? handleAddToBasket : undefined}
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
@@ -329,7 +423,7 @@ function App() {
           {Object.entries(groupedResult).map(([key, items]) => (
             <div
               key={key}
-              className="border-5 border-gray-300  m-[15px] mb-[30px] p-[10px] py-[20px] rounded-[8px] flex flex-col"
+              className="border border-proto-line bg-white m-[15px] mb-[30px] p-[10px] py-[20px] rounded-[8px] flex flex-col"
             >
               <div className="pl-[14px] mb-[12px] flex text-lg">
                 <span className="font-bold">Video ID :</span>
@@ -341,7 +435,8 @@ function App() {
                   maxDistance={maxDistance}
                   isLoading={isLoading}
                   onUseAsAnchor={handleUseAsAnchor}
-                  onClick={(result) => {
+                  onAddToBasket={activeTask ? handleAddToBasket : undefined}
+                        onClick={(result) => {
                     setframeId(frameIdFromName(result.name));
                     setVideoUrl(videoIdFromFrame(result.frame));
                     setStartTime(startMsFromResult(result));
@@ -359,15 +454,19 @@ function App() {
       {(isLoading || (hasQueried && searchType === "temporal")) && (
         <div className="max-w-[98%] mx-auto mb-[200px] px-4">
           {isLoading ? (
-            <p className="text-sm text-gray-400 animate-pulse">Đang tìm kiếm…</p>
-          ) : temporalCandidates.length === 0 ? (
-            <p className="text-sm text-gray-500">Không tìm thấy kết quả.</p>
-          ) : (
-            <p className="text-sm text-gray-500">
-              Tìm thấy{" "}
-              <strong className="text-gray-800">{temporalCandidates.length}</strong>{" "}
-              video ứng viên (Temporal Search) — giao diện chi tiết đang phát triển.
+            <p className="text-sm text-proto-muted animate-pulse">
+              Đang tìm kiếm…
             </p>
+          ) : temporalCandidates.length === 0 ? (
+            <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
+          ) : (
+            <TemporalCandidates
+              results={temporalCandidates}
+              parts={queryParts}
+              fpsOf={(video) =>
+                (KeyframeFPS as Record<string, number>)[video ?? ""] ?? 0
+              }
+            />
           )}
         </div>
       )}
@@ -376,21 +475,19 @@ function App() {
       {(isLoading || (hasQueried && searchType === "trake")) && (
         <div className="max-w-[98%] mx-auto mb-[200px] px-4">
           {isLoading ? (
-            <p className="text-sm text-gray-400 animate-pulse">Đang tìm kiếm…</p>
-          ) : trakeCandidates.length === 0 ? (
-            <p className="text-sm text-gray-500">Không tìm thấy kết quả.</p>
-          ) : (
-            <p className="text-sm text-gray-500">
-              Tìm thấy{" "}
-              <strong className="text-gray-800">{trakeCandidates.length}</strong>{" "}
-              video ứng viên (TRAKE) — giao diện chi tiết đang phát triển.
+            <p className="text-sm text-proto-muted animate-pulse">
+              Đang tìm kiếm…
             </p>
+          ) : trakeCandidates.length === 0 ? (
+            <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
+          ) : (
+            <TrakeCandidates results={trakeCandidates} parts={queryParts} />
           )}
         </div>
       )}
 
       {/* Sticky Query Input */}
-      <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-gray-300 shadow-xl rounded-xl z-40">
+      <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-proto-line shadow-xl rounded-xl z-40">
         <QueryInput
           doSearch={doSearch}
           disabled={isSearchDisabled || isLoading}

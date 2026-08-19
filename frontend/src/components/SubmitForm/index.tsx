@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Button from "../Button";
 import { SuperSimple } from "./RangeForm";
 import {
@@ -9,6 +9,8 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
+import { addAnswer } from "../../api/answers";
+import type { BoardTask } from "../../api/board";
 import { gapi } from "gapi-script";
 // ====== GOOGLE API CONFIG ======
 const CLIENT_ID =
@@ -58,6 +60,9 @@ interface SubmitFormData {
   startAt: number;
   setStartAt: (val: number) => void;
   frame_detect: number;
+  /** Task đang mở từ Board. Có nó thì Add Answer ghi thẳng vào cơ sở dữ liệu. */
+  activeTask?: BoardTask | null;
+  onBasketChanged?: () => void;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -66,6 +71,8 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   startAt,
   setStartAt,
   frame_detect,
+  activeTask = null,
+  onBasketChanged,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
@@ -85,33 +92,38 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     { id: 2, label: "Task 3 - TRAKE", value: "Task 3 - trake" as SubmitType },
   ];
 
-  // const escape = (val: string) => `"${val.replace(/"/g, "")}"`;
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
+  // Google is loaded on demand, not on mount.
+  //
+  // Both of these used to run in a useEffect the moment the video popup opened,
+  // so every single frame anyone inspected fetched accounts.google.com and
+  // initialised the Sheets and Drive discovery documents — third-party round
+  // trips in front of a video the user wanted to watch, for a button most
+  // sessions never press. Now the first click on Create Sheet pays that cost,
+  // once, and the promise is cached so a second click does not repeat it.
+  const googleReady = useRef<Promise<void> | null>(null);
 
-    script.onload = () => {
-      console.log("✅ GIS script loaded");
-    };
-  }, []);
-
-  // === INIT GOOGLE API + GIS ===
-  useEffect(() => {
-    function start() {
-      gapi.client
-        .init({
-          apiKey: API_KEY,
-          discoveryDocs: DISCOVERY_DOCS,
-        })
-        .then(() => {
-          console.log("✅ GAPI client initialized");
-        });
+  const loadGoogle = (): Promise<void> => {
+    if (googleReady.current) {
+      return googleReady.current;
     }
-    gapi.load("client", start);
-  }, []);
+    googleReady.current = new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        gapi.load("client", () => {
+          gapi.client
+            .init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS })
+            .then(() => resolve())
+            .catch(reject);
+        });
+      };
+      script.onerror = () => reject(new Error("Không tải được Google Identity"));
+      document.body.appendChild(script);
+    });
+    return googleReady.current;
+  };
 
   // Hàm login bằng GIS -> trả access_token
   const getAccessToken = (): Promise<string> => {
@@ -142,6 +154,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   // === GOOGLE SHEETS HANDLER ===
   const createSheet = async () => {
     try {
+      await loadGoogle(); // nạp GIS + gapi lần đầu bấm nút này
       await getAccessToken(); // login + set token cho gapi
 
       let rows: string[][] = [];
@@ -209,7 +222,34 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   };
 
   const handleSubmit = async () => {
-    console.log(submitType);
+    const frame = Math.floor(startAt * frame_detect);
+
+    // Có task đang mở thì đây là đường ghi thật: một hàng trong bảng answers,
+    // sống qua F5 và đồng đội thấy được. Giỏ Zustand bên dưới chỉ còn là đường
+    // lùi cho lúc chưa nhận task nào — trước đây nó là đường duy nhất, và đó là
+    // lý do bấm Add Answer xong số trên thanh nav vẫn đứng yên.
+    if (activeTask) {
+      const frames =
+        activeTask.type === "trake"
+          ? Array.from({ length: activeTask.n_events ?? 1 }, () => frame)
+          : [frame];
+      try {
+        await addAnswer(activeTask.id, {
+          video_id: videoId,
+          frames,
+          answer_text: activeTask.type === "qa" ? answer || null : null,
+        });
+        onBasketChanged?.();
+        if (activeTask.type !== "trake") {
+          setAnswer("");
+        }
+        return;
+      } catch (err) {
+        console.error("Không thêm được vào giỏ:", err);
+        return;
+      }
+    }
+
     switch (submitType) {
       case "Task 1 - kis":
         addTask1(videoId, String(Math.floor(startAt * frame_detect)));

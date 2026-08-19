@@ -9,11 +9,14 @@ import KeyframeDB from "../../mapping/keyframes.json";
 import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { extractTimestamp } from "../FrameDisplay";
+import type { BoardTask } from "../../api/board";
 
 interface VideoPopupProps {
   videoId: string;
   frameId: string;
   startAt: number; // in milliseconds
+  activeTask?: BoardTask | null;
+  onBasketChanged?: () => void;
   onClose: () => void;
   setStartAt: (val: number) => void;
 }
@@ -38,6 +41,8 @@ export default function VideoPopup({
   videoId,
   frameId,
   startAt,
+  activeTask = null,
+  onBasketChanged,
   onClose,
   setStartAt,
 }: VideoPopupProps) {
@@ -125,6 +130,8 @@ export default function VideoPopup({
         {duration > 0 && (
           <div className="mt-[10px]">
             <SubmitForm
+              activeTask={activeTask}
+              onBasketChanged={onBasketChanged}
               videoId={videoId}
               duration={duration}
               startAt={startAt / 1000}

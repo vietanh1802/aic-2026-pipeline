@@ -1,14 +1,7 @@
 import type { SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
-
-// type FrameDisplayProps = {
-//   frame: string;
-//   distance: number;
-//   url: string;
-//   onClick: () => void;
-//   maxDistance: number;
-// };
+import { accuracyColor, accuracyPercent } from "./accuracy";
 
 type FrameDisplayProps2 = {
   results: SearchResult[];
@@ -20,83 +13,11 @@ type FrameDisplayProps2 = {
   // 1 frame làm mốc (anchor) cho Temporal Search (Alg.4) — xem
   // TemporalSearchPanel.
   onUseAsAnchor?: (result: SearchResult) => void;
+  // MỚI — optional như onUseAsAnchor: không truyền thì nút không hiện, nên
+  // mọi chỗ gọi FrameDisplay chưa cập nhật vẫn chạy nguyên.
+  onAddToBasket?: (result: SearchResult) => void;
 };
 
-// Calculate similarity percentage and return color
-// function calculateSimilarityScore(
-//   distance: number,
-//   maxDistance: number,
-//   minDistance: number
-// ): {
-//   percentage: number;
-//   backgroundColor: string;
-// } {
-//   if (maxDistance === 0) {
-//     return { percentage: 100, backgroundColor: "bg-[rgb(0,255,0)]" };
-//   }
-//   let percentage = 0;
-//   if (minDistance == maxDistance) {
-//     percentage = 0;
-//   } else {
-//     percentage = ((maxDistance - distance) / (maxDistance - minDistance)) * 100;
-//   }
-//   const normalizedScore = percentage / 100;
-//   let red: number, green: number;
-//   const blue: number = 0;
-
-//   if (normalizedScore <= 0.5) {
-//     red = 255;
-//     green = Math.round(255 * (normalizedScore * 2));
-//   } else {
-//     red = Math.round(255 * (1 - (normalizedScore - 0.5) * 2));
-//     green = 255;
-//   }
-
-//   const backgroundColor = `rgb(${red},${green},${blue})`;
-
-//   return { percentage, backgroundColor };
-// }
-
-function calculateSimilarityScore(
-  distance: number
-): {
-  percentage: number;
-  backgroundColor: string;
-} {
-  // giữ logic cũ, nhưng bỏ qua bằng cách comment
-  // if (maxDistance === 0) {
-  //   return { percentage: 100, backgroundColor: "bg-[rgb(0,255,0)]" };
-  // }
-  // let percentage = 0;
-  // if (minDistance == maxDistance) {
-  //   percentage = 0;
-  // } else {
-  //   percentage = ((maxDistance - distance) / (maxDistance - minDistance)) * 100;
-  // }
-  // const normalizedScore = percentage / 100;
-
-  const percentage = distance; // distance đã là %
-  const normalizedScore = percentage / 100; // để tái dùng logic màu
-
-  let red: number, green: number;
-  const blue: number = 0;
-
-  if (normalizedScore <= 0.5) {
-    red = 255;
-    green = Math.round(255 * (normalizedScore * 2));
-  } else {
-    red = Math.round(255 * (1 - (normalizedScore - 0.5) * 2));
-    green = 255;
-  }
-
-  const backgroundColor = `rgb(${red},${green},${blue})`;
-
-  return { percentage, backgroundColor };
-}
-
-// Chỉ dùng làm dự phòng: regex coi số cuối tên file là milliseconds, nhưng số
-// đó là frame index — "K19_V001-0000-29.jpg" ra "00:00.29" thay vì 00:00:00.966
-// (frame 29 @30fps). Ưu tiên trường `timestamp` của backend, xem frameTimestamp().
 export function extractTimestamp(filename: string): string {
   const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
   const timestampMatch = nameWithoutExt.match(/-(\d+)$/);
@@ -116,43 +37,24 @@ export function extractTimestamp(filename: string): string {
     .padStart(2, "0")}.${milliseconds.toString().padStart(2, "0")}`;
 }
 
-// export default function FrameDisplay({
-//   frame,
-//   distance,
-//   url,
-//   onClick,
-//   maxDistance,
-// }: FrameDisplayProps) {
-//   const timestamp = extractTimestamp(frame);
-//   const { percentage, backgroundColor } = calculateSimilarityScore(
-//     distance,
-//     maxDistance
-//   );
+export function routeAgreement(result: SearchResult): "both" | "one" | "none" {
+  const count = Object.keys(result.routes ?? {}).length;
+  if (count >= 2) return "both";
+  if (count === 1) return "one";
+  return "none";
+}
 
-//   return (
-// <div
-//   className={`flex flex-col gap-y-1 p-2 pb-1 rounded-[8px] w-full h-full font-baloo`}
-//   style={{ backgroundColor: backgroundColor }}
-// >
-//   <div className="relative w-full h-full ">
-//     <img
-//       src={url}
-//       alt={`Frame at ${timestamp}`}
-//       className="w-full h-full rounded-[4px]"
-//     />
-//     <div className="absolute bottom-0 right-0 mr-1 mb-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">
-//       <img src="/search.svg" alt="search_icon" onClick={onClick} />
-//     </div>
-//   </div>
-//   <div className="flex flex-row justify-between items-center w-full">
-//     <div>
-//       <span className="font-bold">Timestamp:</span> {timestamp}
-//     </div>
-//     <div className={`font-medium`}>{percentage.toFixed(1)}%</div>
-//   </div>
-// </div>
-//   );
-// }
+const AGREEMENT_DOT: Record<"both" | "one" | "none", string> = {
+  both: "bg-proto-teal",
+  one: "bg-proto-amber",
+  none: "bg-proto-line",
+};
+
+const AGREEMENT_TITLE: Record<"both" | "one" | "none", string> = {
+  both: "BEiT3 và CLIP cùng tìm ra",
+  one: "chỉ một model tìm ra",
+  none: "không rõ route",
+};
 
 // Timestamp từ backend, parse tên file chỉ khi backend không trả trường này.
 function frameTimestamp(result: SearchResult): string {
@@ -162,11 +64,11 @@ function frameTimestamp(result: SearchResult): string {
 // Keyframe chưa tải ảnh: vẫn hiện ranking/tên/timestamp thay vì <img> vỡ.
 function MissingFrame({ name }: { name: string }) {
   return (
-    <div className="w-full h-full min-h-[96px] rounded-[4px] bg-gray-200 border-2 border-dashed border-gray-400 flex flex-col items-center justify-center text-center px-2">
-      <span className="text-gray-500 text-xs font-semibold">
+    <div className="w-full h-full min-h-[96px] rounded-[4px] bg-proto-dark border border-dashed border-neutral-600 flex flex-col items-center justify-center text-center px-2">
+      <span className="text-neutral-400 text-xs font-semibold">
         Chưa tải ảnh
       </span>
-      <span className="text-gray-400 text-[10px] break-all leading-tight mt-0.5">
+      <span className="text-neutral-500 text-[10px] break-all leading-tight mt-0.5">
         {name}
       </span>
     </div>
@@ -178,11 +80,15 @@ export default function FrameDisplay({
   isLoading,
   onClick,
   onUseAsAnchor,
+  onAddToBasket,
 }: FrameDisplayProps2) {
   const timestamp = results.map(frameTimestamp);
-  const sub = results.map((result) => {
-    return calculateSimilarityScore(result.distance);
-  });
+  // The ramp is normalised across the results actually on screen. Raw distance
+  // spans a narrow band (a measured run went 100.0 to 86.15), so without this
+  // every tile lands in the same shade.
+  const scores = results.map((r) => r.distance);
+  const minScore = scores.length ? Math.min(...scores) : 0;
+  const maxScore = scores.length ? Math.max(...scores) : 0;
 
   return (
     <>
@@ -191,11 +97,14 @@ export default function FrameDisplay({
             return (
               <div
                 key={index}
-                className="flex flex-col gap-y-1 p-2 pb-1 rounded-[8px] w-full h-full font-baloo"
-                style={{ backgroundColor: sub[index].backgroundColor }}
+                className="flex flex-col rounded-[8px] w-full h-full font-baloo bg-white border-2 overflow-hidden"
+                style={{
+                  borderColor: accuracyColor(
+                    accuracyPercent(result.distance, minScore, maxScore)
+                  ),
+                }}
               >
-                <div className="font-bold">{result.name}</div>
-                <div className="relative w-full aspect-[3/2]">
+                <div className="relative w-full aspect-[3/2] bg-proto-dark">
                   {result.has_image === false ? (
                     <MissingFrame name={result.name} />
                   ) : (
@@ -223,6 +132,18 @@ export default function FrameDisplay({
                       stopPropagation() để không kích hoạt onClick cũ (mở
                       VideoPopup). Đặt góc trên-phải để không đè nút search
                       sẵn có ở góc dưới-phải. */}
+                  {onAddToBasket && (
+                    <div
+                      className="absolute top-0 left-0 ml-1 mt-1 hover:cursor-pointer px-1.5 py-0.5 bg-proto-primary text-white w-fit h-fit rounded-[4px] text-xs font-bold"
+                      title="Thêm vào giỏ đáp án"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddToBasket(result);
+                      }}
+                    >
+                      +
+                    </div>
+                  )}
                   {onUseAsAnchor && (
                     <div
                       className="absolute top-0 right-0 mr-1 mt-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]"
@@ -243,14 +164,32 @@ export default function FrameDisplay({
                     />
                   </div>
                 </div>
-                <div className="flex flex-row justify-between items-center w-full">
-                  <div>
-                    <span className="font-bold">Timestamp:</span>{" "}
-                    {timestamp[index]}
-                  </div>
-                  <div className="font-medium">
-                    {sub[index].percentage.toFixed(1)}%
-                  </div>
+                <div className="flex flex-col w-full px-2 py-1 text-xs text-proto-muted gap-0.5">
+                  <span className="flex items-center gap-1 min-w-0">
+                    <i
+                      className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                        AGREEMENT_DOT[routeAgreement(result)]
+                      }`}
+                      title={AGREEMENT_TITLE[routeAgreement(result)]}
+                    />
+                    <span className="truncate">{result.name}</span>
+                  </span>
+                  <span className="flex items-center justify-between">
+                    <span>{timestamp[index]}</span>
+                    <span
+                      className="font-bold tabular-nums"
+                      style={{
+                        color: accuracyColor(
+                          accuracyPercent(result.distance, minScore, maxScore)
+                        ),
+                      }}
+                      title={`điểm thô ${result.distance.toFixed(
+                        2
+                      )} · thang màu chuẩn hoá theo ${scores.length} kết quả đang hiện`}
+                    >
+                      {result.distance.toFixed(1)}%
+                    </span>
+                  </span>
                 </div>
               </div>
             );
@@ -258,9 +197,9 @@ export default function FrameDisplay({
         : Array.from({ length: 25 }).map((_, index) => (
             <div
               key={index}
-              className="flex flex-col gap-y-1 p-2 pb-1 rounded-[8px] w-full h-full font-baloo bg-white shadow"
+              className="flex flex-col rounded-[8px] w-full h-full font-baloo bg-white border border-proto-line overflow-hidden"
             >
-              <div className="relative w-full aspect-[3/2]">
+              <div className="relative w-full aspect-[3/2] bg-proto-dark">
                 <Skeleton
                   className="w-full h-full rounded-[4px]"
                   containerClassName="w-full h-full"
@@ -269,7 +208,7 @@ export default function FrameDisplay({
                   <Skeleton width={20} height={20} />
                 </div>
               </div>
-              <div className="flex flex-row justify-between items-center w-full mt-1">
+              <div className="flex flex-row justify-between items-center w-full px-2 py-1">
                 <div className="flex-1 mr-2">
                   <Skeleton height={16} width="70%" />
                 </div>

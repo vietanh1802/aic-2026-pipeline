@@ -31,6 +31,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.models import SearchResult, SearchResponse
+from app.db.connection import get_conn
+from app.db.migrate import migrate
+from app.routers import (
+    answers as answers_router,
+    auth as auth_router,
+    board as board_router,
+    export as export_router,
+    packs as packs_router,
+)
 from app.version import SHORT_COMMIT, VERSION
 from app.preprocess import (
     ensemble_search,
@@ -311,6 +320,15 @@ def _run_warmup() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Bảng cộng tác nằm cùng process với search, migrate lúc khởi động để việc
+    # triển khai chỉ còn một artefact. Chạy trước warm-up vì nó tính bằng mili
+    # giây, còn warm-up tính bằng phút.
+    _conn = get_conn()
+    try:
+        migrate(_conn)
+    finally:
+        _conn.close()
+
     if os.environ.get("AIC_WARMUP", "1") != "0":
         threading.Thread(target=_run_warmup, name="warmup", daemon=True).start()
     else:
@@ -328,6 +346,14 @@ app = FastAPI(
 )
 
 app.mount("/static/images", StaticFiles(directory=IMAGES_DIR), name="images")
+
+# Tầng cộng tác. Search giữ nguyên các endpoint gốc ở gốc đường dẫn;
+# mọi thứ mới nằm dưới /api.
+app.include_router(auth_router.router)
+app.include_router(packs_router.router)
+app.include_router(board_router.router)
+app.include_router(answers_router.router)
+app.include_router(export_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is

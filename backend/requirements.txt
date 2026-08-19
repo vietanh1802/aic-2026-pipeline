@@ -30,3 +30,5 @@ tensorboardX
 
 # sync_and_unzip.py — tải ZIP frame từ Google Drive.
 gdown
+argon2-cffi>=23.1
+python-multipart>=0.0.9

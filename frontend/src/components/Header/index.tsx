@@ -10,11 +10,11 @@ export default function Header() {
           <span className="font-bold">VQF</span> - Video Query Finder
         </div>
         <span
-          className="text-xs font-medium text-neutral-500 border border-neutral-300 rounded-[4px] px-2 py-0.5"
+          className="text-xs font-medium text-proto-muted border border-proto-line rounded-[6px] px-2 py-0.5"
           title={`Build ${__APP_VERSION__} · commit ${__APP_COMMIT__}`}
         >
           v{__APP_VERSION__}
-          <span className="text-neutral-400"> · {__APP_COMMIT__}</span>
+          <span className="text-proto-muted opacity-70"> · {__APP_COMMIT__}</span>
         </span>
       </div>
     </div>
