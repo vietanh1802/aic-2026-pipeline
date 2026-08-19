@@ -1,5 +1,7 @@
 # Updating the indexes
 
+Step-by-step runbook for the team, in Vietnamese: [`huong-dan-cap-nhat-index.md`](huong-dan-cap-nhat-index.md). This file is the reference behind it — what the pieces are and what goes wrong.
+
 `/opt/aic/indexes` holds two different kinds of file:
 
 - **Index data**, produced by the offline notebooks — `beit3.index`, `clip.index`,
@@ -23,6 +25,10 @@ docker-compose mounts the directory into the container **read-only**.
    Add `--delete` when files have been removed. Without it the old ones stay and the host
    ends up holding both.
 
+   Steps 3 to 5 below are what the `Indexes` workflow runs, so in practice they
+   are one button. They are kept here because knowing what the button does is the
+   difference between fixing a red run and guessing at it.
+
 3. Pull onto the API box:
 
    ```bash
@@ -39,7 +45,10 @@ docker-compose mounts the directory into the container **read-only**.
 
    Warm-up takes 90–140s.
 
-5. Verify `/status` reports the new counts and `/health` reports `warmup.state: ready`.
+5. Verify. `/health` must report `warmup.state: ready`, and `/status` must report
+   `stale_files: []` with every `index_files.<name>.loaded` fingerprint matching what
+   `head-object` returns for the same key in S3. `deploy/p6/verify-indexes.sh` does
+   both, plus a real `/ensemble-search` call.
 
 6. Bump `VERSION` so the running build can be identified.
 
@@ -49,6 +58,12 @@ docker-compose mounts the directory into the container **read-only**.
   the wrong frame. Nothing raises; the results are just silently wrong.
 - **`docker ps` showing `healthy` proves nothing.** The healthcheck only asks whether
   `/health` returns 200, and it does that even when warm-up has failed. Read `warmup.state`.
+- **Counts cannot tell a new index set from an old one.** A rebuild over the same
+  keyframes reports the same `keyframes` and `vectors.beit3`, and those numbers are read
+  from module globals — so a container that never restarted reports exactly what a
+  correctly updated one does. `index_files` records the size and mtime of each file as it
+  was read into memory; `stale_files` lists the ones the disk has moved on from. Non-empty
+  `stale_files` means the sync landed and the restart did not.
 - **The directory is mounted read-only on purpose.** Anything the API tries to write there
   fails with `OSError: [Errno 30] Read-only file system`. Every weight the API needs must be
   staged into the directory ahead of time, never downloaded by the running container.
