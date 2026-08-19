@@ -41,6 +41,17 @@ fi
 
 docker pull "$AIC_NEW_IMAGE"
 docker tag "$AIC_NEW_IMAGE" aic2026-api:local
+# A deploy killed between compose renaming the running container and creating
+# its replacement leaves the old one as <id>_<service>. Compose then refuses
+# every later deploy with a name conflict, so one interrupted run wedges the
+# pipeline until someone logs in and deletes the container by hand. The
+# canonical name carries no underscore prefix, so it never matches this filter.
+leftovers="$(docker ps -a --filter 'name=_aic2026-api-1' --format '{{.Names}}' || true)"
+if [ -n "$leftovers" ]; then
+  echo "removing containers left by an aborted deploy: $leftovers"
+  docker rm -f $leftovers
+fi
+
 docker compose up -d --force-recreate api
 docker compose ps api
 REMOTE
