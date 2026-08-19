@@ -1,6 +1,12 @@
-name: Update indexes
+name: Indexes
 
-# Steps 3 to 5 of docs/updating-indexes.md, on a button.
+# Steps 3 to 5 of docs/updating-indexes.md, on a button. The team runbook is
+# docs/huong-dan-cap-nhat-index.md.
+#
+# sync-and-verify pulls the index set from S3 onto the API host, restarts the
+# container and checks the result. verify-only skips straight to the check and
+# changes nothing, which is how to answer "is the box serving the new index set
+# or the old one" without touching anything.
 #
 # Step 2 — publishing the regenerated index set from a workstation to
 # s3://aic2026-artifacts/indexes/ — is not here and cannot be: the files are
@@ -8,6 +14,14 @@ name: Update indexes
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: What to run
+        required: true
+        type: choice
+        default: sync-and-verify
+        options:
+          - sync-and-verify
+          - verify-only
       delete_removed:
         description: Remove host files that no longer exist in S3 (--delete)
         required: false
@@ -35,7 +49,7 @@ env:
 
 jobs:
   update-indexes:
-    name: Sync index set from S3 and reload
+    name: Sync from S3 and verify what is live
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,14 +74,24 @@ jobs:
 
       # The box is stopped between sessions to keep the credit from draining, so
       # an index update has to be able to wake it.
+      # verify-only answers "which index set is live right now" and must not
+      # wake a stopped box to do it — there is nothing running to ask.
+      - name: Refuse verify-only against a stopped instance
+        if: inputs.action == 'verify-only' && steps.instance.outputs.state != 'running'
+        run: |
+          echo "The API instance is ${{ steps.instance.outputs.state }}, so nothing is serving an index set." >&2
+          echo "Start it from the Power API EC2 workflow first, or run sync-and-verify." >&2
+          exit 1
+
       - name: Start API instance when needed
-        if: steps.instance.outputs.state == 'stopped'
+        if: inputs.action == 'sync-and-verify' && steps.instance.outputs.state == 'stopped'
         env:
           AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
           AIC_POWER_ACTION: start
         run: bash deploy/p6/power.sh
 
       - name: Wait for SSM
+        if: inputs.action == 'sync-and-verify'
         env:
           AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
         run: |
@@ -87,6 +111,7 @@ jobs:
           exit 1
 
       - name: Sync indexes and restart API
+        if: inputs.action == 'sync-and-verify'
         env:
           AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
           AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes/' }}
@@ -98,4 +123,7 @@ jobs:
       - name: Verify the reloaded index set
         env:
           AIC_EXPECT_KEYFRAMES: ${{ inputs.expect_keyframes }}
+          # Turns the check from "the three files agree with each other" into
+          # "the process is serving exactly what S3 publishes".
+          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes/' }}
         run: bash deploy/p6/verify-indexes.sh
