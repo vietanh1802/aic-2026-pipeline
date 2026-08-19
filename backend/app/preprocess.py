@@ -27,7 +27,7 @@ Model — verify từ paper gốc:
   Coarse-grained (ref [41]): OpenCLIP ViT-bigG-14 (laion2b_s39b_b160k)
 """
 
-import os, json, sys, subprocess as _sp
+import os, json, sys, time, subprocess as _sp
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -73,6 +73,16 @@ CLIP_IDX_PATH  = os.path.join(INDEX_DIR, "clip.index")
 BEIT3_MAP_PATH = os.path.join(INDEX_DIR, "beit3_mapping.json")
 CLIP_MAP_PATH  = os.path.join(INDEX_DIR, "clip_mapping.json")
 META_PATH      = os.path.join(INDEX_DIR, "keyframe_metadata.json")
+
+# The five files that have to come from the same generation run. Kept in one
+# place because /status reports on all of them three different ways.
+INDEX_SET_FILES = (
+    ("beit3.index",            BEIT3_IDX_PATH),
+    ("clip.index",             CLIP_IDX_PATH),
+    ("beit3_mapping.json",     BEIT3_MAP_PATH),
+    ("clip_mapping.json",      CLIP_MAP_PATH),
+    ("keyframe_metadata.json", META_PATH),
+)
 
 # The notebook-generated mappings embed absolute localhost:8000 URLs. We keep
 # only the path below /static/ and re-join it against this variable, so moving
@@ -141,6 +151,32 @@ _video_frames: dict[str, list[dict]] = {}   # video → keyframe sắp theo fram
 # Dùng để tái hiện URL đầy đủ (kể cả thư mục con) từ mapping gốc của notebook.
 # Ví dụ: "file.jpg" → "AIC2026_frames_p5_016/file.jpg"
 _name2relpath: dict[str, str] = {}
+
+# Identity of each index file at the moment it was read into memory.
+#
+# /status used to report counts only, and counts cannot answer the question an
+# operator actually has after publishing a new index set: is the process serving
+# it yet? A regeneration that keeps the same keyframes reports the same counts,
+# and those counts come from module globals, so a container that never restarted
+# looks exactly like one that did. Size and mtime captured here, compared with
+# the files on disk at request time, tell the two apart.
+#
+# mtime is meaningful because `aws s3 sync` stamps the object's LastModified
+# onto the file it downloads (verified against s3://aic2026-artifacts/indexes/
+# on 2026-08-19), so this value can be matched against S3 head-object.
+_index_loaded: dict[str, dict] = {}
+
+
+def _file_identity(path: str) -> Optional[dict]:
+    """Size and mtime of one file, or None when it is not there."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return {
+        "bytes": st.st_size,
+        "mtime": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(st.st_mtime)),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,14 +373,18 @@ def _load_indexes():
     global _beit3_index, _clip_index, _beit3_map, _clip_map
     if _beit3_index is None and os.path.exists(BEIT3_IDX_PATH):
         _beit3_index = faiss.read_index(BEIT3_IDX_PATH)
+        _index_loaded["beit3.index"] = _file_identity(BEIT3_IDX_PATH)
         if os.path.exists(BEIT3_MAP_PATH):
             _beit3_map = _read_json(BEIT3_MAP_PATH)
+            _index_loaded["beit3_mapping.json"] = _file_identity(BEIT3_MAP_PATH)
             _build_relpath_from_map(_beit3_map)
         print(f"[preprocess] BEiT3 FAISS: {_beit3_index.ntotal} vectors")
     if _clip_index is None and os.path.exists(CLIP_IDX_PATH):
         _clip_index = faiss.read_index(CLIP_IDX_PATH)
+        _index_loaded["clip.index"] = _file_identity(CLIP_IDX_PATH)
         if os.path.exists(CLIP_MAP_PATH):
             _clip_map = _read_json(CLIP_MAP_PATH)
+            _index_loaded["clip_mapping.json"] = _file_identity(CLIP_MAP_PATH)
             _build_relpath_from_map(_clip_map)
         print(f"[preprocess] CLIP FAISS: {_clip_index.ntotal} vectors")
 
@@ -356,6 +396,7 @@ def _load_meta():
         return
     _meta = _read_json(META_PATH)
     _meta_loaded = True
+    _index_loaded["keyframe_metadata.json"] = _file_identity(META_PATH)
 
     _name2meta   = {m["name"]: m for m in _meta}
     _clipid2meta = {int(m["faiss_id_clip"]): m
@@ -842,17 +883,24 @@ def system_status() -> dict:
         "pipeline_order":  "search → rerank (per-model) → ensemble",
         "active_models":   list(ACTIVE_MODELS),
         "images_on_disk":  n_images,
-        "files": {
-            "beit3.index":            os.path.exists(BEIT3_IDX_PATH),
-            "clip.index":             os.path.exists(CLIP_IDX_PATH),
-            "beit3_mapping.json":     os.path.exists(BEIT3_MAP_PATH),
-            "clip_mapping.json":      os.path.exists(CLIP_MAP_PATH),
-            "keyframe_metadata.json": os.path.exists(META_PATH),
-        },
+        "files": {name: os.path.exists(path) for name, path in INDEX_SET_FILES},
         "vectors": {
             "beit3": _beit3_index.ntotal if _beit3_index is not None else 0,
             "clip":  _clip_index.ntotal  if _clip_index  is not None else 0,
         },
+        # Which build of the index set this process is actually serving, and
+        # whether the files underneath it have moved since. `stale_files` being
+        # non-empty means the disk was updated but the container was not
+        # restarted, so the answers still come from the previous index set.
+        "index_files": {
+            name: {"loaded": _index_loaded.get(name), "on_disk": _file_identity(path)}
+            for name, path in INDEX_SET_FILES
+        },
+        "stale_files": sorted(
+            name for name, path in INDEX_SET_FILES
+            if _index_loaded.get(name) is not None
+            and _index_loaded.get(name) != _file_identity(path)
+        ),
         "keyframes": len(_meta),
         "videos":    len(_video_frames),
         "relpath_map": len(_name2relpath),
