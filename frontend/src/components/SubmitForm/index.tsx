@@ -9,6 +9,8 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
+import { addAnswer } from "../../api/answers";
+import type { BoardTask } from "../../api/board";
 import { gapi } from "gapi-script";
 // ====== GOOGLE API CONFIG ======
 const CLIENT_ID =
@@ -58,6 +60,9 @@ interface SubmitFormData {
   startAt: number;
   setStartAt: (val: number) => void;
   frame_detect: number;
+  /** Task đang mở từ Board. Có nó thì Add Answer ghi thẳng vào cơ sở dữ liệu. */
+  activeTask?: BoardTask | null;
+  onBasketChanged?: () => void;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -66,6 +71,8 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   startAt,
   setStartAt,
   frame_detect,
+  activeTask = null,
+  onBasketChanged,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
@@ -209,7 +216,34 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   };
 
   const handleSubmit = async () => {
-    console.log(submitType);
+    const frame = Math.floor(startAt * frame_detect);
+
+    // Có task đang mở thì đây là đường ghi thật: một hàng trong bảng answers,
+    // sống qua F5 và đồng đội thấy được. Giỏ Zustand bên dưới chỉ còn là đường
+    // lùi cho lúc chưa nhận task nào — trước đây nó là đường duy nhất, và đó là
+    // lý do bấm Add Answer xong số trên thanh nav vẫn đứng yên.
+    if (activeTask) {
+      const frames =
+        activeTask.type === "trake"
+          ? Array.from({ length: activeTask.n_events ?? 1 }, () => frame)
+          : [frame];
+      try {
+        await addAnswer(activeTask.id, {
+          video_id: videoId,
+          frames,
+          answer_text: activeTask.type === "qa" ? answer || null : null,
+        });
+        onBasketChanged?.();
+        if (activeTask.type !== "trake") {
+          setAnswer("");
+        }
+        return;
+      } catch (err) {
+        console.error("Không thêm được vào giỏ:", err);
+        return;
+      }
+    }
+
     switch (submitType) {
       case "Task 1 - kis":
         addTask1(videoId, String(Math.floor(startAt * frame_detect)));
