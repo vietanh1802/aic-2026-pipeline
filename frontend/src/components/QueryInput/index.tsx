@@ -90,7 +90,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   ];
 
   return (
-    <div className="bg-white border p-5 border-[#E3E3E3] rounded-xl flex flex-col gap-y-5 font-baloo">
+    <div className="bg-white border p-5 border-proto-line rounded-xl flex flex-col gap-y-5 font-baloo">
       <div
         className={`w-full flex flex-row justify-between ${
           isTranslated ? "" : "hidden"
@@ -98,7 +98,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       >
         <h1 className="font-bold">Dịch</h1>
         <div
-          className="text-red-500 hover:bg-red-300 hover:rounded-full px-2 font-bold cursor-pointer text-2xl"
+          className="text-[#c64545] hover:bg-[#c64545]/15 hover:rounded-full px-2 font-bold cursor-pointer text-2xl"
           onClick={() => setisTranslated(false)}
         >
           X
@@ -107,7 +107,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       <div className={`w-full flex ${isTranslated ? "" : "hidden"}`}>
         <input
           value={queryTranslated}
-          className="p-3 w-full rounded-[4px] bg-[#F8F8F8] border-2 border-[#E3E3E3]"
+          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
           readOnly
         />
       </div>
@@ -200,7 +200,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
           text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}
       {(searchType === "temporal" || searchType === "trake") && (
-        <p className="text-xs text-gray-500 -mt-2">
+        <p className="text-xs text-proto-muted -mt-2">
           {searchType === "temporal"
             ? "Nhập đúng 2 đoạn, cách nhau bằng dấu \".\" — vd: \"người bước lên sân khấu. khán giả vỗ tay\""
             : "Nhập từ 2 đoạn trở lên, theo thứ tự thời gian, cách nhau bằng dấu \".\" — vd: \"cắt nấm. cắt đậu hũ. bật bếp\""}
@@ -211,7 +211,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         <input
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
-          className="p-3 w-full rounded-[4px] bg-[#F8F8F8] border-2 border-[#E3E3E3]"
+          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
           placeholder={
             searchType === "temporal"
               ? "vd: người bước lên sân khấu. khán giả vỗ tay"

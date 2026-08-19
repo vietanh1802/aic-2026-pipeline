@@ -23,6 +23,7 @@
 import { useState } from "react";
 import Button from "../Button";
 import { videoSearchApi } from "../../types/api";
+import KeyframeImg from "../KeyframeImg";
 import type { TemporalSearchResult, TemporalCandidate } from "../../types/api";
 
 interface TemporalSearchPanelProps {
@@ -83,7 +84,7 @@ export default function TemporalSearchPanel({
             Temporal Search (Alg.4) — mốc: {anchorName}
           </h2>
           <button
-            className="text-red-500 hover:bg-red-100 rounded-full px-3 py-1 font-bold"
+            className="text-[#c64545] hover:bg-[#c64545]/15 rounded-full px-3 py-1 font-bold"
             onClick={onClose}
           >
             X
@@ -91,9 +92,13 @@ export default function TemporalSearchPanel({
         </div>
 
         {/* Anchor đang dùng — chính là frame người dùng đã chọn từ search trước đó */}
-        <div className="flex items-center gap-x-3 mb-4 p-2 bg-gray-50 rounded-lg">
-          <img src={anchorUrl} alt="anchor" className="w-24 h-14 object-cover rounded" />
-          <div className="text-sm text-gray-600">
+        <div className="flex items-center gap-x-3 mb-4 p-2 bg-proto-soft border border-proto-line rounded-lg">
+          <KeyframeImg
+            src={anchorUrl}
+            alt="anchor"
+            className="w-24 h-14 object-cover rounded shrink-0"
+          />
+          <div className="text-sm text-proto-muted">
             Mốc tham chiếu (frame đã chọn từ kết quả search) — theo paper:
             &quot;initially retrieved and reranked input frame corresponds to
             the correct reference frame&quot;.
@@ -110,7 +115,7 @@ export default function TemporalSearchPanel({
               value={queryStart}
               onChange={(e) => setQueryStart(e.target.value)}
               placeholder="vd: người bắt đầu bước lên sân khấu"
-              className="p-2 w-full rounded border-2 border-[#E3E3E3] bg-[#F8F8F8]"
+              className="p-2 w-full rounded-[8px] border border-proto-line bg-proto-soft"
             />
           </div>
           <div>
@@ -121,13 +126,14 @@ export default function TemporalSearchPanel({
               value={queryEnd}
               onChange={(e) => setQueryEnd(e.target.value)}
               placeholder="vd: khán giả vỗ tay sau bài phát biểu"
-              className="p-2 w-full rounded border-2 border-[#E3E3E3] bg-[#F8F8F8]"
+              className="p-2 w-full rounded-[8px] border border-proto-line bg-proto-soft"
             />
           </div>
         </div>
 
         <button
-          className="text-sm text-blue-600 underline mb-3"
+          type="button"
+          className="block text-sm text-proto-primary-active underline mb-3 w-fit"
           onClick={() => setShowAdvanced((v) => !v)}
         >
           {showAdvanced ? "Ẩn" : "Hiện"} tham số nâng cao (gap_C)
@@ -141,7 +147,7 @@ export default function TemporalSearchPanel({
               type="number"
               value={gapC}
               onChange={(e) => setGapC(Number(e.target.value))}
-              className="p-1 w-20 rounded border-2 border-[#E3E3E3]"
+              className="p-1 w-20 rounded-[8px] border border-proto-line bg-proto-soft"
             />
           </div>
         )}
@@ -151,7 +157,7 @@ export default function TemporalSearchPanel({
         </Button>
 
         {result?.error && (
-          <div className="text-red-500 text-sm mb-3">{result.error}</div>
+          <div className="text-[#c64545] text-sm mb-3">{result.error}</div>
         )}
 
         {/* Boundary Selection — Figure 4c: viền xanh lá = start, viền đỏ = end */}
@@ -159,33 +165,33 @@ export default function TemporalSearchPanel({
           <div>
             <div className="grid grid-cols-2 gap-4 mb-3">
               <div>
-                <p className="font-bold text-sm mb-1 text-green-600">
+                <p className="font-bold text-sm mb-1 text-[#3d7a4d]">
                   Frame BẮT ĐẦU (viền xanh lá)
                 </p>
-                <img
+                <KeyframeImg
                   src={pickedStart.url}
                   alt="start"
-                  className="w-full rounded border-4 border-green-500"
+                  className="w-full aspect-[3/2] object-cover rounded border-4 border-[#5db872]"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-proto-muted mt-1">
                   {pickedStart.name} · {pickedStart.timestamp}
                 </p>
               </div>
               <div>
-                <p className="font-bold text-sm mb-1 text-red-600">
+                <p className="font-bold text-sm mb-1 text-[#8f3030]">
                   Frame KẾT THÚC (viền đỏ)
                 </p>
-                <img
+                <KeyframeImg
                   src={pickedEnd.url}
                   alt="end"
-                  className="w-full rounded border-4 border-red-500"
+                  className="w-full aspect-[3/2] object-cover rounded border-4 border-[#c64545]"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-proto-muted mt-1">
                   {pickedEnd.name} · {pickedEnd.timestamp}
                 </p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 mb-2">
+            <p className="text-sm text-proto-muted mb-2">
               Điểm gộp: {result?.combined_score} — Nếu chưa đúng ý, bấm 1 frame
               khác trong danh sách ứng viên bên dưới để thay thế (paper: &quot;Users
               can review these suggestions and adjust them if necessary&quot;).
@@ -199,7 +205,7 @@ export default function TemporalSearchPanel({
                 </p>
                 <div className="flex gap-x-2 overflow-x-auto pb-2">
                   {result.left_candidates.map((c) => (
-                    <img
+                    <KeyframeImg
                       key={c.name}
                       src={c.url}
                       alt={c.name}
@@ -207,8 +213,8 @@ export default function TemporalSearchPanel({
                       onClick={() => setPickedStart(c)}
                       className={`w-20 h-12 object-cover rounded cursor-pointer flex-shrink-0 ${
                         pickedStart.name === c.name
-                          ? "border-4 border-green-500"
-                          : "border-2 border-gray-200 hover:border-green-300"
+                          ? "border-4 border-[#5db872]"
+                          : "border-2 border-proto-line hover:border-[#5db872]"
                       }`}
                     />
                   ))}
@@ -222,7 +228,7 @@ export default function TemporalSearchPanel({
                 </p>
                 <div className="flex gap-x-2 overflow-x-auto pb-2">
                   {result.right_candidates.map((c) => (
-                    <img
+                    <KeyframeImg
                       key={c.name}
                       src={c.url}
                       alt={c.name}
@@ -230,8 +236,8 @@ export default function TemporalSearchPanel({
                       onClick={() => setPickedEnd(c)}
                       className={`w-20 h-12 object-cover rounded cursor-pointer flex-shrink-0 ${
                         pickedEnd.name === c.name
-                          ? "border-4 border-red-500"
-                          : "border-2 border-gray-200 hover:border-red-300"
+                          ? "border-4 border-[#c64545]"
+                          : "border-2 border-proto-line hover:border-[#c64545]"
                       }`}
                     />
                   ))}
