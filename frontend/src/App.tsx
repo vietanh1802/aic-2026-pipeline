@@ -13,7 +13,12 @@ import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
 import { formatResultByVideoID } from "./helpers/formatResult.helper";
-import type { HealthResponse, SearchResult } from "./types/api";
+import type {
+  HealthResponse,
+  SearchResult,
+  TemporalCandidateResult,
+  TrakeCandidateResult,
+} from "./types/api";
 import KeyframeFPS from "./mapping/fps_map.json";
 
 type BackendHealth = {
@@ -152,6 +157,18 @@ function App() {
   // và /single-search hiện có trong main.py. Không còn text-search/faiss-
   // search/combined-search/ocr-search/filter-search — các endpoint đó đã bị
   // xóa khỏi backend (xem docstring main.py).
+  // Kết quả Temporal/TRAKE — khác shape với SearchResult[] (mỗi phần tử là 1
+  // VIDEO ứng viên, bên trong có N frame), nên lưu state riêng thay vì dùng
+  // chung useSearchStore. CHƯA có component hiển thị — tạm console.log để
+  // xác nhận data đúng, phần hiển thị (danh sách card video ứng viên) làm
+  // sau, đây là bước "chỉ thêm mode search" theo đúng yêu cầu.
+  const [temporalCandidates, setTemporalCandidates] = useState<
+    TemporalCandidateResult[]
+  >([]);
+  const [trakeCandidates, setTrakeCandidates] = useState<
+    TrakeCandidateResult[]
+  >([]);
+
   const doSearch = async () => {
     if (isSearchDisabled) {
       console.warn(`[health] Search blocked: ${backendHealth.message}`);
@@ -159,6 +176,29 @@ function App() {
     }
     setIsLoading(true);
     try {
+      if (searchType === "temporal") {
+        const res = await videoSearchApi.temporalSearchText(queryText);
+        if (res.error) {
+          console.error("Temporal search text error:", res.error);
+          setTemporalCandidates([]);
+        } else {
+          console.log("Temporal candidates:", res.results);
+          setTemporalCandidates(res.results ?? []);
+        }
+        return;
+      }
+      if (searchType === "trake") {
+        const res = await videoSearchApi.trakeSearchText(queryText);
+        if (res.error) {
+          console.error("TRAKE search text error:", res.error);
+          setTrakeCandidates([]);
+        } else {
+          console.log("TRAKE candidates:", res.results);
+          setTrakeCandidates(res.results ?? []);
+        }
+        return;
+      }
+
       const response =
         searchType === "single"
           ? await videoSearchApi.singleSearch(

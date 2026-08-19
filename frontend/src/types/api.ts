@@ -79,6 +79,38 @@ export interface TemporalSearchResult {
   error?: string;
 }
 
+// TRAKE — tổng quát hóa Alg.4 từ 2 điểm (start/end) lên N sự kiện tuần tự.
+// Khớp TrakeEvent/TrakeSearchResponse trong main.py.
+export interface TrakeEvent {
+  name: string;
+  url: string;
+  frame_idx?: number;
+  timestamp?: string;
+  score?: number;
+  candidates?: TemporalCandidate[];
+}
+
+export interface TrakeSearchResult {
+  video?: string;
+  events?: TrakeEvent[];
+  combined_score?: number;
+  error?: string;
+}
+
+// Auto-discovery — không cần anchor_name thủ công. Mỗi phần tử là 1 video
+// ứng viên, discovery_score = TẦN SUẤT (bao nhiêu query khớp video này, số
+// nguyên), discovery_score_sum = tổng điểm các query đã khớp (tie-break).
+// Khác combined_score (điểm thật sau khi chạy đủ thuật toán cho video đó).
+export interface TemporalCandidateResult extends TemporalSearchResult {
+  discovery_score?: number;
+  discovery_score_sum?: number;
+}
+
+export interface TrakeCandidateResult extends TrakeSearchResult {
+  discovery_score?: number;
+  discovery_score_sum?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Status / health — khớp system_status() trong preprocess.py
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +260,57 @@ class VideoSearchApi {
       gap_c: options?.gapC ?? 20,
       max_frames: options?.maxFrames ?? 20,
       sim_thr: options?.simThr ?? 0.1,
+      model: options?.model ?? "clip",
+    });
+  }
+
+  /**
+   * Bản KHÔNG CẦN anchor_name — tự động khám phá video ứng viên. Nhận 1
+   * chuỗi thô (khung nhập giữ nguyên 1 field), tách thành 2 đoạn (start/end)
+   * Ở BACKEND theo dấu "." — xem preprocess._split_query_text().
+   */
+  async temporalSearchText(
+    query: string,
+    options?: {
+      topM?: number;
+      topVideos?: number;
+      gapC?: number;
+      maxFrames?: number;
+      simThr?: number;
+      model?: ModelName;
+    }
+  ): Promise<{ results?: TemporalCandidateResult[]; error?: string }> {
+    return this.post("/temporal-search-text", {
+      query,
+      top_m: options?.topM ?? 50,
+      top_videos: options?.topVideos ?? 5,
+      gap_c: options?.gapC ?? 20,
+      max_frames: options?.maxFrames ?? 20,
+      sim_thr: options?.simThr ?? 0.1,
+      model: options?.model ?? "clip",
+    });
+  }
+
+  /**
+   * TRAKE — tự động khám phá video ứng viên cho N sự kiện tuần tự. Nhận 1
+   * chuỗi thô, tách thành N đoạn (N>=2) Ở BACKEND theo dấu ".".
+   */
+  async trakeSearchText(
+    query: string,
+    options?: {
+      topM?: number;
+      topVideos?: number;
+      gapC?: number;
+      minScore?: number;
+      model?: ModelName;
+    }
+  ): Promise<{ results?: TrakeCandidateResult[]; error?: string }> {
+    return this.post("/trake-search-text", {
+      query,
+      top_m: options?.topM ?? 50,
+      top_videos: options?.topVideos ?? 5,
+      gap_c: options?.gapC ?? 60,
+      min_score: options?.minScore ?? 0.1,
       model: options?.model ?? "clip",
     });
   }

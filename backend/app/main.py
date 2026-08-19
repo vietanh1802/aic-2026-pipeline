@@ -36,6 +36,11 @@ from app.preprocess import (
     ensemble_search,
     single_model_search,
     temporal_search,
+    trake_search,
+    temporal_search_candidates,
+    trake_search_candidates,
+    temporal_search_text,
+    trake_search_text,
     system_status,
     preload,
     MODEL_NAMES,
@@ -139,6 +144,127 @@ class TemporalSearchResponse(BaseModel):
     left_candidates:  Optional[List[TemporalCandidate]] = None
     right_candidates: Optional[List[TemporalCandidate]] = None
     error:           Optional[str] = None
+
+
+# ─── TRAKE — N sự kiện tuần tự, tổng quát hóa từ TemporalSearchRequest ────────
+# Merge lại sau khi nhánh bạn cùng team tách trước lúc phần này được thêm.
+
+class TrakeSearchRequest(BaseModel):
+    queries:     List[str] = Field(..., min_length=2,
+                                   description="Danh sách mô tả N sự kiện, ĐÚNG THỨ TỰ thời gian (E1, E2, ...)")
+    anchor_name: str       = Field(..., description="Tên file keyframe neo, lấy từ kết quả search — xác định VIDEO cần tìm")
+    gap_c:       int       = Field(60, ge=1, le=600,
+                                   description="Khoảng cách tối đa (giây) giữa 2 event LIÊN TIẾP")
+    model:       str       = Field("clip", description="Model dùng để tính điểm: beit3 hoặc clip")
+
+    class Config:
+        json_schema_extra = {"example": {
+            "queries": [
+                "Khoảnh khắc đầu tiên bột được bỏ vào tô măng tây",
+                "Khoảnh khắc miếng măng tây đầu tiên tiếp xúc với dầu trong chảo",
+                "Khoảnh khắc miếng măng tây đầu tiên rời khỏi chảo dầu",
+                "Khoảnh khắc miếng măng tây cuối cùng rời chảo dầu và nằm hoàn toàn trên dĩa",
+            ],
+            "anchor_name": "L26_V194-0012-004707.jpg",
+            "gap_c": 60,
+        }}
+
+
+class TrakeEvent(BaseModel):
+    name:       str
+    url:        str
+    frame_idx:  Optional[int] = None
+    timestamp:  Optional[str] = None
+    score:      Optional[float] = None
+    # Ứng viên khác cho ĐÚNG event này — cùng tinh thần Figure 4c, cho phép
+    # người dùng đổi từng event riêng lẻ nếu DP chọn chưa đúng ý.
+    candidates: Optional[List[TemporalCandidate]] = None
+
+
+class TrakeSearchResponse(BaseModel):
+    video:           Optional[str] = None
+    events:          Optional[List[TrakeEvent]] = None
+    combined_score:  Optional[float] = None
+    error:           Optional[str] = None
+
+
+# ─── Auto-discovery — không cần anchor_name thủ công ──────────────────────────
+# Bổ sung THÊM bên cạnh /temporal-search và /trake-search (2 endpoint đó giữ
+# nguyên, không đổi gì). Dùng khi muốn hệ thống tự tìm video ứng viên thay vì
+# bắt người dùng bấm chọn 1 frame trước — xem preprocess.py
+# _discover_candidate_videos() để biết cơ sở lý luận đầy đủ.
+
+class TemporalSearchCandidatesRequest(BaseModel):
+    query_start: str   = Field(..., description="Mô tả khoảnh khắc BẮT ĐẦU")
+    query_end:   str   = Field(..., description="Mô tả khoảnh khắc KẾT THÚC")
+    top_m:       int   = Field(50, ge=1, le=200, description="Top-M mỗi query lúc khám phá video ứng viên")
+    top_videos:  int   = Field(5,  ge=1, le=20,  description="Số video ứng viên tối đa để thử temporal_search")
+    gap_c:       int   = Field(20, ge=1, le=300)
+    max_frames:  int   = Field(20, ge=1, le=100)
+    sim_thr:     float = Field(0.10)
+    model:       str   = Field("clip", description="beit3 hoặc clip")
+
+
+class TrakeSearchCandidatesRequest(BaseModel):
+    queries:    List[str] = Field(..., min_length=2, description="N mô tả sự kiện, đúng thứ tự")
+    top_m:      int       = Field(50, ge=1, le=200)
+    top_videos: int       = Field(5,  ge=1, le=20)
+    gap_c:      int       = Field(60, ge=1, le=600)
+    min_score:  float     = Field(0.10, description="Ngưỡng 'đủ tốt' lúc đếm tần suất khám phá video")
+    model:      str       = Field("clip", description="beit3 hoặc clip")
+
+
+class TemporalCandidateResult(TemporalSearchResponse):
+    # discovery_score = TẦN SUẤT (bao nhiêu trong số 2 query có match đạt
+    # ngưỡng ở video này, 0-2) — không phải cosine score. discovery_score_sum
+    # là tổng điểm các query đã khớp, dùng tie-break khi tần suất bằng nhau.
+    # Khác combined_score (điểm thật sau khi chạy temporal_search() đầy đủ ở
+    # Bước 2) — giữ cả 2 để soi lỗi nếu 1 video tần suất cao nhưng
+    # combined_score sau đó lại thấp.
+    discovery_score:     Optional[int]   = None
+    discovery_score_sum: Optional[float] = None
+
+
+class TrakeCandidateResult(TrakeSearchResponse):
+    discovery_score:     Optional[int]   = None
+    discovery_score_sum: Optional[float] = None
+
+
+# ─── Bản "1 ô nhập" — khung nhập giữ nguyên 1 field, tách bằng dấu "." ────────
+# Frontend gửi thẳng chuỗi thô người dùng gõ, KHÔNG tự tách ở FE — tách ở
+# preprocess._split_query_text() (dấu "." + khoảng trắng theo sau, an toàn
+# với số thập phân như "3.5"). Bổ sung bên cạnh 2 endpoint *-candidates ở
+# trên (giữ nguyên, nhận query_start/query_end hoặc queries[] đã tách sẵn).
+
+class TemporalSearchTextRequest(BaseModel):
+    query:      str = Field(..., min_length=1,
+                            description="1 chuỗi, 2 đoạn cách nhau bằng dấu '.' — vd 'người bước lên sân khấu. khán giả vỗ tay'")
+    top_m:      int   = Field(50, ge=1, le=200)
+    top_videos: int   = Field(5,  ge=1, le=20)
+    gap_c:      int   = Field(20, ge=1, le=300)
+    max_frames: int   = Field(20, ge=1, le=100)
+    sim_thr:    float = Field(0.10)
+    model:      str   = Field("clip", description="beit3 hoặc clip")
+
+
+class TrakeSearchTextRequest(BaseModel):
+    query:      str   = Field(..., min_length=1,
+                              description="1 chuỗi, N đoạn (N>=2) cách nhau bằng dấu '.'")
+    top_m:      int   = Field(50, ge=1, le=200)
+    top_videos: int   = Field(5,  ge=1, le=20)
+    gap_c:      int   = Field(60, ge=1, le=600)
+    min_score:  float = Field(0.10)
+    model:      str   = Field("clip", description="beit3 hoặc clip")
+
+
+class TemporalSearchTextResponse(BaseModel):
+    results: Optional[List[TemporalCandidateResult]] = None
+    error:   Optional[str] = None
+
+
+class TrakeSearchTextResponse(BaseModel):
+    results: Optional[List[TrakeCandidateResult]] = None
+    error:   Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,6 +428,109 @@ async def temporal_search_endpoint(req: TemporalSearchRequest):
         raise HTTPException(500, f"Temporal search error: {e}")
 
 
+@app.post("/trake-search", response_model=TrakeSearchResponse,
+          summary="TRAKE — N sự kiện tuần tự trong cùng 1 video (tổng quát hóa Alg.4)")
+async def trake_search_endpoint(req: TrakeSearchRequest):
+    """Chấm điểm ĐỘC LẬP từng query lên toàn bộ frame video của anchor, rồi
+    dùng DP chọn 1 frame/event sao cho frame_idx tăng dần đúng thứ tự VÀ tổng
+    điểm N frame lớn nhất. Độ phức tạp O(N × F²) — xem docstring
+    preprocess.trake_search() để biết lý do không dùng brute-force O(F^N).
+    """
+    if req.model not in MODEL_NAMES:
+        raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    try:
+        result = trake_search(
+            queries=req.queries,
+            anchor_name=req.anchor_name,
+            gap_c=req.gap_c,
+            model_name=req.model,
+        )
+        return TrakeSearchResponse(**result)
+    except Exception as e:
+        raise HTTPException(500, f"TRAKE search error: {e}")
+
+
+@app.post("/temporal-search-candidates", response_model=List[TemporalCandidateResult],
+          summary="Tự động khám phá video ứng viên cho Temporal Search — không cần anchor_name")
+async def temporal_search_candidates_endpoint(req: TemporalSearchCandidatesRequest):
+    """Chạy song song 2 lần _search_one() (query_start, query_end), group theo
+    video giữ điểm cao nhất, rồi gọi temporal_search() ĐÃ CÓ (không đổi) cho
+    mỗi video ứng viên. Trả về LIST kết quả, sort theo combined_score.
+
+    Bổ sung bên cạnh /temporal-search (vẫn giữ nguyên, cần anchor_name thủ
+    công) — dùng endpoint này khi muốn hệ thống tự đề xuất thay vì bắt người
+    dùng bấm chọn 1 frame trước.
+    """
+    if req.model not in MODEL_NAMES:
+        raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    try:
+        results = temporal_search_candidates(
+            query_start=req.query_start, query_end=req.query_end,
+            top_m=req.top_m, top_videos=req.top_videos,
+            gap_c=req.gap_c, max_frames=req.max_frames, sim_thr=req.sim_thr,
+            model_name=req.model,
+        )
+        return [TemporalCandidateResult(**r) for r in results]
+    except Exception as e:
+        raise HTTPException(500, f"Temporal search candidates error: {e}")
+
+
+@app.post("/trake-search-candidates", response_model=List[TrakeCandidateResult],
+          summary="Tự động khám phá video ứng viên cho TRAKE — không cần anchor_name")
+async def trake_search_candidates_endpoint(req: TrakeSearchCandidatesRequest):
+    """Tương tự /temporal-search-candidates nhưng cho N query (TRAKE). Gọi
+    trake_search() ĐÃ CÓ (không đổi) cho mỗi video ứng viên.
+    """
+    if req.model not in MODEL_NAMES:
+        raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    try:
+        results = trake_search_candidates(
+            queries=req.queries, top_m=req.top_m, top_videos=req.top_videos,
+            gap_c=req.gap_c, min_score=req.min_score, model_name=req.model,
+        )
+        return [TrakeCandidateResult(**r) for r in results]
+    except Exception as e:
+        raise HTTPException(500, f"TRAKE search candidates error: {e}")
+
+
+@app.post("/temporal-search-text", response_model=TemporalSearchTextResponse,
+          summary="Temporal Search — 1 ô nhập duy nhất, tách bằng dấu '.'")
+async def temporal_search_text_endpoint(req: TemporalSearchTextRequest):
+    """Frontend gửi thẳng chuỗi thô (khung nhập giữ nguyên 1 field) — tách
+    thành query_start/query_end ở backend rồi gọi
+    temporal_search_candidates() ĐÃ CÓ (không đổi).
+    """
+    if req.model not in MODEL_NAMES:
+        raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    try:
+        result = temporal_search_text(
+            req.query, top_m=req.top_m, top_videos=req.top_videos,
+            gap_c=req.gap_c, max_frames=req.max_frames, sim_thr=req.sim_thr,
+            model_name=req.model,
+        )
+        return TemporalSearchTextResponse(**result)
+    except Exception as e:
+        raise HTTPException(500, f"Temporal search text error: {e}")
+
+
+@app.post("/trake-search-text", response_model=TrakeSearchTextResponse,
+          summary="TRAKE — 1 ô nhập duy nhất, tách bằng dấu '.'")
+async def trake_search_text_endpoint(req: TrakeSearchTextRequest):
+    """Tương tự /temporal-search-text nhưng cho N đoạn (TRAKE). Gọi
+    trake_search_candidates() ĐÃ CÓ (không đổi).
+    """
+    if req.model not in MODEL_NAMES:
+        raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    try:
+        result = trake_search_text(
+            req.query, top_m=req.top_m, top_videos=req.top_videos,
+            gap_c=req.gap_c, min_score=req.min_score, model_name=req.model,
+        )
+        return TrakeSearchTextResponse(**result)
+    except Exception as e:
+        raise HTTPException(500, f"TRAKE search text error: {e}")
+
+
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
     return {**system_status(), "warmup": _warm}
@@ -327,7 +556,9 @@ def root():
         "paper":   "arXiv:2504.08384",
         "pipeline": "search → rerank (per-model) → ensemble → temporal",
         "endpoints": ["/ensemble-search", "/single-search", "/temporal-search",
-                      "/status", "/health", "/docs"],
+                      "/trake-search", "/temporal-search-candidates",
+                      "/trake-search-candidates", "/temporal-search-text",
+                      "/trake-search-text", "/status", "/health", "/docs"],
     }
 
 
