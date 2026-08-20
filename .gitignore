@@ -86,3 +86,27 @@ docs/superpowers/specs/2026-08-17-aws-deploy-design.md
 # Organizer sample pack and Playwright run output: local only.
 sample-data/
 test-results/
+
+# ===== Chưa muốn đưa lên repo =====
+# Bảng map keyframe của BTC: 1478 file CSV, 8 MB, tải lại được từ trang BTC.
+data_raw/map-keyframes-aic25-b1/
+data_raw/map-keyframes-aic25-b2/
+
+# fps_check_result.json là kết quả dò fps một lần, đã bị thay bằng bảng fps
+# chốt của BTC. zip_manifest.json thì sinh lại được bằng list_zip_contents.
+data_raw/fps_check_result.json
+data_raw/zip_manifest.json
+
+# Tài liệu và ảnh mẫu tải về, không phải nguồn của repo.
+docs/2504.08384v1.pdf
+docs/L21_V015-0212-25608.jpg
+docs/vintern_gt_eval.png
+
+# Notebook chạy trên Colab. Chúng nặng vì nhúng cả ảnh kết quả, và mỗi lần chạy
+# lại là một bản khác — đưa lên repo thì diff không đọc nổi.
+#
+# ĐỔI LẠI: chúng CHỈ nằm trên máy này. Máy hỏng là mất. Muốn đưa lên repo thì
+# xoá dòng tương ứng ở dưới rồi commit; nhớ Edit > Clear all outputs trước để
+# file nhẹ lại.
+notebooks/*.ipynb
+notebooks/thanhbangcao/*.ipynb
