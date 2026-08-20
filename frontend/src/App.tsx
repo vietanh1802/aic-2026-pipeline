@@ -7,6 +7,7 @@ import QueryInput from "./components/QueryInput";
 import ResultInfoAndSort, {
   type SortType,
 } from "./components/ResultInfoAndSort";
+import TaskBrief from "./components/TaskBrief";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore } from "./store/queryStore";
 import VideoPopup from "./components/VideoPopUp";
@@ -344,45 +345,9 @@ function App({
         </div>
       </div>
 
-      {/* Đề bài của task đang mở — nguyên văn, chỉ đọc, không bao giờ dịch. */}
-      {activeTask && (
-        <div className="max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border border-proto-line font-baloo">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-proto-dark text-proto-canvas">
-              {activeTask.type === "qa" ? "Q&A" : activeTask.type.toUpperCase()}
-            </span>
-            <b className="text-sm text-proto-ink font-mono">
-              Task {activeTask.code}
-            </b>
-            <button
-              type="button"
-              className="text-[11.5px] text-proto-primary-active underline ml-auto"
-              onClick={() =>
-                useQueryStore.getState().setQueryText(
-                  activeTask.query_text.replace(/\s+/g, " ").trim()
-                )
-              }
-            >
-              Chép đề bài xuống ô search
-            </button>
-          </div>
-          <div className="text-[12.5px] text-proto-body leading-relaxed whitespace-pre-wrap">
-            {activeTask.query_text}
-          </div>
-          {activeTask.event_labels.length > 0 && (
-            <div className="flex flex-col gap-1 mt-2">
-              {activeTask.event_labels.map((label, index) => (
-                <div
-                  key={index}
-                  className="text-[11.5px] bg-proto-canvas border border-proto-line rounded-[6px] px-2 py-1"
-                >
-                  <b className="text-proto-primary-active">E{index + 1}</b> {label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Đề bài của task đang mở — nguyên văn, chỉ đọc, không bao giờ dịch.
+          Pin lên đỉnh khung nhìn: cuộn qua cả trăm kết quả vẫn còn thấy đề. */}
+      {activeTask && <TaskBrief task={activeTask} />}
 
       {/* Project Description (only when no results) */}
       {!hasQueried && !activeTask && (

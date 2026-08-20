@@ -2,11 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import { useSubmitStore } from "../../store/submitStore";
-
-const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-
-// The only video store. Empty in local dev, which disables playback there.
-const VIDEO_BASE_URL = env?.VITE_VIDEO_BASE_URL ?? "";
+import { videoUrl } from "../../helpers/videoSource";
 
 interface DriveVideoProps {
   videoId: string; // e.g. "L30_V095" — builds the key in the video store
@@ -53,13 +49,7 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
   // request failed the player fell through to Drive and stalled for minutes with
   // no indication of why. Failing here instead is both faster and legible, and
   // the Link button in VideoPopUp still opens the file on Drive.
-  const src = useMemo(
-    () =>
-      VIDEO_BASE_URL && videoId
-        ? `${VIDEO_BASE_URL.replace(/\/$/, "")}/${videoId}.mp4`
-        : "",
-    [videoId]
-  );
+  const src = useMemo(() => videoUrl(videoId), [videoId]);
 
   useEffect(() => {
     setError(null);

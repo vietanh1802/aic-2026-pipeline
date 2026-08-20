@@ -179,6 +179,27 @@ def delete_answer(
     return {"ok": True}
 
 
+@router.delete("/tasks/{task_id}/answers")
+def clear_answers(
+    task_id: int,
+    _: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """Throw away the whole answer set for one task.
+
+    Distinct from `autofill mode="clear"`, which spares the manual pins because
+    its job is to let the spread be redone with a different step. This one is
+    for the export screen: the reviewer looks at the CSV a query is about to
+    submit, decides it is wrong, and starts that query over.
+
+    `removed` rather than a bare ok, so the screen can say what it just threw
+    away instead of leaving the reviewer guessing whether the click landed.
+    """
+    load_task(conn, task_id)
+    removed = conn.execute("DELETE FROM answers WHERE task_id = ?", (task_id,)).rowcount
+    return {"removed": removed, "total": 0}
+
+
 @router.post("/tasks/{task_id}/answers/reorder")
 def reorder_answer(
     task_id: int,

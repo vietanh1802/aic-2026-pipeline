@@ -10,6 +10,8 @@ import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { extractTimestamp } from "../FrameDisplay";
 import type { BoardTask } from "../../api/board";
+import TaskBrief from "../TaskBrief";
+import AnswerPanel from "./AnswerPanel";
 
 interface VideoPopupProps {
   videoId: string;
@@ -54,6 +56,10 @@ export default function VideoPopup({
 
   const [frameIdx, setFrameIdx] = useState<string>("");
 
+  // Bumped after every add so the panel beside the video re-reads the task's
+  // answers. Without it the list only refreshed when the popup was reopened.
+  const [answerTick, setAnswerTick] = useState<number>(0);
+
   // 0 = metadata not loaded yet. Previously this was 1 and the form below was
   // gated on `duration !== 1`, which silently tied the submission form to the
   // Drive metadata request being the only caller of onDuration.
@@ -75,7 +81,10 @@ export default function VideoPopup({
     useSubmitTasks();
   return (
     <div className="fixed inset-0 bg-black/60 bg-opacity-60 flex items-center justify-center z-999 gap-x-5">
-      <div className="relative bg-white rounded-xl p-6 shadow-lg max-w-[800px] w-4/5">
+      <div className="relative bg-white rounded-xl p-6 shadow-lg max-w-[800px] w-4/5 max-h-[95vh] overflow-y-auto">
+        {/* Đề bài đi theo popup. Banner pin trên trang không cứu được ở đây:
+            popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất. */}
+        {activeTask && <TaskBrief task={activeTask} variant="popup" />}
         <div className="flex justify-between items-center mb-[15px]">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-[8px]">
@@ -131,7 +140,10 @@ export default function VideoPopup({
           <div className="mt-[10px]">
             <SubmitForm
               activeTask={activeTask}
-              onBasketChanged={onBasketChanged}
+              onBasketChanged={() => {
+                setAnswerTick((tick) => tick + 1);
+                onBasketChanged?.();
+              }}
               videoId={videoId}
               duration={duration}
               startAt={startAt / 1000}
@@ -141,6 +153,16 @@ export default function VideoPopup({
           </div>
         )}
       </div>
+
+      {/* Có task đang mở thì Add Answer ghi thẳng lên server, nên panel phải
+          đọc từ đó. Giỏ Zustand bên dưới chỉ còn dùng khi chưa nhận task nào. */}
+      {activeTask ? (
+        <AnswerPanel
+          task={activeTask}
+          reloadKey={answerTick}
+          onChanged={() => onBasketChanged?.()}
+        />
+      ) : (
       <div className="w-1/5 h-[70%] bg-white rounded-sm p-6 shadow-lg flex flex-col">
         <h1>
           <b>Filename:</b> {submissionFileName}.csv
@@ -194,6 +216,7 @@ export default function VideoPopup({
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }
