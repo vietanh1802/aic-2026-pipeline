@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
 import VideoDrive from "./VideoDisplay";
 import { getFileIdByVideoId } from "../../helpers/getFileIdByVideoId.helper";
@@ -12,6 +12,7 @@ import { extractTimestamp } from "../FrameDisplay";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
+import FrameMarkStrip from "./FrameMarkStrip";
 
 interface VideoPopupProps {
   videoId: string;
@@ -59,6 +60,26 @@ export default function VideoPopup({
   // Bumped after every add so the panel beside the video re-reads the task's
   // answers. Without it the list only refreshed when the popup was reopened.
   const [answerTick, setAnswerTick] = useState<number>(0);
+
+  // Marked edges of the moment, in seconds. They live here rather than in the
+  // submit form because the strip that sets them sits against the video, and
+  // the form only needs the result.
+  const [markIn, setMarkIn] = useState<number | null>(null);
+  const [markOut, setMarkOut] = useState<number | null>(null);
+
+  // The element itself, so a mark reads the exact currentTime at the instant it
+  // is pressed. `playhead` below is the same value throttled to timeupdate's
+  // four-a-second, which is fine for a readout and far too coarse for a frame.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playhead, setPlayhead] = useState<number>(startAt / 1000);
+  const livePosition = () => videoRef.current?.currentTime ?? playhead;
+
+  // A different video is a different moment; carrying marks across would submit
+  // a frame number the user pinned somewhere else entirely.
+  useEffect(() => {
+    setMarkIn(null);
+    setMarkOut(null);
+  }, [videoId]);
 
   // 0 = metadata not loaded yet. Previously this was 1 and the form below was
   // gated on `duration !== 1`, which silently tied the submission form to the
@@ -128,13 +149,33 @@ export default function VideoPopup({
           <VideoDrive
             videoId={videoId}
             onDuration={(s) => setDuration(s)}
-            onFrameIdx={(frameIdx) => setFrameIdx(frameIdx)}
+            videoRef={videoRef}
+            onPosition={(seconds) => {
+              setPlayhead(seconds);
+              setFrameIdx(String(seconds));
+            }}
             jumpTo={startAt / 1000}
             setStartAt={setStartAt}
             mapping_frame={matching_keyframe}
             frame_detect={frame_detect}
           />
         </div>
+
+        <FrameMarkStrip
+          currentSeconds={playhead}
+          duration={duration}
+          fps={frame_detect}
+          markIn={markIn}
+          markOut={markOut}
+          onMarkIn={() => setMarkIn(livePosition())}
+          onMarkOut={() => setMarkOut(livePosition())}
+          onClear={() => {
+            setMarkIn(null);
+            setMarkOut(null);
+          }}
+          onSeek={(seconds) => setStartAt(seconds * 1000)}
+          disabled={activeTask?.type === "trake"}
+        />
 
         {duration > 0 && (
           <div className="mt-[10px]">
@@ -149,6 +190,9 @@ export default function VideoPopup({
               startAt={startAt / 1000}
               setStartAt={setStartAt}
               frame_detect={frame_detect}
+              markIn={markIn}
+              markOut={markOut}
+              getPlayhead={livePosition}
             />
           </div>
         )}

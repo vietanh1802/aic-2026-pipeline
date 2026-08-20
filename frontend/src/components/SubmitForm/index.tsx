@@ -9,7 +9,7 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
-import { frameRange } from "../../helpers/frameRange";
+import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import { gapi } from "gapi-script";
@@ -64,6 +64,12 @@ interface SubmitFormData {
   /** Task đang mở từ Board. Có nó thì Add Answer ghi thẳng vào cơ sở dữ liệu. */
   activeTask?: BoardTask | null;
   onBasketChanged?: () => void;
+  /** Mép của khoảnh khắc, ghim từ dải điều khiển ngay dưới video. Null = chưa
+   *  ghim, và chưa ghim cả hai thì nộp đúng frame như trước. */
+  markIn?: number | null;
+  markOut?: number | null;
+  /** The player's exact position, read at the moment of submitting. */
+  getPlayhead?: () => number;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -74,28 +80,13 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   frame_detect,
   activeTask = null,
   onBasketChanged,
+  markIn = null,
+  markOut = null,
+  getPlayhead,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
   const [, setSpreadsheetId] = useState<string | null>(null);
-
-  // Marked edges of the moment, in seconds, pinned from wherever the video is
-  // paused. Null means unmarked, and unmarked on both sides submits exactly the
-  // frame this form has always submitted — see frameRange().
-  //
-  // Deliberately separate from the `values` slider above: that one is a ±50s
-  // navigation window whose bounds get shoved sideways by getValues() when the
-  // playhead is near either end of the video, so its edges do not describe the
-  // moment the user is looking at.
-  const [markIn, setMarkIn] = useState<number | null>(null);
-  const [markOut, setMarkOut] = useState<number | null>(null);
-
-  // A different video is a different moment. Carrying pins across would submit
-  // a frame number the user marked somewhere else entirely.
-  useEffect(() => {
-    setMarkIn(null);
-    setMarkOut(null);
-  }, [videoId]);
 
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
 
@@ -109,9 +100,17 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
       ? activeTask.type === "trake"
       : submitType === "Task 3 - trake";
 
-  const range = frameRange(markIn ?? startAt, markOut ?? startAt, frame_detect);
-  const legacyFrame = Math.floor(startAt * frame_detect);
-  const submittedFrame = isTrakeAnswer ? legacyFrame : range?.frame ?? legacyFrame;
+  // Read at submit time, not at render time: the player moves without React
+  // hearing about it between renders.
+  const frameToSubmit = (): number => {
+    const now = getPlayhead ? getPlayhead() : startAt;
+    const here = frameAt(now, frame_detect);
+    if (isTrakeAnswer) {
+      return here ?? Number.NaN;
+    }
+    return frameRange(markIn ?? now, markOut ?? now, frame_detect)?.frame
+      ?? here ?? Number.NaN;
+  };
 
   const { task1, task2, task3, addTask1, addTask2, addTask3 } =
     useSubmitTasks();
@@ -255,7 +254,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     // Midpoint of the marked edges for KIS and Q&A; the raw playhead for TRAKE
     // and for a video whose fps is unknown. frameRange() returns null in that
     // second case, which is also why the button is disabled there.
-    const frame = submittedFrame;
+    const frame = frameToSubmit();
     if (!Number.isFinite(frame)) {
       console.error("Không tính được frame: thiếu fps cho", videoId);
       return;
@@ -358,59 +357,6 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
             />
           </div>
 
-          {/* Ghim hai mép của khoảnh khắc rồi nộp frame ở giữa. Đáp án được
-              chấm theo một cửa sổ quanh khoảnh khắc, nên hai mép là thứ tua
-              tới được, còn điểm giữa là phỏng đoán tốt nhất mà cặp đó cho ra. */}
-          {!isTrakeAnswer && (
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setMarkIn(startAt)}
-              >
-                ⇤ Đặt đầu tại đây
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setMarkOut(startAt)}
-              >
-                Đặt cuối tại đây ⇥
-              </Button>
-
-              {range ? (
-                <span className="font-mono text-gray-700">
-                  đầu{" "}
-                  <b className={markIn === null ? "text-gray-400" : ""}>
-                    {range.start}
-                  </b>{" "}
-                  · cuối{" "}
-                  <b className={markOut === null ? "text-gray-400" : ""}>
-                    {range.end}
-                  </b>{" "}
-                  · nộp <b className="text-blue-600">{range.frame}</b>
-                </span>
-              ) : (
-                <span className="text-red-500">
-                  Thiếu fps cho {videoId} — không tính được frame.
-                </span>
-              )}
-
-              {(markIn !== null || markOut !== null) && (
-                <button
-                  type="button"
-                  className="underline text-gray-500"
-                  onClick={() => {
-                    setMarkIn(null);
-                    setMarkOut(null);
-                  }}
-                >
-                  bỏ ghim
-                </button>
-              )}
-            </div>
-          )}
-
           {/* Input */}
 
           <input
@@ -443,7 +389,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               size="xs"
               // No fps for this video means every frame number downstream is
               // NaN. It used to submit that; now it says so and stops.
-              disabled={!Number.isFinite(submittedFrame)}
+              disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
               Add Answer
             </Button>

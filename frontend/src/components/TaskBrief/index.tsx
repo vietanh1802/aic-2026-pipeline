@@ -33,27 +33,25 @@ export default function TaskBrief({
     <div
       className={
         isPopup
-          ? "mb-3 px-3 py-2 rounded-[8px] bg-proto-soft border border-proto-line font-baloo"
-          : "sticky top-0 z-[100] max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border border-proto-line font-baloo shadow-sm"
+          ? "sticky top-0 z-20 -mx-6 -mt-6 mb-3 px-6 py-3 bg-white border-b-2 border-proto-primary/40 font-baloo"
+          : "sticky top-0 z-[100] max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border-l-4 border-l-proto-primary border border-proto-line font-baloo shadow-sm"
       }
     >
       <div className="flex items-center gap-2 mb-1 flex-wrap">
         <span
-          className={`font-extrabold px-2 py-0.5 rounded-full bg-proto-dark text-proto-canvas ${
-            isPopup ? "text-[9px]" : "text-[10px]"
-          }`}
+          className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-proto-dark text-proto-canvas"
         >
           {task.type === "qa" ? "Q&A" : task.type.toUpperCase()}
         </span>
         <b
-          className={`text-proto-ink font-mono ${isPopup ? "text-xs" : "text-sm"}`}
+          className="text-[15px] text-proto-ink font-mono"
         >
           Task {task.code}
         </b>
 
         <button
           type="button"
-          className="text-[11px] text-proto-muted underline ml-auto"
+          className="text-[12.5px] text-proto-muted underline ml-auto"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "Thu gọn" : "Mở rộng"}
@@ -62,7 +60,7 @@ export default function TaskBrief({
         {!isPopup && (
           <button
             type="button"
-            className="text-[11.5px] text-proto-primary-active underline"
+            className="text-[12.5px] text-proto-primary-active underline"
             onClick={() =>
               useQueryStore
                 .getState()
@@ -75,9 +73,9 @@ export default function TaskBrief({
       </div>
 
       <div
-        className={`text-proto-body leading-relaxed whitespace-pre-wrap ${
-          isPopup ? "text-[11.5px]" : "text-[12.5px]"
-        } ${expanded ? "" : "line-clamp-2"}`}
+        className={`text-[16px] text-proto-ink leading-snug whitespace-pre-wrap font-medium ${
+          expanded ? "" : "line-clamp-2"
+        }`}
       >
         {task.query_text}
       </div>
@@ -92,7 +90,7 @@ export default function TaskBrief({
             <div
               key={index}
               className={`bg-proto-canvas border border-proto-line rounded-[6px] px-2 py-1 ${
-                isPopup ? "text-[10.5px]" : "text-[11.5px]"
+                isPopup ? "text-[13px]" : "text-[13.5px]"
               }`}
             >
               <b className="text-proto-primary-active">E{index + 1}</b> {label}
