@@ -387,11 +387,12 @@ def _make_response(results: list[dict], query_type: str, t0: datetime) -> Search
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Endpoints
+#fix async def
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.post("/ensemble-search", response_model=SearchResponseEx,
           summary="Alg.3 — search → rerank từng model → ensemble")
-async def ensemble_search_endpoint(req: EnsembleSearchRequest):
+def ensemble_search_endpoint(req: EnsembleSearchRequest):
     """Chuỗi đầy đủ theo thứ tự đã chốt.
 
         query ─┬─→ BEiT3 top-M ─→ rerank lân cận (BEiT3) ─┐
@@ -413,7 +414,7 @@ async def ensemble_search_endpoint(req: EnsembleSearchRequest):
 
 @app.post("/single-search", response_model=SearchResponseEx,
           summary="Chạy một model duy nhất — phục vụ thí nghiệm Q4")
-async def single_search_endpoint(req: SingleSearchRequest):
+def single_search_endpoint(req: SingleSearchRequest):
     """So model đơn với ensemble trên cùng bộ truy vấn.
 
     Q4 cần 6 lần chạy: beit3 đơn, clip đơn, ensemble — mỗi cái có/không rerank.
@@ -432,7 +433,7 @@ async def single_search_endpoint(req: SingleSearchRequest):
 
 @app.post("/temporal-search", response_model=TemporalSearchResponse,
           summary="Alg.4 — cặp frame bắt đầu/kết thúc quanh keyframe neo")
-async def temporal_search_endpoint(req: TemporalSearchRequest):
+def temporal_search_endpoint(req: TemporalSearchRequest):
     """Mở rộng hai chiều từ keyframe neo: sang trái bằng query_start, sang phải
     bằng query_end. Dừng khi điểm tụt dưới sim_thr hoặc đủ max_frames. Chọn cặp
     có tổng điểm cao nhất mà khoảng cách thời gian không vượt gap_C giây.
@@ -456,7 +457,7 @@ async def temporal_search_endpoint(req: TemporalSearchRequest):
 
 @app.post("/trake-search", response_model=TrakeSearchResponse,
           summary="TRAKE — N sự kiện tuần tự trong cùng 1 video (tổng quát hóa Alg.4)")
-async def trake_search_endpoint(req: TrakeSearchRequest):
+def trake_search_endpoint(req: TrakeSearchRequest):
     """Chấm điểm ĐỘC LẬP từng query lên toàn bộ frame video của anchor, rồi
     dùng DP chọn 1 frame/event sao cho frame_idx tăng dần đúng thứ tự VÀ tổng
     điểm N frame lớn nhất. Độ phức tạp O(N × F²) — xem docstring
@@ -478,7 +479,7 @@ async def trake_search_endpoint(req: TrakeSearchRequest):
 
 @app.post("/temporal-search-candidates", response_model=List[TemporalCandidateResult],
           summary="Tự động khám phá video ứng viên cho Temporal Search — không cần anchor_name")
-async def temporal_search_candidates_endpoint(req: TemporalSearchCandidatesRequest):
+def temporal_search_candidates_endpoint(req: TemporalSearchCandidatesRequest):
     """Chạy song song 2 lần _search_one() (query_start, query_end), group theo
     video giữ điểm cao nhất, rồi gọi temporal_search() ĐÃ CÓ (không đổi) cho
     mỗi video ứng viên. Trả về LIST kết quả, sort theo combined_score.
@@ -503,7 +504,7 @@ async def temporal_search_candidates_endpoint(req: TemporalSearchCandidatesReque
 
 @app.post("/trake-search-candidates", response_model=List[TrakeCandidateResult],
           summary="Tự động khám phá video ứng viên cho TRAKE — không cần anchor_name")
-async def trake_search_candidates_endpoint(req: TrakeSearchCandidatesRequest):
+def trake_search_candidates_endpoint(req: TrakeSearchCandidatesRequest):
     """Tương tự /temporal-search-candidates nhưng cho N query (TRAKE). Gọi
     trake_search() ĐÃ CÓ (không đổi) cho mỗi video ứng viên.
     """
@@ -521,7 +522,7 @@ async def trake_search_candidates_endpoint(req: TrakeSearchCandidatesRequest):
 
 @app.post("/temporal-search-text", response_model=TemporalSearchTextResponse,
           summary="Temporal Search — 1 ô nhập duy nhất, tách bằng dấu '.'")
-async def temporal_search_text_endpoint(req: TemporalSearchTextRequest):
+def temporal_search_text_endpoint(req: TemporalSearchTextRequest):
     """Frontend gửi thẳng chuỗi thô (khung nhập giữ nguyên 1 field) — tách
     thành query_start/query_end ở backend rồi gọi
     temporal_search_candidates() ĐÃ CÓ (không đổi).
@@ -541,7 +542,7 @@ async def temporal_search_text_endpoint(req: TemporalSearchTextRequest):
 
 @app.post("/trake-search-text", response_model=TrakeSearchTextResponse,
           summary="TRAKE — 1 ô nhập duy nhất, tách bằng dấu '.'")
-async def trake_search_text_endpoint(req: TrakeSearchTextRequest):
+def trake_search_text_endpoint(req: TrakeSearchTextRequest):
     """Tương tự /temporal-search-text nhưng cho N đoạn (TRAKE). Gọi
     trake_search_candidates() ĐÃ CÓ (không đổi).
     """
