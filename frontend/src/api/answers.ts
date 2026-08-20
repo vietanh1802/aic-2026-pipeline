@@ -50,6 +50,19 @@ export function deleteAnswer(answerId: number): Promise<{ ok: boolean }> {
   return apiFetch(`/api/answers/${answerId}`, { method: "DELETE" });
 }
 
+/**
+ * Empties one task's basket, manual pins included.
+ *
+ * Not the same as autofill's `clear`, which spares the manual rows so the
+ * spread can be redone with a different step. This is the export screen's
+ * "start this query over".
+ */
+export function clearAnswers(
+  taskId: number
+): Promise<{ removed: number; total: number }> {
+  return apiFetch(`/api/tasks/${taskId}/answers`, { method: "DELETE" });
+}
+
 export function reorderAnswer(
   taskId: number,
   payload: { answer_id: number; before_id?: number; after_id?: number }

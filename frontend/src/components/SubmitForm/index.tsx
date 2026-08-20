@@ -9,6 +9,7 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
+import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import { gapi } from "gapi-script";
@@ -63,6 +64,12 @@ interface SubmitFormData {
   /** Task đang mở từ Board. Có nó thì Add Answer ghi thẳng vào cơ sở dữ liệu. */
   activeTask?: BoardTask | null;
   onBasketChanged?: () => void;
+  /** Mép của khoảnh khắc, ghim từ dải điều khiển ngay dưới video. Null = chưa
+   *  ghim, và chưa ghim cả hai thì nộp đúng frame như trước. */
+  markIn?: number | null;
+  markOut?: number | null;
+  /** The player's exact position, read at the moment of submitting. */
+  getPlayhead?: () => number;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -73,6 +80,9 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   frame_detect,
   activeTask = null,
   onBasketChanged,
+  markIn = null,
+  markOut = null,
+  getPlayhead,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
@@ -82,6 +92,25 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
 
   const submitType = useSubmitStore((state) => state.submitType);
   const setSubmitType = useSubmitStore((state) => state.setSubmitType);
+
+  // TRAKE keeps the old single-instant path: one row carries one frame per
+  // event, so a midpoint between two edges has no slot to go in yet.
+  const isTrakeAnswer =
+    activeTask !== null
+      ? activeTask.type === "trake"
+      : submitType === "Task 3 - trake";
+
+  // Read at submit time, not at render time: the player moves without React
+  // hearing about it between renders.
+  const frameToSubmit = (): number => {
+    const now = getPlayhead ? getPlayhead() : startAt;
+    const here = frameAt(now, frame_detect);
+    if (isTrakeAnswer) {
+      return here ?? Number.NaN;
+    }
+    return frameRange(markIn ?? now, markOut ?? now, frame_detect)?.frame
+      ?? here ?? Number.NaN;
+  };
 
   const { task1, task2, task3, addTask1, addTask2, addTask3 } =
     useSubmitTasks();
@@ -222,7 +251,14 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   };
 
   const handleSubmit = async () => {
-    const frame = Math.floor(startAt * frame_detect);
+    // Midpoint of the marked edges for KIS and Q&A; the raw playhead for TRAKE
+    // and for a video whose fps is unknown. frameRange() returns null in that
+    // second case, which is also why the button is disabled there.
+    const frame = frameToSubmit();
+    if (!Number.isFinite(frame)) {
+      console.error("Không tính được frame: thiếu fps cho", videoId);
+      return;
+    }
 
     // Có task đang mở thì đây là đường ghi thật: một hàng trong bảng answers,
     // sống qua F5 và đồng đội thấy được. Giỏ Zustand bên dưới chỉ còn là đường
@@ -252,16 +288,16 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
 
     switch (submitType) {
       case "Task 1 - kis":
-        addTask1(videoId, String(Math.floor(startAt * frame_detect)));
+        addTask1(videoId, String(frame));
         console.log("Task 1 Done");
         break;
       case "Task 2 - qna":
-        addTask2(videoId, String(Math.floor(startAt * frame_detect)), answer);
+        addTask2(videoId, String(frame), answer);
         break;
       case "Task 3 - trake":
         addTask3(
           videoId,
-          String(Math.floor(startAt * frame_detect)),
+          String(frame),
           Number(answer)
         );
         break;
@@ -351,6 +387,9 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
               onClick={handleSubmit}
               size="xs"
+              // No fps for this video means every frame number downstream is
+              // NaN. It used to submit that; now it says so and stops.
+              disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
               Add Answer
             </Button>
