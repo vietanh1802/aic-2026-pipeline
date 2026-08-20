@@ -212,7 +212,14 @@ function App({
     setIsLoading(true);
     try {
       if (searchType === "temporal") {
-        const res = await videoSearchApi.temporalSearchText(queryText);
+        // topVideos: mặc định 5 quá ít khi video ứng viên trùng lặp/gần
+        // giống nhau — tăng lên 20 (không thêm control UI nào, giữ nguyên
+        // khung nhập). Chi phí: mỗi candidate chạy 1 lần temporal_search()
+        // đầy đủ (bidirectional expansion, tối đa ~40 score_frame()/video) —
+        // 20 video vẫn rẻ, không đáng lo hiệu năng.
+        const res = await videoSearchApi.temporalSearchText(queryText, {
+          topVideos: 20,
+        });
         if (res.error) {
           console.error("Temporal search text error:", res.error);
           setTemporalCandidates([]);
@@ -223,7 +230,12 @@ function App({
         return;
       }
       if (searchType === "trake") {
-        const res = await videoSearchApi.trakeSearchText(queryText);
+        // Cùng lý do như temporal ở trên. TRAKE tốn hơn 1 chút mỗi video
+        // (DP O(N×F²) thay vì bidirectional expansion) nhưng F~vài trăm
+        // frame/video, N<=5 nên vẫn rất nhanh — 20 vẫn an toàn.
+        const res = await videoSearchApi.trakeSearchText(queryText, {
+          topVideos: 20,
+        });
         if (res.error) {
           console.error("TRAKE search text error:", res.error);
           setTrakeCandidates([]);
