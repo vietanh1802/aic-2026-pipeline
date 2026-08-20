@@ -25,17 +25,32 @@ THỨ TỰ (đã chốt, khác bản trước):
 Model — verify từ paper gốc:
   Fine-grained   (ref [51]): BEiT3-Large, beit3_large_patch16_384_coco_retrieval.pth
   Coarse-grained (ref [41]): OpenCLIP ViT-bigG-14 (laion2b_s39b_b160k)
-
-CHẾ ĐỘ DEMO: khi chưa có file index/metadata, module tự sinh dữ liệu giả để
-frontend chạy được. Xem phần DEMO_MODE ở cuối file.
 """
 
-import os, json, sys, zlib, subprocess as _sp
+import os, json, re, sys, time, subprocess as _sp
 from typing import Optional
+from urllib.parse import urlparse
 
 import numpy as np
 import faiss
 import torch
+
+# keyframe_metadata.json is 437 MB; json.load takes ~60s and blocks the process.
+# orjson parses the same file in ~15s. Optional: without it we fall back to the
+# stdlib and only startup gets slower.
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None
+
+
+def _read_json(path: str):
+    """Read JSON, preferring orjson. Returns exactly what json.load returns."""
+    if _orjson is not None:
+        with open(path, "rb") as f:
+            return _orjson.loads(f.read())
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Paths — khớp cấu trúc Drive AIC2026/ đã chốt
@@ -59,11 +74,41 @@ BEIT3_MAP_PATH = os.path.join(INDEX_DIR, "beit3_mapping.json")
 CLIP_MAP_PATH  = os.path.join(INDEX_DIR, "clip_mapping.json")
 META_PATH      = os.path.join(INDEX_DIR, "keyframe_metadata.json")
 
-# Mapping json sinh từ notebook có URL tuyệt đối localhost:8000 nhúng cứng.
-# Ta chỉ lấy TÊN FILE rồi ghép lại theo biến này → đổi chỗ lưu ảnh (Backblaze,
-# CDN) chỉ cần đổi env, KHÔNG phải index lại 873 video.
+# The five files that have to come from the same generation run. Kept in one
+# place because /status reports on all of them three different ways.
+INDEX_SET_FILES = (
+    ("beit3.index",            BEIT3_IDX_PATH),
+    ("clip.index",             CLIP_IDX_PATH),
+    ("beit3_mapping.json",     BEIT3_MAP_PATH),
+    ("clip_mapping.json",      CLIP_MAP_PATH),
+    ("keyframe_metadata.json", META_PATH),
+)
+
+# The notebook-generated mappings embed absolute localhost:8000 URLs. We keep
+# only the path below /static/ and re-join it against this variable, so moving
+# the images to S3 or a CDN is an env change rather than a re-index.
+#
+# This points at /static, not /static/images, because the relative path taken
+# from the mapping already starts with "images/". Both mappings were checked
+# (868,524 + 105,817 entries): a single "images" prefix, flat, no subdirectories.
+# The S3 keys therefore mirror it as "images/<file>.jpg" and _image_url() needs
+# no change when serving from a CDN.
 IMAGE_BASE_URL = os.environ.get("AIC_IMAGE_BASE_URL",
-                                "http://localhost:8000/static/images")
+                                "http://localhost:8000/static")
+
+# Marker used to cut the relative path out of a mapping URL, e.g.
+# "http://localhost:8000/static/images/K19_V001-0000-29.jpg"
+# -> "images/K19_V001-0000-29.jpg"
+_STATIC_MARKER = "/static/"
+
+# On-disk image directory, used by _has_image to tell whether a frame is present.
+IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "images"))
+
+# Are images served by this process, or by an external store (S3 behind a CDN)?
+# Derived from the host in IMAGE_BASE_URL: once it points outward we can no
+# longer stat the files.
+_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
+IMAGES_REMOTE = (urlparse(IMAGE_BASE_URL).hostname or "").lower() not in _LOCAL_HOSTS
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -80,6 +125,14 @@ ENSEMBLE_WEIGHTS = {"beit3": 0.5, "clip": 0.5}
 
 MODEL_NAMES = ("beit3", "clip")
 
+# Model chạy khi caller không chỉ định. AIC_MODELS=beit3 để chạy một nhánh khi
+# chưa tải weights CLIP ViT-bigG-14 (~10GB). Lọc theo MODEL_NAMES để tên gõ sai
+# không lọt vào.
+ACTIVE_MODELS = tuple(
+    n for n in (m.strip() for m in os.environ.get("AIC_MODELS", "").split(","))
+    if n in MODEL_NAMES
+) or MODEL_NAMES
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Lazy globals — chỉ nạp khi có request đầu tiên, để server khởi động nhanh
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,10 +147,84 @@ _name2meta:   dict[str, dict] = {}
 _clipid2meta: dict[int, dict] = {}
 _video_frames: dict[str, list[dict]] = {}   # video → keyframe sắp theo frame_idx
 
+# Bảng tra: basename → relative path dưới /static/
+# Dùng để tái hiện URL đầy đủ (kể cả thư mục con) từ mapping gốc của notebook.
+# Ví dụ: "file.jpg" → "AIC2026_frames_p5_016/file.jpg"
+_name2relpath: dict[str, str] = {}
+
+# Identity of each index file at the moment it was read into memory.
+#
+# /status used to report counts only, and counts cannot answer the question an
+# operator actually has after publishing a new index set: is the process serving
+# it yet? A regeneration that keeps the same keyframes reports the same counts,
+# and those counts come from module globals, so a container that never restarted
+# looks exactly like one that did. Size and mtime captured here, compared with
+# the files on disk at request time, tell the two apart.
+#
+# mtime is meaningful because `aws s3 sync` stamps the object's LastModified
+# onto the file it downloads (verified against s3://aic2026-artifacts/indexes/
+# on 2026-08-19), so this value can be matched against S3 head-object.
+_index_loaded: dict[str, dict] = {}
+
+
+def _file_identity(path: str) -> Optional[dict]:
+    """Size and mtime of one file, or None when it is not there."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return {
+        "bytes": st.st_size,
+        "mtime": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(st.st_mtime)),
+    }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Loaders
 # ─────────────────────────────────────────────────────────────────────────────
+class _Beit3Tokenizer:
+    """Port trực tiếp thuật toán XLMRobertaTokenizer (transformers 4.0.1,
+    Apache 2.0 License — https://huggingface.co/transformers/v4.0.1/_modules/
+    transformers/models/xlm_roberta/tokenization_xlm_roberta.html) bằng
+    sentencepiece thuần, KHÔNG qua transformers.XLMRobertaTokenizer.
+
+    Lý do: transformers mới nhất đổi API constructor (vocab_file → vocab),
+    còn các bản cũ đủ để giữ API cũ thì kéo theo tokenizers không có wheel
+    Windows Python 3.12 (cần Rust compiler để build từ source). Port thẳng
+    logic đã verify, tự chủ hoàn toàn, không phụ thuộc version transformers.
+
+    Interface giống hệt XLMRobertaTokenizer(text, return_tensors="pt")
+    ["input_ids"] — encode_text_beit3() KHÔNG cần đổi gì cả.
+    """
+
+    def __init__(self, spm_path: str):
+        import sentencepiece as spm
+        self.sp = spm.SentencePieceProcessor()
+        self.sp.Load(spm_path)
+        # fairseq special tokens: <s>=0 <pad>=1 </s>=2 <unk>=3 — verify từ
+        # chính source 4.0.1: "self.fairseq_tokens_to_ids = {'<s>': 0,
+        # '<pad>': 1, '</s>': 2, '<unk>': 3}", "self.fairseq_offset = 1"
+        self.bos_id, self.pad_id, self.eos_id, self.unk_id = 0, 1, 2, 3
+        self.fairseq_offset = 1
+
+    def _convert_token_to_id(self, token: str) -> int:
+        """Verify từ 4.0.1: 'spm_id = self.sp_model.PieceToId(token);
+        return spm_id + self.fairseq_offset if spm_id else self.unk_token_id'"""
+        spm_id = self.sp.PieceToId(token)
+        return spm_id + self.fairseq_offset if spm_id else self.unk_id
+
+    def __call__(self, text: str, return_tensors: str = "pt") -> dict:
+        """Verify từ 4.0.1 build_inputs_with_special_tokens (single sequence):
+        '[self.cls_token_id] + token_ids_0 + [self.sep_token_id]'
+        cls_token_id = bos_id = 0, sep_token_id = eos_id = 2."""
+        pieces = self.sp.EncodeAsPieces(text)
+        ids = [self._convert_token_to_id(p) for p in pieces]
+        input_ids = [self.bos_id] + ids + [self.eos_id]
+        if return_tensors == "pt":
+            import torch
+            return {"input_ids": torch.tensor([input_ids], dtype=torch.long)}
+        return {"input_ids": [input_ids]}
+
 
 def _load_beit3():
     """Nạp BEiT3-Large retrieval (ref [51], nhánh fine-grained).
@@ -148,7 +275,6 @@ def _load_beit3():
 
     from timm.models import create_model
     import modeling_finetune  # noqa: F401 — kích hoạt @register_model
-    from transformers import XLMRobertaTokenizer
 
     print(f"[preprocess] Loading {BEIT3_MODEL_NAME}...")
     model = create_model(BEIT3_MODEL_NAME, pretrained=False)
@@ -159,36 +285,107 @@ def _load_beit3():
     model.eval().to(DEVICE)
 
     _beit3_model     = model
-    _beit3_tokenizer = XLMRobertaTokenizer(spm_path)
+    _beit3_tokenizer = _Beit3Tokenizer(spm_path)
     print(f"[preprocess] BEiT3-Large loaded on {DEVICE} "
           f"(missing={len(missing)}, unexpected={len(unexpected)})")
 
 
+def _ensure_clip_checkpoint() -> str:
+    """Tải checkpoint CLIP về INDEX_DIR (cùng pattern với BEiT3), CHỈ 1 LẦN —
+    tránh phải tải lại toàn bộ ~10GB mỗi lần server khởi động.
+
+    Root cause: open_clip.create_model_and_transforms(pretrained="laion2b_...")
+    (tag string) tự tải qua cache hệ thống mặc định của huggingface_hub — cache
+    đó không ổn định trong môi trường đang chạy (đổi ổ đĩa, venv mới, nhiều máy
+    khác nhau...), nên liên tục tải lại và bị HuggingFace giới hạn tốc độ
+    (rate limit) do quá nhiều request tải file lớn.
+
+    Fix: tải tường minh 1 lần vào INDEX_DIR — cùng thư mục bền vững đã dùng
+    cho beit3 checkpoint — rồi truyền THẲNG local path vào open_clip thay vì
+    tag string. open_clip's create_model() có nhánh "elif os.path.exists(
+    pretrained): checkpoint_path = pretrained" — dùng local path là cách dùng
+    chính thức, không phải hack.
+
+    Dùng huggingface_hub.hf_hub_download() (không phải curl thuần như BEiT3)
+    vì file này lưu qua HF Xet storage (verify từ trang model chính thức:
+    "Xet efficiently stores Large Files inside Git") — URL tĩnh đơn giản
+    không tải đúng được, cần đúng client hf_hub_download để resolve.
+    """
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    ckpt_path = os.path.join(INDEX_DIR, "open_clip_model.safetensors")
+    if not os.path.exists(ckpt_path):
+        print("[preprocess] Downloading CLIP checkpoint (~10.2GB, chỉ 1 lần "
+              f"vào {ckpt_path})...")
+        from huggingface_hub import hf_hub_download
+        downloaded = hf_hub_download(
+            repo_id="laion/CLIP-ViT-bigG-14-laion2B-39B-b160k",
+            filename="open_clip_model.safetensors",
+            local_dir=INDEX_DIR,
+        )
+        # hf_hub_download có thể trả về path khác đôi chút tuỳ version (vd có
+        # symlink vào cache trước rồi copy) — đảm bảo file cuối nằm đúng tên
+        # đã khai báo ở ckpt_path để lần sau os.path.exists() check đúng chỗ.
+        if os.path.abspath(downloaded) != os.path.abspath(ckpt_path) and os.path.exists(downloaded):
+            os.replace(downloaded, ckpt_path)
+        print(f"[preprocess] CLIP checkpoint đã lưu tại {ckpt_path}")
+    return ckpt_path
+
+
 def _load_clip():
-    """Nạp OpenCLIP ViT-bigG-14 (ref [41], nhánh coarse-grained)."""
+    """Nạp OpenCLIP ViT-bigG-14 (ref [41], nhánh coarse-grained).
+
+    Tải checkpoint tường minh vào INDEX_DIR qua _ensure_clip_checkpoint()
+    thay vì để open_clip tự tải qua cache hệ thống mặc định — xem giải thích
+    đầy đủ trong docstring hàm đó.
+    """
     global _clip_model, _clip_proc, _clip_tokenizer
     if _clip_model is None:
         import open_clip
+        ckpt_path = _ensure_clip_checkpoint()
         _clip_model, _, _clip_proc = open_clip.create_model_and_transforms(
-            CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED, device=DEVICE)
+            CLIP_MODEL_NAME, pretrained=ckpt_path, device=DEVICE)
         _clip_model.eval()
         _clip_tokenizer = open_clip.get_tokenizer(CLIP_MODEL_NAME)
-        print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE}")
+        print(f"[preprocess] CLIP {CLIP_MODEL_NAME} loaded on {DEVICE} "
+              f"(checkpoint local: {ckpt_path})")
+
+
+def _build_relpath_from_map(mapping: dict) -> None:
+    """Trích relative path dưới /static/ từ URL gốc trong mapping và lưu vào
+    _name2relpath.  Cần chạy mỗi khi nạp mapping để _image_url() trả đúng
+    URL kể cả khi ảnh nằm trong thư mục con (AIC2026_frames_p5_0XX/).
+
+    setdefault: nếu cùng tên file xuất hiện ở cả 2 mapping (beit3 + clip),
+    giữ entry đầu tiên — chúng phải trỏ cùng file nên không quan trọng thứ tự.
+    """
+    for url in mapping.values():
+        if not url:
+            continue
+        fname = os.path.basename(url)
+        if not fname:
+            continue
+        idx = url.find(_STATIC_MARKER)
+        rel = url[idx + len(_STATIC_MARKER):] if idx >= 0 else fname
+        _name2relpath.setdefault(fname, rel)
 
 
 def _load_indexes():
     global _beit3_index, _clip_index, _beit3_map, _clip_map
     if _beit3_index is None and os.path.exists(BEIT3_IDX_PATH):
         _beit3_index = faiss.read_index(BEIT3_IDX_PATH)
+        _index_loaded["beit3.index"] = _file_identity(BEIT3_IDX_PATH)
         if os.path.exists(BEIT3_MAP_PATH):
-            with open(BEIT3_MAP_PATH, encoding="utf-8") as f:
-                _beit3_map = json.load(f)
+            _beit3_map = _read_json(BEIT3_MAP_PATH)
+            _index_loaded["beit3_mapping.json"] = _file_identity(BEIT3_MAP_PATH)
+            _build_relpath_from_map(_beit3_map)
         print(f"[preprocess] BEiT3 FAISS: {_beit3_index.ntotal} vectors")
     if _clip_index is None and os.path.exists(CLIP_IDX_PATH):
         _clip_index = faiss.read_index(CLIP_IDX_PATH)
+        _index_loaded["clip.index"] = _file_identity(CLIP_IDX_PATH)
         if os.path.exists(CLIP_MAP_PATH):
-            with open(CLIP_MAP_PATH, encoding="utf-8") as f:
-                _clip_map = json.load(f)
+            _clip_map = _read_json(CLIP_MAP_PATH)
+            _index_loaded["clip_mapping.json"] = _file_identity(CLIP_MAP_PATH)
+            _build_relpath_from_map(_clip_map)
         print(f"[preprocess] CLIP FAISS: {_clip_index.ntotal} vectors")
 
 
@@ -197,9 +394,9 @@ def _load_meta():
     global _meta, _meta_loaded, _name2meta, _clipid2meta, _video_frames
     if _meta_loaded or not os.path.exists(META_PATH):
         return
-    with open(META_PATH, encoding="utf-8") as f:
-        _meta = json.load(f)
+    _meta = _read_json(META_PATH)
     _meta_loaded = True
+    _index_loaded["keyframe_metadata.json"] = _file_identity(META_PATH)
 
     _name2meta   = {m["name"]: m for m in _meta}
     _clipid2meta = {int(m["faiss_id_clip"]): m
@@ -222,7 +419,42 @@ def _model_parts(model_name: str):
 
 
 def _image_url(name: str) -> str:
-    return f"{IMAGE_BASE_URL.rstrip('/')}/{name}"
+    """Tạo URL phục vụ ảnh.
+
+    Tra _name2relpath để lấy lại đường dẫn đầy đủ dưới /static/ (kể cả thư
+    mục con).  Nếu không có trong bảng tra (ảnh không qua mapping), dùng name
+    trực tiếp — fallback an toàn.
+
+    Example:
+      name      = "K19_V001-0000-29.jpg"
+      rel_path  = "images/K19_V001-0000-29.jpg"
+      local URL = "http://localhost:8000/static/images/K19_V001-0000-29.jpg"
+      S3 URL    = "https://aic-frames.umaga.fun/images/K19_V001-0000-29.jpg"
+    """
+    rel = _name2relpath.get(name, name)
+    return f"{IMAGE_BASE_URL.rstrip('/')}/{rel}"
+
+
+def _has_image(name: str) -> bool:
+    """Whether this result has an image the UI can display.
+
+    Served locally, we stat each file: the index covers all 868,524 frames but
+    the images arrive separately as tens of gigabytes of ZIPs, so most results
+    point at a file that is not there yet and the UI needs to know. We stat
+    rather than cache a listing so the answer stays correct while a ZIP is being
+    extracted underneath a running server.
+
+    Served remotely, stat is impossible and unnecessary: FrameDisplay already
+    falls back to a placeholder on image error. Carrying an 868k-name manifest
+    here just to predict what the browser discovers on its own is not worth it,
+    least of all for the few hours the seed job is running.
+    """
+    if IMAGES_REMOTE:
+        return True
+    # rel tính từ gốc /static/ (vd "images/x.jpg"), còn IMAGES_DIR = <static>/images.
+    rel = _name2relpath.get(name, name)
+    static_root = os.path.dirname(IMAGES_DIR)
+    return os.path.exists(os.path.join(static_root, rel.replace("/", os.sep)))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -447,6 +679,7 @@ def _merge_ensemble(per_model: dict[str, list[dict]], top_k: int) -> list[dict]:
             "frame_idx": ref.get("frame_idx"),
             "timestamp": ref.get("timestamp", ""),
             "routes":    detail[key]["routes"],
+            "has_image": _has_image(key),
         })
     return results
 
@@ -466,11 +699,8 @@ def ensemble_search(query: str, top_k: int = 100, top_m: int = 50,
     _load_indexes()
     _load_meta()
 
-    if DEMO_MODE:
-        return _demo_results(query, top_k, models)
-
     per_model: dict[str, list[dict]] = {}
-    for name in (models or list(MODEL_NAMES)):
+    for name in (models or list(ACTIVE_MODELS)):
         if name not in MODEL_NAMES:
             continue
         hits = _search_one(name, query, top_m)
@@ -507,9 +737,6 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     """Trả cặp (frame bắt đầu, frame kết thúc) quanh keyframe neo."""
     _load_indexes()
     _load_meta()
-
-    if DEMO_MODE:
-        return _demo_temporal(query_start, anchor_name)
 
     index, _, encode_fn, id_field = _model_parts(model_name)
     if index is None or not _meta:
@@ -577,6 +804,22 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
         best, best_score = (anchor, anchor), 0.0
 
     m1, m2 = best
+
+    # Paper Section 3.6.1, Figure 4c ("Boundary Selection"): "Users can review
+    # these suggestions and adjust them if necessary to refine the moment
+    # boundaries." — trả thêm danh sách ứng viên trái/phải (không chỉ đếm số
+    # lượng như trước) để UI dựng được bước review/điều chỉnh này. left/right
+    # đã có sẵn đủ dữ liệu từ vòng lặp mở rộng phía trên, chỉ thêm bước đóng
+    # gói — KHÔNG đổi thuật toán chọn cặp tốt nhất, KHÔNG bớt field cũ nào.
+    def _candidate(m: dict, s: float) -> dict:
+        return {
+            "name":      m["name"],
+            "url":       _image_url(m["name"]),
+            "frame_idx": m.get("frame_idx"),
+            "timestamp": m.get("timestamp_str", ""),
+            "score":     round(s * 100, 2),
+        }
+
     return {
         "video":           video,
         "start_frame":     m1["name"],
@@ -590,106 +833,392 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
         "end_url":         _image_url(m2["name"]),
         "n_left":          len(left),
         "n_right":         len(right),
+        "left_candidates":  [_candidate(m, s) for m, s in left],
+        "right_candidates": [_candidate(m, s) for m, s in right],
     }
 
 
+def preload() -> None:
+    """Load indexes, metadata and the models named in ACTIVE_MODELS up front.
+
+    All of this is otherwise lazy-loaded on the first request: roughly 16 GB of
+    disk reads plus JSON parsing, several minutes in total. On a machine that is
+    stopped and started daily, that cost lands on whichever user searches first,
+    with no feedback. Calling this from the lifespan hook moves the wait off the
+    request path.
+
+    Idempotent: every _load_* helper already checks whether it has run.
+    """
+    _load_indexes()
+    _load_meta()
+    for name in ACTIVE_MODELS:
+        if name == "beit3":
+            _load_beit3()
+        elif name == "clip":
+            _load_clip()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  CHẾ ĐỘ DEMO — chạy frontend khi chưa có index
+#  TRAKE — tổng quát hóa Alg.4 từ 2 điểm (start/end) lên N sự kiện tuần tự.
+#  KHÔNG sửa temporal_search() ở trên (2 điểm, giữ nguyên) — đây là hàm MỚI,
+#  dùng cho câu hỏi TRAKE (N mốc thời gian trong CÙNG 1 video, theo thứ tự).
 #
-#  Bật khi:  AIC_DEMO=1  HOẶC  không tìm thấy file index nào.
-#  Sinh dữ liệu giả TẤT ĐỊNH theo truy vấn (cùng query → cùng kết quả), để
-#  frontend test phân trang / sắp xếp / chọn frame mà không cần 1.29GB model.
+#  Merge lại sau khi nhánh bạn cùng team tách trước lúc hàm này được thêm —
+#  nguyên văn logic cũ, chỉ đổi MODEL_NAMES → ACTIVE_MODELS cho khớp quy ước
+#  mới (AIC_MODELS env var, phòng khi CLIP chưa tải xong vẫn chạy được BEiT3).
+#
+#  Thiết kế theo đúng đề xuất: chấm điểm ĐỘC LẬP từng event lên toàn bộ frame
+#  của video (không mở rộng 2 chiều từ 1 anchor như Alg.4 gốc — cách đó chỉ tự
+#  nhiên cho đúng 2 điểm), rồi post-processing bằng DP để chọn 1 frame/event
+#  sao cho frame_idx tăng dần đúng thứ tự VÀ tổng điểm N frame lớn nhất.
+#
+#  Complexity: brute-force thử mọi tổ hợp là O(F^N) — bùng nổ tổ hợp với F~vài
+#  trăm frame/video, N=4-5 event. DP giảm xuống O(N × F²): dp[i][j] = tổng
+#  điểm tốt nhất nếu event i chọn frame j, với ràng buộc có 1 chuỗi frame
+#  trước đó (event 0..i-1) đều đứng TRƯỚC frame j về thời gian.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _indexes_exist() -> bool:
-    return os.path.exists(BEIT3_IDX_PATH) or os.path.exists(CLIP_IDX_PATH)
+def trake_search(queries: list[str], anchor_name: str, gap_c: int = 60,
+                 model_name: str = "clip") -> dict:
+    """N query tuần tự (E1, E2, ..., EN) → N frame theo đúng thứ tự thời gian
+    trong video của anchor, tổng điểm lớn nhất.
 
+    gap_c: khoảng cách tối đa (giây) giữa 2 event LIÊN TIẾP (áp theo từng cặp
+    kề nhau trong DP, không phải tổng toàn chuỗi — tránh 1 cặp bị giãn quá xa
+    trong khi các cặp khác vẫn hợp lý).
+    """
+    _load_indexes()
+    _load_meta()
 
-DEMO_MODE = (os.environ.get("AIC_DEMO", "").strip() in ("1", "true", "True")
-             or not _indexes_exist())
+    index, _, encode_fn, id_field = _model_parts(model_name)
+    if index is None or not _meta:
+        return {"error": "Chưa nạp được index hoặc metadata"}
 
-_DEMO_VIDEOS = [f"L{g:02d}_V{v:03d}" for g in range(21, 31) for v in (1, 15, 42)]
+    n = len(queries)
+    if n < 2:
+        return {"error": "Cần ít nhất 2 query cho TRAKE (nếu chỉ 2, dùng /temporal-search cũng được)"}
 
+    anchor = _name2meta.get(anchor_name)
+    if anchor is None:
+        return {"error": f"Không tìm thấy keyframe neo {anchor_name} trong metadata"}
 
-def _demo_rng(seed_text: str):
-    import random
-    return random.Random(zlib.crc32(seed_text.encode("utf-8")))
+    video = anchor.get("video", "")
+    fps   = float(anchor.get("fps", 25.0))
 
+    frames = [m for m in _video_frames.get(video, []) if m.get(id_field, -1) >= 0]
+    F = len(frames)
+    if F == 0:
+        return {"error": f"Video {video} chưa có frame nào được index"}
 
-def _demo_results(query: str, top_k: int, models: Optional[list[str]]) -> list[dict]:
-    rng   = _demo_rng(query)
-    names = models or list(MODEL_NAMES)
-    out   = []
-    for i in range(min(top_k, 100)):
-        video = rng.choice(_DEMO_VIDEOS)
-        shot  = rng.randint(1, 300)
-        fidx  = rng.randint(100, 39000)
-        name  = f"{video}-{shot:04d}-{fidx:06d}.jpg"
-        secs  = fidx / 25.0
-        routes = {n: {"rank": rng.randint(1, 50),
-                      "score": round(rng.uniform(0.15, 0.45), 4)}
-                  for n in names if rng.random() > 0.3}
-        out.append({
-            "frame":     name,
-            "name":      name,
-            "url":       _image_url(name),
-            "distance":  round(95.0 - i * 0.7 + rng.random(), 2),
-            "video":     video,
-            "frame_idx": fidx,
-            "timestamp": f"{int(secs // 60):02d}:{int(secs % 60):02d}",
-            "routes":    routes or {names[0]: {"rank": i + 1, "score": 0.3}},
-            "demo":      True,
+    # Bước 1 — chấm điểm ĐỘC LẬP từng event lên MỌI frame trong video.
+    q_embs = [encode_fn(q).ravel() for q in queries]
+
+    def score_frame(fid: int, q: np.ndarray) -> float:
+        """Giống hệt score_frame trong temporal_search() — reconstruct() rồi
+        dot product, chính xác tuyệt đối, không xấp xỉ."""
+        try:
+            vec = index.reconstruct(int(fid)).astype("float32").ravel()
+            return float(np.dot(q, vec))
+        except Exception:
+            return -1.0
+
+    scores = [[score_frame(frames[j][id_field], q_embs[i]) for j in range(F)]
+             for i in range(n)]
+
+    # Bước 2 — DP: dp[i][j] = tổng điểm tốt nhất nếu event i chọn frame j.
+    NEG = float("-inf")
+    dp   = [[NEG] * F for _ in range(n)]
+    back = [[-1]  * F for _ in range(n)]
+    for j in range(F):
+        dp[0][j] = scores[0][j]
+
+    gap_frames = gap_c * fps if gap_c else None
+
+    for i in range(1, n):
+        for j in range(F):
+            best_prev, best_val = -1, NEG
+            for k in range(j):   # k phải đứng TRƯỚC j — đảm bảo frame_idx tăng dần
+                if dp[i - 1][k] == NEG:
+                    continue
+                if gap_frames is not None and \
+                   (frames[j]["frame_idx"] - frames[k]["frame_idx"]) > gap_frames:
+                    continue
+                if dp[i - 1][k] > best_val:
+                    best_val, best_prev = dp[i - 1][k], k
+            if best_prev >= 0:
+                dp[i][j] = best_val + scores[i][j]
+                back[i][j] = best_prev
+
+    # Bước 3 — truy vết chuỗi tốt nhất.
+    last_j = max(range(F), key=lambda j: dp[n - 1][j])
+    if dp[n - 1][last_j] == NEG:
+        return {"error": "Không tìm được chuỗi frame hợp lệ theo đúng thứ tự "
+                         "trong ràng buộc gap_c — thử tăng gap_c."}
+
+    chosen_idx = [0] * n
+    j = last_j
+    for i in range(n - 1, -1, -1):
+        chosen_idx[i] = j
+        j = back[i][j]
+
+    # Candidate list mỗi event — top-10, để UI cho review/đổi (đúng tinh thần
+    # Figure 4c "Boundary Selection" đã áp dụng ở temporal_search()).
+    def top_candidates(i: int, k: int = 10) -> list[dict]:
+        order = sorted(range(F), key=lambda j: -scores[i][j])[:k]
+        return [{
+            "name": frames[j]["name"], "url": _image_url(frames[j]["name"]),
+            "frame_idx": frames[j].get("frame_idx"),
+            "timestamp": frames[j].get("timestamp_str", ""),
+            "score": round(scores[i][j] * 100, 2),
+        } for j in order]
+
+    events = []
+    for i in range(n):
+        j = chosen_idx[i]
+        events.append({
+            "name":      frames[j]["name"],
+            "url":       _image_url(frames[j]["name"]),
+            "frame_idx": frames[j].get("frame_idx"),
+            "timestamp": frames[j].get("timestamp_str", ""),
+            "score":     round(scores[i][j] * 100, 2),
+            "candidates": top_candidates(i),
         })
-    return out
 
-
-def _demo_temporal(query_start: str, anchor_name: str) -> dict:
-    rng   = _demo_rng(anchor_name + query_start)
-    video = anchor_name.split("-")[0]
-    fi1   = rng.randint(100, 30000)
-    fi2   = fi1 + rng.randint(30, 400)
-    n1    = f"{video}-0001-{fi1:06d}.jpg"
-    n2    = f"{video}-0001-{fi2:06d}.jpg"
     return {
-        "video":           video,
-        "start_frame":     n1,
-        "end_frame":       n2,
-        "start_ts":        f"{fi1 // 25 // 60:02d}:{fi1 // 25 % 60:02d}",
-        "end_ts":          f"{fi2 // 25 // 60:02d}:{fi2 // 25 % 60:02d}",
-        "start_frame_idx": fi1,
-        "end_frame_idx":   fi2,
-        "combined_score":  round(rng.uniform(40, 90), 2),
-        "start_url":       _image_url(n1),
-        "end_url":         _image_url(n2),
-        "n_left":          rng.randint(1, 20),
-        "n_right":         rng.randint(1, 20),
-        "demo":            True,
+        "video":          video,
+        "events":         events,
+        "combined_score": round(dp[n - 1][last_j] * 100, 2),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Auto-discovery candidate video — lớp NGOÀI, không đụng temporal_search()/
+#  trake_search() ở trên (2 hàm đó vẫn nguyên vẹn, được GỌI LẠI y nguyên bên
+#  dưới, không sửa dòng nào bên trong).
+#
+#  Paper (Sec 3.5) coi anchor là input CHO SẴN: "We assume that the initially
+#  retrieved and reranked input frame corresponds to the correct reference
+#  frame" — tức là bước chọn anchor vốn là giả định đơn giản hóa của paper,
+#  KHÔNG được paper tự động hóa. Phần dưới đây tự động hóa đúng bước đó, dựa
+#  trên nhận xét: cả temporal_search() lẫn trake_search() chỉ cần biết ĐÚNG
+#  VIDEO (anchor.get("video")/get("fps")) — trake_search() không hề dùng vị
+#  trí frame cụ thể của anchor cho việc tính DP, chỉ cần 1 frame bất kỳ thuộc
+#  đúng video đó.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _discover_candidate_videos(queries: list[str], model_name: str,
+                               top_m: int, min_score: float = 0.10) -> list[dict]:
+    """Chạy _search_one() (đã có, dùng chung với ensemble_search) cho TỪNG
+    query trong `queries`, group theo video.
+
+    ĐIỂM = TẦN SUẤT (frequency), không phải MAX cosine score qua các query —
+    mỗi video được +1 cho MỖI query có ÍT NHẤT 1 frame trong video đó đạt
+    điểm >= min_score (ngưỡng dùng chung khái niệm sim_thr đã có ở
+    temporal_search()/trake_search()).
+
+    Lý do đổi từ MAX sang frequency: 1 video có thể được xếp hạng cao chỉ vì
+    1 query khớp rất mạnh, trong khi các query còn lại hoàn toàn không khớp
+    — dấu hiệu cho thấy video đó nhiều khả năng KHÔNG chứa đủ chuỗi sự kiện,
+    chỉ tình cờ giống 1 khoảnh khắc. Frequency (bao nhiêu query có match đạt
+    ngưỡng) phản ánh đúng "video này có khả năng chứa đủ chuỗi hay không"
+    hơn hẳn 1 con số MAX đơn lẻ dễ bị đánh lừa.
+
+    Trả về list [{video, anchor_name, discovery_score, discovery_score_sum}],
+    sort giảm dần theo discovery_score (tần suất, số nguyên 0..N), tie-break
+    bằng discovery_score_sum (tổng điểm các query đã khớp — video khớp nhiều
+    VÀ điểm cao hơn xếp trên video khớp nhiều nhưng điểm sát ngưỡng).
+    anchor_name là frame có điểm cao nhất trong số các query đã khớp video đó
+    (chỉ cần đúng video khi gọi lại temporal_search()/trake_search(), như đã
+    giải thích ở trên).
+    """
+    video_hits: dict[str, list[dict]] = {}
+    for q in queries:
+        hits = _search_one(model_name, q, top_m)
+        seen_this_query: set[str] = set()
+        for h in hits:
+            if h["score"] < min_score:
+                continue
+            v = h["video"]
+            if v in seen_this_query:
+                continue   # 1 video chỉ tính +1 tần suất / query, dù có nhiều frame khớp
+            seen_this_query.add(v)
+            video_hits.setdefault(v, []).append(h)
+
+    candidates = []
+    for v, hits in video_hits.items():
+        best_hit = max(hits, key=lambda h: h["score"])
+        candidates.append({
+            "video":               v,
+            "anchor_name":         best_hit["name"],
+            "discovery_score":     len(hits),                       # tần suất — số query đã khớp
+            "discovery_score_sum": round(sum(h["score"] for h in hits), 4),  # tie-break
+        })
+
+    candidates.sort(key=lambda c: (-c["discovery_score"], -c["discovery_score_sum"]))
+    return candidates
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tách 1 chuỗi query duy nhất (người dùng gõ trong 1 ô, cách nhau bằng dấu
+#  chấm) thành list các đoạn — phục vụ UI: khung nhập giữ nguyên 1 ô, không
+#  thêm field nào ở frontend.
+#
+#  Tách theo dấu "." + khoảng trắng theo sau (\.\s+), KHÔNG tách theo mọi dấu
+#  "." — để không cắt nhầm số thập phân ("3.5 giây" không có space ngay sau
+#  "." nên không bị tách) hay viết tắt liền số ("TP.HCM"). Đánh đổi: viết tắt
+#  CÓ space sau dấu chấm ("TP. Hồ Chí Minh") vẫn bị tách nhầm — chấp nhận được
+#  vì câu query mô tả cảnh hiếm khi dùng dạng viết tắt này.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _split_query_text(text: str) -> list[str]:
+    """'A. B.  C' -> ['A', 'B', 'C'] — trim khoảng trắng, bỏ đoạn rỗng."""
+    parts = re.split(r"\.\s+", text.strip())
+    return [p.strip().rstrip(".").strip() for p in parts if p.strip()]
+
+
+def temporal_search_candidates(query_start: str, query_end: str,
+                               top_m: int = 50, top_videos: int = 5,
+                               gap_c: int = 20, max_frames: int = 20,
+                               sim_thr: float = 0.10,
+                               model_name: str = "clip") -> list[dict]:
+    """Tự động khám phá top_videos video ứng viên (từ query_start + query_end
+    gộp lại), rồi gọi temporal_search() ĐÃ CÓ — y nguyên, không đổi — cho MỖI
+    video ứng viên. Trả về list kết quả, sort theo combined_score giảm dần.
+
+    Đây là bản KHÔNG CẦN anchor_name thủ công — bổ sung thêm bên cạnh
+    temporal_search() (vẫn giữ nguyên, endpoint /temporal-search cũ không đổi
+    gì), phục vụ trường hợp muốn tự động hóa thay vì bắt người dùng bấm chọn
+    1 frame trước.
+
+    Dùng lại sim_thr (đã có sẵn cho temporal_search() phía dưới) làm min_score
+    lúc khám phá video — cùng 1 khái niệm "đủ tốt", không cần thêm tham số
+    riêng.
+    """
+    _load_indexes()
+    _load_meta()
+
+    candidates = _discover_candidate_videos([query_start, query_end],
+                                            model_name, top_m,
+                                            min_score=sim_thr)[:top_videos]
+    results = []
+    for c in candidates:
+        r = temporal_search(query_start, query_end, anchor_name=c["anchor_name"],
+                            gap_c=gap_c, max_frames=max_frames, sim_thr=sim_thr,
+                            model_name=model_name)
+        if "error" not in r:
+            # discovery_score = tần suất (bao nhiêu query khớp video này, số
+            # nguyên 0..N) — KHÔNG nhân 100 (không còn là cosine score 0..1).
+            r["discovery_score"]     = c["discovery_score"]
+            r["discovery_score_sum"] = c["discovery_score_sum"]
+            results.append(r)
+
+    results.sort(key=lambda r: -(r.get("combined_score") or 0))
+    return results
+
+
+def trake_search_candidates(queries: list[str], top_m: int = 50,
+                            top_videos: int = 5, gap_c: int = 60,
+                            min_score: float = 0.10,
+                            model_name: str = "clip") -> list[dict]:
+    """Tương tự temporal_search_candidates() nhưng cho N query (TRAKE). Gọi
+    trake_search() ĐÃ CÓ — y nguyên — cho mỗi video ứng viên.
+
+    min_score: ngưỡng "đủ tốt" lúc khám phá video (trake_search() bản thân
+    không có sim_thr như temporal_search(), nên tham số này tách riêng thay
+    vì tái dùng — cùng default 0.10 cho nhất quán toàn hệ thống).
+    """
+    _load_indexes()
+    _load_meta()
+
+    candidates = _discover_candidate_videos(queries, model_name, top_m,
+                                            min_score=min_score)[:top_videos]
+    results = []
+    for c in candidates:
+        r = trake_search(queries, anchor_name=c["anchor_name"], gap_c=gap_c,
+                         model_name=model_name)
+        if "error" not in r:
+            r["discovery_score"]     = c["discovery_score"]
+            r["discovery_score_sum"] = c["discovery_score_sum"]
+            results.append(r)
+
+    results.sort(key=lambda r: -(r.get("combined_score") or 0))
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Bản "1 ô nhập" — tách chuỗi rồi GỌI LẠI temporal_search_candidates()/
+#  trake_search_candidates() Ở TRÊN, KHÔNG ĐỔI GÌ bên trong 2 hàm đó. Phục vụ
+#  UI: người dùng gõ "A. B" (temporal) hoặc "A. B. C. D" (trake) trong 1 ô
+#  input duy nhất, không cần thêm field nào ở frontend.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def temporal_search_text(query: str, **kwargs) -> dict:
+    """Tách `query` thành đúng 2 đoạn (start, end) rồi gọi
+    temporal_search_candidates() y nguyên. Lỗi rõ ràng nếu không tách được
+    đúng 2 đoạn — không đoán/tự ghép nếu thiếu."""
+    parts = _split_query_text(query)
+    if len(parts) != 2:
+        return {"error": f"Cần đúng 2 đoạn cách nhau bằng dấu '.' cho temporal "
+                         f"search (start. end) — tách được {len(parts)} đoạn: {parts}"}
+    return {"results": temporal_search_candidates(parts[0], parts[1], **kwargs)}
+
+
+def trake_search_text(query: str, **kwargs) -> dict:
+    """Tách `query` thành N đoạn (N>=2) rồi gọi trake_search_candidates() y
+    nguyên. Lỗi rõ ràng nếu tách được ít hơn 2 đoạn."""
+    parts = _split_query_text(query)
+    if len(parts) < 2:
+        return {"error": f"Cần ít nhất 2 đoạn cách nhau bằng dấu '.' cho TRAKE "
+                         f"— tách được {len(parts)} đoạn: {parts}"}
+    return {"results": trake_search_candidates(parts, **kwargs)}
 
 
 def system_status() -> dict:
     """Tình trạng từng thành phần — dùng cho /status, để biết còn thiếu gì."""
     _load_indexes()
     _load_meta()
+    # How many images are actually on disk, which explains has_image=false runs.
+    # Meaningless once images live in an external store, so skip the scan.
+    if IMAGES_REMOTE:
+        n_images = None
+    else:
+        try:
+            n_images = sum(1 for _ in os.scandir(IMAGES_DIR)
+                           if _.is_file() and _.name.lower().endswith(".jpg"))
+        except OSError:
+            n_images = 0
+
     return {
-        "demo_mode":       DEMO_MODE,
         "device":          DEVICE,
         "index_dir":       INDEX_DIR,
+        "images_dir":      IMAGES_DIR,
         "image_base_url":  IMAGE_BASE_URL,
+        "images_remote":   IMAGES_REMOTE,
+        "json_parser":     "orjson" if _orjson is not None else "json",
         "pipeline_order":  "search → rerank (per-model) → ensemble",
-        "files": {
-            "beit3.index":            os.path.exists(BEIT3_IDX_PATH),
-            "clip.index":             os.path.exists(CLIP_IDX_PATH),
-            "beit3_mapping.json":     os.path.exists(BEIT3_MAP_PATH),
-            "clip_mapping.json":      os.path.exists(CLIP_MAP_PATH),
-            "keyframe_metadata.json": os.path.exists(META_PATH),
-        },
+        "active_models":   list(ACTIVE_MODELS),
+        "images_on_disk":  n_images,
+        "files": {name: os.path.exists(path) for name, path in INDEX_SET_FILES},
         "vectors": {
             "beit3": _beit3_index.ntotal if _beit3_index is not None else 0,
             "clip":  _clip_index.ntotal  if _clip_index  is not None else 0,
         },
+        # Which build of the index set this process is actually serving, and
+        # whether the files underneath it have moved since. `stale_files` being
+        # non-empty means the disk was updated but the container was not
+        # restarted, so the answers still come from the previous index set.
+        "index_files": {
+            name: {"loaded": _index_loaded.get(name), "on_disk": _file_identity(path)}
+            for name, path in INDEX_SET_FILES
+        },
+        "stale_files": sorted(
+            name for name, path in INDEX_SET_FILES
+            if _index_loaded.get(name) is not None
+            and _index_loaded.get(name) != _file_identity(path)
+        ),
         "keyframes": len(_meta),
         "videos":    len(_video_frames),
+        "relpath_map": len(_name2relpath),
         "models": {
             "fine_grained":   f"BEiT3-Large coco_retrieval 1024-dim "
                               f"({'loaded' if _beit3_model else 'lazy'})",

@@ -1,10 +1,15 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import { useSubmitStore } from "../../store/submitStore";
+
+const env = (import.meta as { env?: Record<string, string | undefined> }).env;
+
+// The only video store. Empty in local dev, which disables playback there.
+const VIDEO_BASE_URL = env?.VITE_VIDEO_BASE_URL ?? "";
+
 interface DriveVideoProps {
-  fileId: string;
-  apiKey?: string; // cần API key để gọi Drive API
+  videoId: string; // e.g. "L30_V095" — builds the key in the video store
   width?: number;
   height?: number;
   onDuration: (duration: number) => void;
@@ -18,16 +23,8 @@ interface DriveVideoProps {
   frame_detect: number;
 }
 
-interface VideoMetadata {
-  width: number;
-  height: number;
-  durationMillis: string;
-  rotation?: number;
-}
-
 const VideoDrive: React.FC<DriveVideoProps> = ({
-  fileId,
-  apiKey = "AIzaSyAWUVtVvwOTA52orDVhTU9b9xrBwx7pWH0",
+  videoId,
   width = 160,
   height = 120,
   onDuration,
@@ -39,41 +36,35 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
 }) => {
   const frameIdxSet = useSubmitStore((state) => state.frameIdxSet);
   const setFrameIdxSet = useSubmitStore((state) => state.setFrameIdxSet);
-  const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [keyframe, setKeyframe] = useState(mapping_frame);
-  const [embedUrl, setEmbedUrl] = useState("");
   useEffect(() => {
     setKeyframe(mapping_frame);
   }, [mapping_frame]);
 
-  // Lấy metadata từ Google Drive API
+  // S3 is the only source. All 1,478 videos are uploaded and remuxed with
+  // `-movflags +faststart`, so the moov atom sits ahead of the media data and a
+  // seek costs one range request.
+  //
+  // The Drive fallback that used to follow this was removed. The originals on
+  // Drive are not faststart, so `preload="metadata"` had to pull most of a
+  // 400 MB file before the player could report a duration. Whenever the S3
+  // request failed the player fell through to Drive and stalled for minutes with
+  // no indication of why. Failing here instead is both faster and legible, and
+  // the Link button in VideoPopUp still opens the file on Drive.
+  const src = useMemo(
+    () =>
+      VIDEO_BASE_URL && videoId
+        ? `${VIDEO_BASE_URL.replace(/\/$/, "")}/${videoId}.mp4`
+        : "",
+    [videoId]
+  );
+
   useEffect(() => {
-    async function fetchMetadata() {
-      try {
-        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=webContentLink,videoMediaMetadata&key=${apiKey}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Failed to fetch metadata");
-        const data = await res.json();
+    setError(null);
+  }, [videoId]);
 
-        setMetadata(data.videoMediaMetadata);
-        onDuration(Number(data.videoMediaMetadata.durationMillis) / 1000);
-
-        if (data.webContentLink) {
-          setEmbedUrl(data.webContentLink);
-        } else {
-          // fallback
-          setEmbedUrl(
-            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`
-          );
-        }
-      } catch (err: any) {
-        setError(err.message);
-      }
-    }
-    fetchMetadata();
-  }, [fileId, apiKey]);
   useEffect(() => {
     if (videoRef.current && jumpTo !== undefined) {
       videoRef.current.currentTime = jumpTo;
@@ -81,7 +72,6 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
 
     onFrameIdx(jumpTo.toString());
   }, [jumpTo]);
-  // const embedUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
 
   const frameIdxSetOptions: DropdownOption[] = [
     { id: 0, label: "1", value: "1" },
@@ -94,19 +84,27 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
     <div className="space-y-2 w-full font-baloo">
       <video
         ref={videoRef}
-        // src={embedUrl}
-        src={`http://localhost:5000/video/${fileId}`}
+        key={src}
+        src={src}
         width={width}
         height={height}
         controls
+        preload="metadata"
         className="rounded-xl shadow w-full"
+        // Duration comes from the element, not from the Drive metadata call.
+        // VideoPopUp gates the whole submission form on it, so tying it to a
+        // third-party request would take the form down with Drive.
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) onDuration(d);
+          setError(null);
+          if (jumpTo !== undefined) e.currentTarget.currentTime = jumpTo;
+        }}
         onError={() => {
-          console.warn("Primary video link failed, retrying alt=media...");
-          if (embedUrl.includes("webContentLink")) {
-            setEmbedUrl(
-              `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`
-            );
-          }
+          console.warn(`video ${videoId} could not be loaded from ${src}`);
+          setError(
+            `Không tải được ${videoId}.mp4 từ kho video. Dùng nút Link để mở trên Drive.`
+          );
         }}
       />
 

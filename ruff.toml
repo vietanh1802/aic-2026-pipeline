@@ -1,0 +1,14 @@
+# Pinned so a new ruff release cannot turn CI red without a code change.
+# This is ruff's own documented default selection.
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# preprocess.py is frozen by INV-1 of the collaboration spec: the retrieval core
+# must not be edited. Two long-standing style nits are waived rather than fixed.
+#   E401 grouped imports on one line
+#   E741 `I` as a name, which is conventional for a FAISS index array
+"backend/app/preprocess.py" = ["E401", "E741"]

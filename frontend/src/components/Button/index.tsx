@@ -29,15 +29,16 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ref
   ) => {
     const baseClasses =
-      "inline-flex items-center justify-center font-medium rounded-[4px] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed font-baloo font-bold";
+      "inline-flex items-center justify-center font-medium rounded-[8px] transition-all duration-200 focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed font-baloo font-bold";
 
     const variantClasses = {
-      primary: "bg-blue-600 hover:bg-blue-700 hover:cursor-pointer text-white",
-      secondary: "bg-gray-600 hover:bg-gray-700 focus:ring-gray-500 text-white",
+      primary:
+        "bg-proto-primary hover:bg-proto-primary-active hover:cursor-pointer text-white",
+      secondary: "bg-proto-muted hover:bg-proto-ink text-white",
       outline:
-        "border-2 border-gray-300 hover:border-gray-400 focus:ring-gray-500 text-gray-700 bg-white hover:bg-gray-50",
-      ghost: "hover:bg-gray-100 focus:ring-gray-500 text-gray-700",
-      danger: "bg-red-600 hover:bg-red-700 focus:ring-red-500 text-white",
+        "border border-proto-line hover:border-proto-primary text-proto-body bg-white hover:bg-proto-soft",
+      ghost: "hover:bg-proto-soft text-proto-body",
+      danger: "bg-[#c64545] hover:bg-[#a33636] text-white",
     };
 
     const sizeClasses = {

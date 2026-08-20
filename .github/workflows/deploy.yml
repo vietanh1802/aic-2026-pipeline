@@ -1,0 +1,299 @@
+name: Deploy staging
+
+on:
+  push:
+    branches:
+      - staging
+  pull_request:
+    branches:
+      - staging
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  AIC_BACKEND_URL: ${{ vars.AIC_BACKEND_URL || 'https://aic-api.umaga.fun' }}
+  AIC_FRONTEND_URL: ${{ vars.AIC_FRONTEND_URL || 'https://aic.umaga.fun' }}
+  AIC_VIDEO_URL: ${{ vars.AIC_VIDEO_URL || 'https://aic-videos.umaga.fun' }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'aic-2026-pipeline' }}
+
+jobs:
+  version-guard:
+    name: VERSION must increase
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: read
+        name: Compare VERSION against what staging already has
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          new="$(tr -d "[:space:]" < VERSION)"
+          test -n "$new" || { echo "VERSION is empty" >&2; exit 1; }
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "new=$new"
+
+          # A pull request is compared against the tip of its base branch; a push
+          # against whatever staging pointed at before it. Without the pull_request
+          # arm the gate would pass unconditionally on every PR and prove nothing.
+          case "$EVENT" in
+            push)         ref="$BEFORE" ;;
+            pull_request) ref="$BASE_SHA" ;;
+            *)            echo "event $EVENT is not gated; accepting $new"; exit 0 ;;
+          esac
+
+          if [ -z "$ref" ] || [ "$ref" = "0000000000000000000000000000000000000000" ]; then
+            echo "no baseline to compare against; accepting $new"
+            exit 0
+          fi
+
+          if ! old="$(git show "$ref:VERSION" 2>/dev/null | tr -d "[:space:]")" \
+             || [ -z "$old" ]; then
+            echo "$ref carries no VERSION; accepting $new"
+            exit 0
+          fi
+          echo "old=$old (from $ref)"
+
+          if [ "$old" = "$new" ]; then
+            echo "VERSION is still $new. Bump it before this reaches staging." >&2
+            exit 1
+          fi
+
+          lowest="$(printf "%s\n%s\n" "$old" "$new" | sort -V | head -n 1)"
+          if [ "$lowest" != "$old" ]; then
+            echo "VERSION went backwards: $old -> $new" >&2
+            exit 1
+          fi
+          echo "VERSION $old -> $new accepted"
+
+  check-frontend:
+    name: Frontend lint, typecheck, build
+    runs-on: ubuntu-latest
+    needs: version-guard
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc -b
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ env.AIC_BACKEND_URL }}
+          VITE_VIDEO_BASE_URL: ${{ env.AIC_VIDEO_URL }}
+          VITE_PROXY_BASE_URL: ${{ env.AIC_BACKEND_URL }}
+          VITE_APP_VERSION: ${{ needs.version-guard.outputs.version }}
+          VITE_APP_COMMIT: ${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+
+  check-backend:
+    name: Backend ruff and import
+    runs-on: ubuntu-latest
+    needs: version-guard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Ruff
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff
+          ruff check backend
+
+      - name: Import app.main
+        run: |
+          python -m pip install -r backend/requirements.txt
+          PYTHONPATH=backend python -c "import app.main"
+
+      # ruff and a bare import say the module parses. They say nothing about
+      # the pack parser, autofill, the export row shapes or session handling —
+      # all of which are covered and none of which were run before this step.
+      - name: Pytest
+        run: |
+          python -m pip install pytest
+          cd backend && python -m pytest tests -q
+
+  deploy-frontend:
+    name: Deploy Cloudflare Pages
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs:
+      - check-frontend
+      - check-backend
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Deploy Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npx --yes wrangler@latest pages deploy dist \
+            --project-name "$CLOUDFLARE_PAGES_PROJECT" \
+            --branch staging \
+            --commit-dirty=true
+
+  deploy-backend:
+    name: Deploy backend by SSM
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs:
+      - version-guard
+      - deploy-frontend
+      - check-backend
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: image
+        name: Resolve image name
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/aic2026-api"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "AIC_BACKEND_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Build and push API image
+        env:
+          AIC_VERSION: ${{ needs.version-guard.outputs.version }}
+        run: |
+          docker buildx build \
+            --target api \
+            --push \
+            --build-arg AIC_VERSION="$AIC_VERSION" \
+            --build-arg AIC_COMMIT="$GITHUB_SHA" \
+            --tag "$AIC_BACKEND_IMAGE:${GITHUB_SHA}" \
+            --tag "$AIC_BACKEND_IMAGE:staging" \
+            .
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: instance
+        name: Capture API instance state
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          test -n "$AIC_INSTANCE_ID"
+          state="$(
+            aws ec2 describe-instances \
+              --instance-ids "$AIC_INSTANCE_ID" \
+              --query 'Reservations[0].Instances[0].State.Name' \
+              --output text
+          )"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "initial_state=$state"
+
+      - name: Start API instance when needed
+        if: steps.instance.outputs.state == 'stopped'
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          aws ec2 start-instances --instance-ids "$AIC_INSTANCE_ID"
+          aws ec2 wait instance-running --instance-ids "$AIC_INSTANCE_ID"
+
+      - name: Wait for SSM
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          for _ in $(seq 1 60); do
+            ping_status="$(
+              aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=$AIC_INSTANCE_ID" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text
+            )"
+            echo "ssm_ping_status=$ping_status"
+            if [ "$ping_status" = "Online" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Deploy on EC2 through SSM
+        id: deploy_backend
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+          AIC_NEW_IMAGE: ${{ steps.image.outputs.image }}:${{ github.sha }}
+          AIC_DEPLOY_ID: ${{ github.sha }}
+          AIC_REMOTE_APP_DIR: ${{ vars.AIC_REMOTE_APP_DIR || '/opt/aic/app' }}
+          GHCR_USERNAME: ${{ vars.GHCR_READ_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bash deploy/p6/ssm-deploy-backend.sh
+
+      - name: Smoke test
+        id: smoke
+        env:
+          AIC_BACKEND_URL: ${{ env.AIC_BACKEND_URL }}
+          AIC_FRONTEND_URL: ${{ env.AIC_FRONTEND_URL }}
+          AIC_EXPECTED_VERSION: ${{ needs.version-guard.outputs.version }}
+        run: bash deploy/p6/smoke.sh
+
+      - name: Roll back backend after failed smoke
+        if: failure() && steps.deploy_backend.outcome == 'success'
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+          AIC_DEPLOY_ID: ${{ github.sha }}
+          AIC_REMOTE_APP_DIR: ${{ vars.AIC_REMOTE_APP_DIR || '/opt/aic/app' }}
+        run: bash deploy/p6/ssm-rollback-backend.sh
+
+      - name: Restore stopped API instance
+        if: always() && steps.instance.outputs.state == 'stopped'
+        env:
+          AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
+        run: |
+          aws ec2 stop-instances --instance-ids "$AIC_INSTANCE_ID"
+          aws ec2 wait instance-stopped --instance-ids "$AIC_INSTANCE_ID"
