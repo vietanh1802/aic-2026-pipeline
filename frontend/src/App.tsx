@@ -18,6 +18,15 @@ import {
   TemporalCandidates,
   TrakeCandidates,
 } from "./components/CandidateResults";
+import type {
+  EventPick,
+  TrakeSwapMap,
+} from "./components/CandidateResults/types";
+import {
+  frameIdFromName,
+  startMsAt,
+  videoIdFromFrame,
+} from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
 import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
@@ -34,17 +43,6 @@ type BackendHealth = {
   message: string;
   detail?: string;
 };
-type VideoId = keyof typeof KeyframeFPS;
-
-function videoIdFromFrame(frame: string): string {
-  return frame.match(/^([LK]\d{2}_V\d{3})/)?.[1] ?? "";
-}
-
-function frameIdFromName(name: string): string {
-  const baseName = name.replace(/\.[^/.]+$/, "");
-  return baseName.split("-").slice(1).join("-");
-}
-
 function frameIndexFromResult(result: SearchResult): number {
   if (typeof result.frame_idx === "number") {
     return result.frame_idx;
@@ -53,12 +51,7 @@ function frameIndexFromResult(result: SearchResult): number {
 }
 
 function startMsFromResult(result: SearchResult): number {
-  const videoId = videoIdFromFrame(result.frame) as VideoId;
-  const fps = KeyframeFPS[videoId] as number | undefined;
-  if (!fps) {
-    return 0;
-  }
-  return (frameIndexFromResult(result) / fps) * 1000;
+  return startMsAt(videoIdFromFrame(result.frame), frameIndexFromResult(result));
 }
 
 function describeBackendHealth(health: HealthResponse): BackendHealth {
@@ -107,7 +100,6 @@ function App({
   const queryText = useQueryStore((state) => state.queryText);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const [result, setResult] = useState<SearchResult | null>(null);
   const [backendHealth, setBackendHealth] = useState<BackendHealth>({
     status: "checking",
     message: "Checking API",
@@ -165,19 +157,20 @@ function App({
 
   // Đề bài của BTC là văn bản chỉ đọc; ô search bên dưới là chữ người dùng tự
   // gõ. Hai thứ không bao giờ trộn vào nhau — xem spec §6.2.
+  // KIS and Q&A only. TRAKE used to land here too and submitted
+  // `Array.from({length: n_events}, () => frame)` — N copies of one frame,
+  // which is the right shape carrying meaningless content. A TRAKE row is
+  // assembled on the TRAKE search line instead, where all N moments exist.
   const handleAddToBasket = async (result: SearchResult) => {
     if (!activeTask) {
       console.warn("[basket] Chưa mở task nào từ bảng Board.");
       return;
     }
-    const video = videoIdFromFrame(result.frame);
-    const frame = Number(result.frame_idx ?? 0);
-    const frames =
-      activeTask.type === "trake"
-        ? Array.from({ length: activeTask.n_events ?? 1 }, () => frame)
-        : [frame];
     try {
-      await addAnswer(activeTask.id, { video_id: video, frames });
+      await addAnswer(activeTask.id, {
+        video_id: videoIdFromFrame(result.frame),
+        frames: [Number(result.frame_idx ?? 0)],
+      });
       onBasketChanged?.();
     } catch (err) {
       console.error("Không thêm được vào giỏ:", err);
@@ -204,6 +197,69 @@ function App({
   const [trakeCandidates, setTrakeCandidates] = useState<
     TrakeCandidateResult[]
   >([]);
+
+  // ── TRAKE line ───────────────────────────────────────────────────────────
+  // Which frame each event of each card is currently standing on, when it is
+  // not the one the DP chose. Held here rather than inside TrakeCard because
+  // the video popup below writes into it: scrubbing to a frame and pressing
+  // "Chốt cho E2" has to land back in that cell.
+  const [trakeSwaps, setTrakeSwaps] = useState<TrakeSwapMap>({});
+  // Set while the popup is open on one event, so the submit button says which
+  // moment it is pinning instead of "Add Answer".
+  const [trakeSlot, setTrakeSlot] = useState<{
+    cardKey: string;
+    index: number;
+    label: string;
+    total: number;
+  } | null>(null);
+
+  const swapTrakeEvent = (
+    cardKey: string,
+    index: number,
+    pick: EventPick
+  ) => {
+    setTrakeSwaps((prev) => ({
+      ...prev,
+      [cardKey]: { ...(prev[cardKey] ?? {}), [index]: pick },
+    }));
+  };
+
+  const openTrakeEvent = (
+    cardKey: string,
+    index: number,
+    pick: EventPick,
+    video: string
+  ) => {
+    const frame = pick.frame_idx ?? 0;
+    // splitQueryParts rather than the `queryParts` below: this runs from a
+    // click, and reading the value straight off current state keeps the two
+    // declarations independent of each other's order.
+    const labels = splitQueryParts(queryText);
+    setframeId(pick.name ? frameIdFromName(pick.name) : String(frame));
+    setVideoUrl(video);
+    setStartTime(startMsAt(video, frame));
+    setTrakeSlot({
+      cardKey,
+      index,
+      label: labels[index] ?? `E${index + 1}`,
+      total: activeTask?.n_events ?? labels.length,
+    });
+    setShowPopup(true);
+  };
+
+  // The whole line, as one row. Fires only when every event has a frame.
+  const commitTrakeRow = async (video: string, frames: number[]) => {
+    if (!activeTask) {
+      console.warn("[basket] Chưa mở task nào từ bảng Board.");
+      return;
+    }
+    try {
+      await addAnswer(activeTask.id, { video_id: video, frames });
+      onBasketChanged?.();
+    } catch (err) {
+      console.error("Không thêm được dòng TRAKE vào giỏ:", err);
+    }
+  };
 
   const doSearch = async () => {
     if (isSearchDisabled) {
@@ -355,15 +411,38 @@ function App({
           <ProjectDescription />
         </div>
       )}
-      {showPopup && result !== null && (
+      {/* Gated on the video rather than on `result`: a TRAKE event opens the
+          same popup without there being a SearchResult behind it. */}
+      {showPopup && videoUrl !== "" && (
         <VideoPopup
           activeTask={activeTask}
           onBasketChanged={onBasketChanged}
           videoId={videoUrl}
           frameId={frameId}
           startAt={startTime}
-          onClose={() => setShowPopup(false)}
+          onClose={() => {
+            setShowPopup(false);
+            setTrakeSlot(null);
+          }}
           setStartAt={setStartTime}
+          trakeSlot={
+            trakeSlot && {
+              index: trakeSlot.index,
+              label: trakeSlot.label,
+              total: trakeSlot.total,
+              onCommit: (frame) => {
+                swapTrakeEvent(trakeSlot.cardKey, trakeSlot.index, {
+                  name: `${videoUrl} · frame ${frame}`,
+                  url: "",
+                  frame_idx: frame,
+                  timestamp: "",
+                  byHand: true,
+                });
+                setShowPopup(false);
+                setTrakeSlot(null);
+              },
+            }
+          }
         />
       )}
 
@@ -383,13 +462,16 @@ function App({
             maxDistance={maxDistance}
             isLoading={isLoading}
             onUseAsAnchor={handleUseAsAnchor}
-            onAddToBasket={activeTask ? handleAddToBasket : undefined}
+            onAddToBasket={
+              activeTask && activeTask.type !== "trake"
+                ? handleAddToBasket
+                : undefined
+            }
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
               setStartTime(startMsFromResult(result));
               setShowPopup(true);
-              setResult(result);
             }}
           />
         </div>
@@ -412,14 +494,17 @@ function App({
                   maxDistance={maxDistance}
                   isLoading={isLoading}
                   onUseAsAnchor={handleUseAsAnchor}
-                  onAddToBasket={activeTask ? handleAddToBasket : undefined}
+                  onAddToBasket={
+              activeTask && activeTask.type !== "trake"
+                ? handleAddToBasket
+                : undefined
+            }
                         onClick={(result) => {
                     setframeId(frameIdFromName(result.name));
                     setVideoUrl(videoIdFromFrame(result.frame));
                     setStartTime(startMsFromResult(result));
                     setShowPopup(true);
-                    setResult(result);
-                  }}
+                        }}
                 />
               </div>
             </div>
@@ -458,7 +543,14 @@ function App({
           ) : trakeCandidates.length === 0 ? (
             <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
           ) : (
-            <TrakeCandidates results={trakeCandidates} parts={queryParts} />
+            <TrakeCandidates
+              results={trakeCandidates}
+              parts={queryParts}
+              swaps={trakeSwaps}
+              onSwap={swapTrakeEvent}
+              onOpenEvent={openTrakeEvent}
+              onCommit={activeTask?.type === "trake" ? commitTrakeRow : undefined}
+            />
           )}
         </div>
       )}

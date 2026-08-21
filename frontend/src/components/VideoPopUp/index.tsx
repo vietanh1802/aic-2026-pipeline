@@ -14,6 +14,22 @@ import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
 import FrameMarkStrip from "./FrameMarkStrip";
 
+/**
+ * Opened on one event of a TRAKE line rather than on a search result.
+ *
+ * The popup is otherwise identical — same player, same frame readout, same
+ * stepping. Only the submit button changes: it pins this instant into one
+ * event's cell instead of writing a whole answer, because a single frame is
+ * not a TRAKE row.
+ */
+export interface TrakeSlot {
+  /** 0-based event index. */
+  index: number;
+  label: string;
+  total: number;
+  onCommit: (frame: number) => void;
+}
+
 interface VideoPopupProps {
   videoId: string;
   frameId: string;
@@ -22,6 +38,7 @@ interface VideoPopupProps {
   onBasketChanged?: () => void;
   onClose: () => void;
   setStartAt: (val: number) => void;
+  trakeSlot?: TrakeSlot | null;
 }
 type VideoId = keyof typeof KeyframeFPS;
 type MatchingKeyframe = {
@@ -48,6 +65,7 @@ export default function VideoPopup({
   onBasketChanged,
   onClose,
   setStartAt,
+  trakeSlot = null,
 }: VideoPopupProps) {
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
   const setSubmissionFileName = useSubmitStore(
@@ -106,6 +124,19 @@ export default function VideoPopup({
         {/* Đề bài đi theo popup. Banner pin trên trang không cứu được ở đây:
             popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất. */}
         {activeTask && <TaskBrief task={activeTask} variant="popup" />}
+        {/* Which moment this popup is pinning. Without it the player looks the
+            same for E1 and E3 and the frame lands in whichever cell was last
+            clicked, with nothing on screen saying which. */}
+        {trakeSlot && (
+          <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-full w-fit border border-proto-primary bg-proto-primary/10 font-baloo">
+            <b className="font-mono text-[12.5px] text-proto-primary-active">
+              E{trakeSlot.index + 1}/{trakeSlot.total}
+            </b>
+            <span className="text-[12.5px] text-proto-body">
+              {trakeSlot.label}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between items-center mb-[15px]">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-[8px]">
@@ -193,6 +224,7 @@ export default function VideoPopup({
               markIn={markIn}
               markOut={markOut}
               getPlayhead={livePosition}
+              trakeSlot={trakeSlot}
             />
           </div>
         )}

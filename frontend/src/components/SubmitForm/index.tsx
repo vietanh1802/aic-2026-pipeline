@@ -12,6 +12,7 @@ import { getValues } from "../../helpers/getValues.helper";
 import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
+import type { TrakeSlot } from "../VideoPopUp";
 import { gapi } from "gapi-script";
 // ====== GOOGLE API CONFIG ======
 const CLIENT_ID =
@@ -70,6 +71,8 @@ interface SubmitFormData {
   markOut?: number | null;
   /** The player's exact position, read at the moment of submitting. */
   getPlayhead?: () => number;
+  /** Set when the popup was opened on one event of a TRAKE line. */
+  trakeSlot?: TrakeSlot | null;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -83,6 +86,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   markIn = null,
   markOut = null,
   getPlayhead,
+  trakeSlot = null,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
@@ -264,15 +268,19 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     // sống qua F5 và đồng đội thấy được. Giỏ Zustand bên dưới chỉ còn là đường
     // lùi cho lúc chưa nhận task nào — trước đây nó là đường duy nhất, và đó là
     // lý do bấm Add Answer xong số trên thanh nav vẫn đứng yên.
+    // Pinning one moment of a TRAKE line. Nothing is written to the basket
+    // here — the line becomes an answer only once all N cells are filled and
+    // the row's own button is pressed.
+    if (trakeSlot) {
+      trakeSlot.onCommit(frame);
+      return;
+    }
+
     if (activeTask) {
-      const frames =
-        activeTask.type === "trake"
-          ? Array.from({ length: activeTask.n_events ?? 1 }, () => frame)
-          : [frame];
       try {
         await addAnswer(activeTask.id, {
           video_id: videoId,
-          frames,
+          frames: [frame],
           answer_text: activeTask.type === "qa" ? answer || null : null,
         });
         onBasketChanged?.();
@@ -357,30 +365,36 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
             />
           </div>
 
-          {/* Input */}
+          {/* Input — nothing to type when pinning a TRAKE moment. */}
 
-          <input
-            type={submitType == "Task 2 - qna" ? "text" : "number"}
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-            placeholder={
-              submitType == "Task 2 - qna"
-                ? "Type in your answer"
-                : "Type in the number of activities"
-            }
-            className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-blue-400 focus:ring focus:ring-blue-100 outline-none"
-            disabled={submitType === "Task 1 - kis"}
-          />
+          {!trakeSlot && (
+            <input
+              type={submitType == "Task 2 - qna" ? "text" : "number"}
+              value={answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder={
+                submitType == "Task 2 - qna"
+                  ? "Type in your answer"
+                  : "Type in the number of activities"
+              }
+              className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-blue-400 focus:ring focus:ring-blue-100 outline-none"
+              disabled={submitType === "Task 1 - kis"}
+            />
+          )}
         </div>
 
         <div className="flex flex-col gap-3 h-full">
-          <Dropdown
-            options={submitTypeOptions}
-            value={submitType}
-            onChange={(opt) => setSubmitType(opt.value as SubmitType)}
-            dropDownWidth={194}
-            dropDirection="up"
-          />
+          {/* The task-type picker and the Sheets export are both about a whole
+              submission file. Pinning one TRAKE moment is neither. */}
+          {!trakeSlot && (
+            <Dropdown
+              options={submitTypeOptions}
+              value={submitType}
+              onChange={(opt) => setSubmitType(opt.value as SubmitType)}
+              dropDownWidth={194}
+              dropDirection="up"
+            />
+          )}
           <div className="flex gap-3 items-stretch">
             <Button
               // leadingIcon={<img src="/send.svg" />}
@@ -391,16 +405,18 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               // NaN. It used to submit that; now it says so and stops.
               disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
-              Add Answer
+              {trakeSlot ? `Chốt cho E${trakeSlot.index + 1}` : "Add Answer"}
             </Button>
-            <Button
-              // leadingIcon={<img src="/send.svg" />}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
-              size="xs"
-              onClick={createSheet}
-            >
-              Create Sheet
-            </Button>
+            {!trakeSlot && (
+              <Button
+                // leadingIcon={<img src="/send.svg" />}
+                className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
+                size="xs"
+                onClick={createSheet}
+              >
+                Create Sheet
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -203,7 +203,7 @@ export default function AnswerBasket({
         <div className="flex-1 overflow-y-auto px-5 py-3">
           {rows.length === 0 && (
             <p className="text-sm text-proto-muted">
-              Chưa có dòng nào. Bấm <b>A</b> trên một kết quả tìm kiếm để thêm.
+              Chưa có dòng nào. Bấm <b>+</b> trên một kết quả tìm kiếm để thêm.
             </p>
           )}
           {rows.map((row, index) => (
