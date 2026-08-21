@@ -15,9 +15,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
+from app import audit
 from app.auth.deps import active_user, require_admin
 from app.db.connection import get_db, utcnow_iso
 from app.packs.parser import DEFAULT_PATTERN, ParsedTask, parse_zip
+from app.routers._shared import active_pack
 
 router = APIRouter(prefix="/api", tags=["packs"])
 
@@ -108,12 +110,21 @@ def commit_pack(
     now = utcnow_iso()
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # One active pack at a time. The board reads the active one, and two
-        # active rounds would make "which task is 07" ambiguous.
-        conn.execute("UPDATE packs SET active = 0 WHERE active = 1")
+        # Imported inactive, and the round that is live is not touched.
+        #
+        # This used to run `UPDATE packs SET active = 0 WHERE active = 1` first,
+        # which is how a whole round could vanish. /api/board only ever reads
+        # the active pack, so any second import — a retry, a fixed regex, a
+        # stray upload — retired the round being competed in, taking its tasks
+        # and every answer under them off every screen at once. Nothing was
+        # deleted and nothing said what had happened.
+        #
+        # Going live is now its own deliberate action: POST
+        # /api/admin/packs/{id}/activate, from the rounds screen, after seeing
+        # what is being swapped out.
         cursor = conn.execute(
             "INSERT INTO packs (round_label, source_filename, filename_pattern, "
-            "imported_by, imported_at, active) VALUES (?, ?, ?, ?, ?, 1)",
+            "imported_by, imported_at, active) VALUES (?, ?, ?, ?, ?, 0)",
             (
                 payload.round_label,
                 payload.source_filename,
@@ -137,6 +148,14 @@ def commit_pack(
                     json.dumps(task.event_labels, ensure_ascii=False),
                 ),
             )
+        audit.record(
+            conn,
+            user["id"],
+            audit.PACK_IMPORT,
+            f"pack:{pack_id}",
+            f"Nhập vòng “{payload.round_label}” — {len(matched)} task, chưa kích hoạt",
+            {"source_filename": payload.source_filename, "tasks": len(matched)},
+        )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -145,15 +164,18 @@ def commit_pack(
     _PREVIEWS.pop(payload.preview_token, None)
     return {
         "pack_id": pack_id,
+        "round_label": payload.round_label,
         "tasks_created": len(matched),
         "skipped": len(tasks) - len(matched),
+        # The caller has to say so: the new round is not on anyone's board yet.
+        "active": False,
     }
 
 
 @router.get("/packs/active")
-def active_pack(
+def read_active_pack(
     _: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
-    row = conn.execute("SELECT * FROM packs WHERE active = 1").fetchone()
+    row = active_pack(conn)
     return {"pack": dict(row) if row else None}

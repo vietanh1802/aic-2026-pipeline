@@ -39,6 +39,7 @@ from app.routers import (
     board as board_router,
     export as export_router,
     packs as packs_router,
+    rounds as rounds_router,
 )
 from app.version import SHORT_COMMIT, VERSION
 from app.preprocess import (
@@ -354,6 +355,7 @@ app.include_router(packs_router.router)
 app.include_router(board_router.router)
 app.include_router(answers_router.router)
 app.include_router(export_router.router)
+app.include_router(rounds_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is

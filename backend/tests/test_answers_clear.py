@@ -17,6 +17,11 @@ from app.db.connection import utcnow_iso
 from app.routers.answers import clear_answers
 
 
+def _user(conn):
+    """The row clear_answers writes into the audit entry as who did it."""
+    return conn.execute("SELECT * FROM users WHERE username = 'nam'").fetchone()
+
+
 def _pack(conn):
     conn.execute(
         "INSERT INTO users (username, display_name, role, password_hash, "
@@ -46,7 +51,7 @@ def test_clearing_removes_every_row_of_that_task(conn):
     _add(conn, first, 1804, "manual")
     _add(conn, first, 1805, "auto")
 
-    result = clear_answers(first, None, conn)
+    result = clear_answers(first, _user(conn), conn)
 
     assert result == {"removed": 2, "total": 0}
     assert conn.execute(
@@ -59,7 +64,7 @@ def test_clearing_one_task_leaves_the_others_alone(conn):
     _add(conn, first, 1804)
     _add(conn, second, 2900)
 
-    clear_answers(first, None, conn)
+    clear_answers(first, _user(conn), conn)
 
     remaining = conn.execute("SELECT task_id FROM answers").fetchall()
     assert [row["task_id"] for row in remaining] == [second]
@@ -68,13 +73,13 @@ def test_clearing_one_task_leaves_the_others_alone(conn):
 def test_clearing_an_empty_basket_is_not_an_error(conn):
     first, _second = _pack(conn)
 
-    assert clear_answers(first, None, conn) == {"removed": 0, "total": 0}
+    assert clear_answers(first, _user(conn), conn) == {"removed": 0, "total": 0}
 
 
 def test_clearing_an_unknown_task_is_404(conn):
     _pack(conn)
 
     with pytest.raises(HTTPException) as caught:
-        clear_answers(9999, None, conn)
+        clear_answers(9999, _user(conn), conn)
 
     assert caught.value.status_code == 404
