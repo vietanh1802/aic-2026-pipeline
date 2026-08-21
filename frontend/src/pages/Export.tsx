@@ -8,7 +8,13 @@ import {
   type ExportIssue,
 } from "../api/answers";
 import { API_BASE_URL, ApiRequestError } from "../api/base";
-import { getBoard, type BoardResponse, type BoardTask } from "../api/board";
+import {
+  getBoard,
+  listPacks,
+  type BoardResponse,
+  type BoardTask,
+  type RoundPack,
+} from "../api/board";
 import Button from "../components/Button";
 import { videoUrlAt } from "../helpers/videoSource";
 import KeyframeFPS from "../mapping/fps_map.json";
@@ -22,6 +28,7 @@ import { useAuthStore } from "../store/authStore";
  */
 export default function ExportPage() {
   const token = useAuthStore((state) => state.token);
+  const user = useAuthStore((state) => state.user);
   const [board, setBoard] = useState<BoardResponse | null>(null);
   const [issues, setIssues] = useState<ExportIssue[] | null>(null);
   const [ready, setReady] = useState<boolean | null>(null);
@@ -46,16 +53,32 @@ export default function ExportPage() {
     src: string;
   } | null>(null);
 
+  // Which round is being exported. Null means the live one — resubmitting a
+  // round that has been retired is a real errand, so the picker exists, but the
+  // default has to stay the round everyone is actually working in.
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [rounds, setRounds] = useState<RoundPack[] | null>(null);
+
   useEffect(() => {
-    void getBoard()
+    void getBoard(viewing ?? undefined)
       .then(setBoard)
       .catch(() => undefined);
-  }, []);
+  }, [viewing]);
+
+  // Admin-only listing; a member just gets the live round and no picker.
+  useEffect(() => {
+    if (user?.role !== "admin") {
+      return;
+    }
+    void listPacks()
+      .then((result) => setRounds(result.packs.filter((p) => !p.deleted_at)))
+      .catch(() => undefined);
+  }, [user?.role]);
 
   const packId = board?.round?.id ?? null;
 
   const refreshBoard = async () => {
-    setBoard(await getBoard());
+    setBoard(await getBoard(viewing ?? undefined));
   };
 
   const reviewTop1 = async (task: BoardTask) => {
@@ -170,9 +193,41 @@ export default function ExportPage() {
     <div className="max-w-[1200px] mx-auto p-6 font-baloo">
       <div className="flex items-center gap-3 mb-5 flex-wrap">
         <h2 className="text-2xl text-proto-ink">Xuất bài</h2>
-        <span className="text-xs font-mono text-proto-muted">
-          {board?.round?.label}
-        </span>
+        {rounds && rounds.length > 1 ? (
+          <label className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+              Vòng
+            </span>
+            <select
+              className="px-2 py-1 rounded-[7px] border border-proto-line bg-white text-[13px] text-proto-ink"
+              value={viewing ?? ""}
+              onChange={(event) => {
+                setViewing(event.target.value ? Number(event.target.value) : null);
+                setIssues(null);
+                setReady(null);
+                setPreview(null);
+                setReview(null);
+              }}
+            >
+              <option value="">Vòng đang dùng</option>
+              {rounds.map((round) => (
+                <option key={round.id} value={round.id}>
+                  {round.label}
+                  {round.active ? " (đang dùng)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span className="text-xs font-mono text-proto-muted">
+            {board?.round?.label}
+          </span>
+        )}
+        {board?.round && !board.round.active && (
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#d4a017]/20 text-[#8a6a0f]">
+            Vòng đã nghỉ
+          </span>
+        )}
         <span className="ml-auto flex gap-2">
           <Button variant="outline" disabled={busy} onClick={() => void check()}>
             Kiểm tra
