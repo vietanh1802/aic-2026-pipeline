@@ -230,3 +230,76 @@ def test_blank_deadline_clears_it_and_none_leaves_it(conn):
     assert conn.execute(
         "SELECT deadline_at FROM packs WHERE id = ?", (pack,)
     ).fetchone()["deadline_at"] is None
+
+
+# ── the upgrade path, which is the one production actually takes ─────────────
+
+
+def test_step_one_upgrades_a_database_that_predates_it(tmp_path, monkeypatch):
+    """A live database has `packs` already, without deleted_at and at version 0.
+
+    The fixture above only ever exercises a database created from scratch, where
+    the column arrives on an empty table. Production takes the other path: the
+    table exists, rows are in it, and ALTER has to run against them. A failure
+    here does not show up as a test going red — it shows up as the container
+    refusing to start, the smoke test failing, and the deploy rolling back.
+    """
+    import sqlite3
+
+    from app.db.migrate import migrate
+    from app.db.migrations import apply_steps
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path, isolation_level=None)
+    old.row_factory = sqlite3.Row
+    # The packs table exactly as it was before this change.
+    old.executescript(
+        """
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member',
+          password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+          disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+        );
+        CREATE TABLE packs (
+          id INTEGER PRIMARY KEY, round_label TEXT NOT NULL,
+          source_filename TEXT NOT NULL, filename_pattern TEXT NOT NULL,
+          imported_by INTEGER NOT NULL REFERENCES users(id),
+          imported_at TEXT NOT NULL, deadline_at TEXT,
+          active INTEGER NOT NULL DEFAULT 1
+        );
+        """
+    )
+    old.execute(
+        "INSERT INTO users (username, display_name, password_hash, created_at) "
+        "VALUES ('admin', 'Admin', 'x', ?)",
+        (utcnow_iso(),),
+    )
+    old.execute(
+        "INSERT INTO packs (round_label, source_filename, filename_pattern, "
+        "imported_by, imported_at, active) VALUES ('Vòng 1', 'p.zip', 'x', 1, ?, 1)",
+        (utcnow_iso(),),
+    )
+    assert current_version(old) == 0
+    assert "deleted_at" not in {r["name"] for r in old.execute("PRAGMA table_info(packs)")}
+
+    monkeypatch.setenv("AIC_DB_PATH", str(path))
+    migrate(old)
+
+    columns = {r["name"] for r in old.execute("PRAGMA table_info(packs)")}
+    assert "deleted_at" in columns
+    assert current_version(old) == STEPS[-1][0]
+
+    # The round that was already there survives, and reads as not-deleted.
+    row = old.execute("SELECT * FROM packs WHERE round_label = 'Vòng 1'").fetchone()
+    assert row["active"] == 1
+    assert row["deleted_at"] is None
+    # And it is the one active_pack() finds, which is what the board reads.
+    assert active_pack(old)["round_label"] == "Vòng 1"
+
+    # Re-running the whole startup path changes nothing, because the API runs it
+    # on every boot.
+    migrate(old)
+    assert apply_steps(old) == STEPS[-1][0]
+    assert old.execute("SELECT COUNT(*) AS n FROM packs").fetchone()["n"] == 1
+    old.close()
