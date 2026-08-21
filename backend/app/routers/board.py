@@ -20,7 +20,13 @@ from pydantic import BaseModel
 
 from app.auth.deps import active_user
 from app.db.connection import get_db, utcnow_iso
-from app.routers._shared import load_task, rows_per_query, task_payload, user_out
+from app.routers._shared import (
+    active_pack,
+    load_task,
+    rows_per_query,
+    task_payload,
+    user_out,
+)
 
 router = APIRouter(prefix="/api", tags=["board"])
 
@@ -37,12 +43,11 @@ def board(
 ) -> dict[str, Any]:
     pack = None
     if pack_id is not None:
-        pack = conn.execute("SELECT * FROM packs WHERE id = ?", (pack_id,)).fetchone()
-    if pack is None:
         pack = conn.execute(
-            "SELECT * FROM packs WHERE active = 1 "
-            "ORDER BY imported_at DESC, id DESC LIMIT 1"
+            "SELECT * FROM packs WHERE id = ? AND deleted_at IS NULL", (pack_id,)
         ).fetchone()
+    if pack is None:
+        pack = active_pack(conn)
     if pack is None:
         return {"round": None, "tasks": [], "me": user_out(user)}
 
@@ -58,6 +63,10 @@ def board(
             "id": pack["id"],
             "label": pack["round_label"],
             "source_filename": pack["source_filename"],
+            # So a screen can tell it is looking at a retired round rather than
+            # the live one — a member holding a task from the round that was
+            # just swapped out would otherwise keep answering into it silently.
+            "active": bool(pack["active"]),
             "deadline_at": pack["deadline_at"],
             "server_time": utcnow_iso(),
             "rows_per_query": rows_per_query(conn),

@@ -1,12 +1,15 @@
 import { useState } from "react";
 
 import KeyframeImg from "../KeyframeImg";
+import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
 import { frameGap } from "../../helpers/candidates";
 import type {
   TemporalCandidate,
   TemporalCandidateResult,
   TrakeCandidateResult,
 } from "../../types/api";
+
+import { trakeCardKey, type EventPick, type EventSwaps, type TrakeSwapMap } from "./types";
 
 // Auto-discovery xếp theo discovery_score (tần suất: bao nhiêu đoạn của query
 // khớp video này) rồi tới discovery_score_sum. Backend đã sắp sẵn, client giữ
@@ -37,6 +40,7 @@ function CardHead({
   open,
   onToggle,
   openLabel,
+  action,
 }: {
   rank: number;
   video?: string;
@@ -46,6 +50,8 @@ function CardHead({
   open: boolean;
   onToggle: () => void;
   openLabel: string;
+  /** Sits before the expand toggle. TRAKE puts its "Chọn" button here. */
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-proto-soft border-b border-proto-line">
@@ -67,13 +73,16 @@ function CardHead({
           {score.toFixed(3)}
         </span>
       )}
-      <button
-        type="button"
-        onClick={onToggle}
-        className="ml-auto text-[11.5px] font-semibold text-proto-primary-active"
-      >
-        {open ? "Thu lại ▴" : `${openLabel} ▾`}
-      </button>
+      <span className="ml-auto flex items-center gap-3">
+        {action}
+        <button
+          type="button"
+          onClick={onToggle}
+          className="text-[11.5px] font-semibold text-proto-primary-active"
+        >
+          {open ? "Thu lại ▴" : `${openLabel} ▾`}
+        </button>
+      </span>
     </div>
   );
 }
@@ -450,23 +459,75 @@ export function TemporalCandidates({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  TRAKE — one line of N cells, each cell a KIS result card.
+//
+//  The line was already the right shape. What it never had was KIS's own move:
+//  click the frame, watch the video at that instant. Everything below is that
+//  card's anatomy applied per event — score-tinted border, the magnifier that
+//  opens the player, the name/timestamp footer — plus a candidate strip under
+//  each cell, because choosing "cách khớp" is a per-event choice.
+//
+//  Picks live in the parent rather than here: the video popup App owns has to
+//  be able to write a scrubbed frame back into one cell.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Colour for one event's frame, normalised inside that event's own candidates.
+ *
+ * TrakeEvent.score is a cosine similarity ×100 and its usable band differs per
+ * event, so feeding it raw into the KIS ramp would paint whole rows one colour.
+ * Normalising against the alternates the backend offered for the same event is
+ * the trick FrameDisplay already uses against the results on screen.
+ */
+function eventTone(pick: EventPick | null, pool: TemporalCandidate[]): string {
+  const scores = pool
+    .map((candidate) => candidate.score)
+    .filter((score): score is number => typeof score === "number");
+  if (typeof pick?.score !== "number" || scores.length < 2) {
+    return "#e6dfd8";
+  }
+  const min = Math.min(...scores, pick.score);
+  const max = Math.max(...scores, pick.score);
+  return accuracyColor(accuracyPercent(pick.score, min, max));
+}
+
 function TrakeCard({
   result,
   rank,
   parts,
+  swaps,
+  onSwap,
+  onOpenEvent,
+  onCommit,
 }: {
   result: TrakeCandidateResult;
   rank: number;
   parts: string[];
+  swaps: EventSwaps;
+  onSwap: (eventIndex: number, pick: EventPick) => void;
+  /** Open the video at this event's frame. Undefined hides the magnifier. */
+  onOpenEvent?: (eventIndex: number, pick: EventPick) => void;
+  /** Write the whole line as one answer. Undefined hides the button. */
+  onCommit?: (video: string, frames: number[]) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState(0);
-  const [swaps, setSwaps] = useState<Record<number, TemporalCandidate>>({});
+  const [open, setOpen] = useState(true);
   const [lightboxAt, setLightboxAt] = useState<number | null>(null);
-  const events = result.events ?? [];
 
-  const poolFor = (i: number) =>
-    byFrameIdx(withMain(events[i]?.candidates ?? [], swaps[i] ?? events[i] ?? null));
+  const events = result.events ?? [];
+  const count = Math.max(parts.length, events.length);
+  const slots = Array.from({ length: count }, (_, index) => index);
+
+  const pickAt = (index: number): EventPick | null =>
+    swaps[index] ?? events[index] ?? null;
+  const poolAt = (index: number): TemporalCandidate[] =>
+    events[index]?.candidates ?? [];
+
+  const frames = slots.map((index) => pickAt(index)?.frame_idx);
+  // A row missing an event is not a submission. TRAKE scores the whole tuple,
+  // so a short row is a wrong row rather than a partial one.
+  const missing = frames.findIndex((frame) => typeof frame !== "number");
+  const complete = missing === -1;
 
   return (
     <div
@@ -481,95 +542,137 @@ function TrakeCard({
         total={parts.length}
         score={result.combined_score}
         open={open}
-        onToggle={() => setOpen((v) => !v)}
-        openLabel="Chỉnh từng mốc"
+        onToggle={() => setOpen((value) => !value)}
+        openLabel="Ứng viên từng mốc"
+        action={
+          onCommit ? (
+            <button
+              type="button"
+              disabled={!complete}
+              title={
+                complete
+                  ? "Thêm cả hàng vào giỏ thành một dòng"
+                  : `Thiếu mốc E${missing + 1}`
+              }
+              onClick={() => onCommit(result.video ?? "", frames as number[])}
+              className="text-[11.5px] font-bold px-2.5 py-1 rounded-[7px] border border-proto-primary bg-proto-primary text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Chọn ▸
+            </button>
+          ) : null
+        }
       />
-      <div className="px-3 py-2.5">
-        <div className="flex gap-2">
-          {parts.map((label, index) => {
-            const event = swaps[index] ?? events[index];
-            const isPicked = open && picked === index;
-            return (
-              <div key={index} className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-[10px] font-extrabold text-proto-primary-active">
-                    E{index + 1}
-                  </span>
-                  <span className="text-[10px] text-proto-muted truncate">
-                    {label}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPicked(index);
-                    setLightboxAt(index);
-                  }}
-                  className="block w-full text-left"
-                >
-                  {/* Cỡ khung khớp FrameDisplay (aspect-[3/2]) — chỉ đổi kích
-                      cỡ ảnh, giữ nguyên bố cục N ô liên tiếp trong 1 hàng. */}
-                  <KeyframeImg
-                    src={event?.url}
-                    alt={label}
-                    className={`w-full aspect-[3/2] object-cover rounded-lg border-2 ${
-                      isPicked ? "border-proto-primary" : "border-proto-line"
-                    }`}
-                  />
-                </button>
-                <div className="flex justify-between text-[10px] mt-1">
-                  {event ? (
-                    <>
-                      <b className="font-mono text-proto-ink">
-                        {event.frame_idx ?? "—"}
-                      </b>
-                      <span className="text-proto-muted">
-                        {event.timestamp ?? ""}
-                      </span>
-                    </>
+
+      {/* One line, N cells — the line IS the event count. */}
+      <div className="flex gap-2.5 px-3 py-3 overflow-x-auto">
+        {slots.map((index) => {
+          const pick = pickAt(index);
+          const pool = poolAt(index);
+          const tone = eventTone(pick, pool);
+          return (
+            <div key={index} className="flex-1 min-w-[168px]">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[10px] font-extrabold font-mono text-proto-primary-active">
+                  E{index + 1}
+                </span>
+                <span className="text-[10.5px] text-proto-muted truncate">
+                  {parts[index] ?? ""}
+                </span>
+              </div>
+
+              {/* The KIS card, per event. */}
+              <div
+                className="rounded-[8px] border-2 bg-white overflow-hidden"
+                style={{ borderColor: tone }}
+              >
+                <div className="relative w-full aspect-[3/2] bg-proto-dark">
+                  {pick?.url ? (
+                    <KeyframeImg
+                      src={pick.url}
+                      alt={parts[index] ?? `E${index + 1}`}
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
-                    <span className="text-[#c64545] font-bold">
-                      — không khớp
+                    <div className="w-full h-full flex flex-col items-center justify-center text-center px-2 gap-1">
+                      {pick ? (
+                        <>
+                          <span className="font-mono font-bold text-proto-canvas text-lg">
+                            {pick.frame_idx}
+                          </span>
+                          <span className="text-[10px] text-neutral-400">
+                            chốt tay — không có ảnh keyframe
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[10.5px] text-neutral-400">
+                          không tìm thấy mốc này trong video
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Same corner, same icon, same job as on a KIS result. */}
+                  {pick && onOpenEvent && (
+                    <button
+                      type="button"
+                      title={`Mở video tại mốc E${index + 1}`}
+                      onClick={() => onOpenEvent(index, pick)}
+                      className="absolute bottom-0 right-0 mr-1 mb-1 p-1 bg-[#EFEFEF] hover:bg-white rounded-[4px] border-2 border-[#E3E3E3]"
+                    >
+                      <img src="/search.svg" alt="mở video" />
+                    </button>
+                  )}
+
+                  {pick?.byHand && (
+                    <span className="absolute top-0 left-0 ml-1 mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-[4px] bg-proto-mate text-white">
+                      tay
                     </span>
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
 
-        {open && (
-          <div className="mt-3 pt-2.5 border-t border-dashed border-proto-line">
-            <Strip
-              label={`Ứng viên khác cho E${picked + 1}`}
-              tone="event"
-              items={events[picked]?.candidates ?? []}
-              pickedName={(swaps[picked] ?? events[picked])?.name}
-              onPick={(candidate) =>
-                setSwaps((prev) => ({ ...prev, [picked]: candidate }))
-              }
-              onExpand={() => setLightboxAt(picked)}
-            />
-          </div>
-        )}
+                <div className="flex flex-col gap-0.5 px-1.5 py-1 text-[10px] text-proto-muted">
+                  <span className="truncate font-mono">{pick?.name ?? "—"}</span>
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono">{pick?.timestamp ?? ""}</span>
+                    <b
+                      className="font-mono font-bold tabular-nums"
+                      style={{ color: tone }}
+                    >
+                      {pick?.frame_idx ?? "—"}
+                    </b>
+                  </span>
+                </div>
+              </div>
+
+              {open && pool.length > 0 && (
+                <Strip
+                  label={`Cách khớp khác cho E${index + 1}`}
+                  tone="event"
+                  items={pool}
+                  pickedName={pick?.name}
+                  onPick={(candidate) => onSwap(index, candidate)}
+                  onExpand={() => setLightboxAt(index)}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {lightboxAt !== null &&
         (() => {
-          const pool = poolFor(lightboxAt);
-          const currentName = (swaps[lightboxAt] ?? events[lightboxAt])?.name;
+          const current = pickAt(lightboxAt);
+          const pool = byFrameIdx(withMain(poolAt(lightboxAt), current));
           return (
             <Lightbox
               label={`E${lightboxAt + 1} — ${parts[lightboxAt] ?? ""}`}
               items={pool}
               startIndex={Math.max(
                 0,
-                pool.findIndex((c) => c.name === currentName)
+                pool.findIndex((candidate) => candidate.name === current?.name)
               )}
               onClose={() => setLightboxAt(null)}
-              onPick={(c) =>
-                setSwaps((prev) => ({ ...prev, [lightboxAt]: c }))
-              }
+              onPick={(candidate) => onSwap(lightboxAt, candidate)}
             />
           );
         })()}
@@ -580,20 +683,45 @@ function TrakeCard({
 export function TrakeCandidates({
   results,
   parts,
+  swaps,
+  onSwap,
+  onOpenEvent,
+  onCommit,
 }: {
   results: TrakeCandidateResult[];
   parts: string[];
+  swaps: TrakeSwapMap;
+  onSwap: (cardKey: string, eventIndex: number, pick: EventPick) => void;
+  onOpenEvent?: (
+    cardKey: string,
+    eventIndex: number,
+    pick: EventPick,
+    video: string
+  ) => void;
+  onCommit?: (video: string, frames: number[]) => void;
 }) {
   return (
     <div>
-      {results.map((result, index) => (
-        <TrakeCard
-          key={`${result.video}-${index}`}
-          result={result}
-          rank={index + 1}
-          parts={parts}
-        />
-      ))}
+      {results.map((result, index) => {
+        const key = trakeCardKey(result.video, index);
+        return (
+          <TrakeCard
+            key={key}
+            result={result}
+            rank={index + 1}
+            parts={parts}
+            swaps={swaps[key] ?? {}}
+            onSwap={(eventIndex, pick) => onSwap(key, eventIndex, pick)}
+            onOpenEvent={
+              onOpenEvent
+                ? (eventIndex, pick) =>
+                    onOpenEvent(key, eventIndex, pick, result.video ?? "")
+                : undefined
+            }
+            onCommit={onCommit}
+          />
+        );
+      })}
     </div>
   );
 }

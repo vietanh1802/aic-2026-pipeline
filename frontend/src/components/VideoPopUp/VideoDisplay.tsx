@@ -1,19 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import { useSubmitStore } from "../../store/submitStore";
-
-const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-
-// The only video store. Empty in local dev, which disables playback there.
-const VIDEO_BASE_URL = env?.VITE_VIDEO_BASE_URL ?? "";
+import { videoUrl } from "../../helpers/videoSource";
+import { frameAt } from "../../helpers/frameRange";
 
 interface DriveVideoProps {
   videoId: string; // e.g. "L30_V095" — builds the key in the video store
   width?: number;
   height?: number;
   onDuration: (duration: number) => void;
-  onFrameIdx: (frameIdx: string) => void;
+  /** Where playback actually is, in seconds. Fires on seek and while playing. */
+  onPosition: (seconds: number) => void;
+  /** Owned by the popup so the mark buttons can read currentTime exactly. */
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   setStartAt: (val: number) => void;
   jumpTo: number;
   mapping_frame: {
@@ -28,7 +28,8 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
   width = 160,
   height = 120,
   onDuration,
-  onFrameIdx,
+  onPosition,
+  videoRef,
   setStartAt,
   jumpTo,
   mapping_frame,
@@ -37,7 +38,8 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
   const frameIdxSet = useSubmitStore((state) => state.frameIdxSet);
   const setFrameIdxSet = useSubmitStore((state) => state.setFrameIdxSet);
   const [error, setError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Where the player is right now, as opposed to where it was last told to go.
+  const [position, setPosition] = useState<number>(jumpTo);
   const [keyframe, setKeyframe] = useState(mapping_frame);
   useEffect(() => {
     setKeyframe(mapping_frame);
@@ -53,25 +55,34 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
   // request failed the player fell through to Drive and stalled for minutes with
   // no indication of why. Failing here instead is both faster and legible, and
   // the Link button in VideoPopUp still opens the file on Drive.
-  const src = useMemo(
-    () =>
-      VIDEO_BASE_URL && videoId
-        ? `${VIDEO_BASE_URL.replace(/\/$/, "")}/${videoId}.mp4`
-        : "",
-    [videoId]
-  );
+  const src = useMemo(() => videoUrl(videoId), [videoId]);
 
   useEffect(() => {
     setError(null);
   }, [videoId]);
 
+  // `jumpTo` is a deliberate seek target — opening on a keyframe, the frame
+  // step buttons, a click on the mark strip. It is NOT playback position, and
+  // the two are kept apart on purpose: feeding position back into it would make
+  // this effect seek backwards to a stale value four times a second and fight
+  // the player. Tolerance is half a frame so a single-frame step still lands.
   useEffect(() => {
-    if (videoRef.current && jumpTo !== undefined) {
-      videoRef.current.currentTime = jumpTo;
+    const element = videoRef.current;
+    if (!element || jumpTo === undefined) return;
+    if (Math.abs(element.currentTime - jumpTo) > 0.5 / (frame_detect || 25)) {
+      element.currentTime = jumpTo;
     }
-
-    onFrameIdx(jumpTo.toString());
+    setPosition(jumpTo);
+    onPosition(jumpTo);
   }, [jumpTo]);
+
+  // The player moves on its own — the native controls, playback, the keyboard.
+  // Nothing used to report that back, so every frame number on screen still
+  // described wherever the popup had opened.
+  const report = (seconds: number) => {
+    setPosition(seconds);
+    onPosition(seconds);
+  };
 
   const frameIdxSetOptions: DropdownOption[] = [
     { id: 0, label: "1", value: "1" },
@@ -100,6 +111,8 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
           setError(null);
           if (jumpTo !== undefined) e.currentTarget.currentTime = jumpTo;
         }}
+        onTimeUpdate={(e) => report(e.currentTarget.currentTime)}
+        onSeeked={(e) => report(e.currentTarget.currentTime)}
         onError={() => {
           console.warn(`video ${videoId} could not be loaded from ${src}`);
           setError(
@@ -137,7 +150,7 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-7"
             size="xs"
             onClick={() =>
-              setStartAt((jumpTo - parseInt(frameIdxSet) / frame_detect) * 1000)
+              setStartAt((position - parseInt(frameIdxSet) / frame_detect) * 1000)
             }
           >
             -
@@ -146,13 +159,13 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-7"
             size="xs"
             onClick={() =>
-              setStartAt((jumpTo + parseInt(frameIdxSet) / frame_detect) * 1000)
+              setStartAt((position + parseInt(frameIdxSet) / frame_detect) * 1000)
             }
           >
             +
           </Button>
           <div>
-            <p>Frame_idx: {Math.floor(jumpTo * frame_detect)}</p>
+            <p>Frame_idx: {frameAt(position, frame_detect) ?? "—"}</p>
           </div>
         </div>
       </div>
