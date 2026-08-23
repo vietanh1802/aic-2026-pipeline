@@ -3,9 +3,11 @@
 main.py – FastAPI backend, thuần theo arXiv 2504.08384
 =======================================================
 Endpoints:
-  POST /ensemble-search   Alg.3 — search → rerank từng model → ensemble
-  POST /single-search     Một model duy nhất (beit3 hoặc clip) — phục vụ Q4
-  POST /temporal-search   Alg.4 — cặp frame bắt đầu/kết thúc
+  POST /ensemble-search     Visual keyframe retrieval
+  POST /single-search       Một visual model
+  POST /asr-search          ASR video retrieval
+  POST /multimodal-search   Visual + ASR video-level fusion
+  POST /temporal-search     Temporal refinement
   GET  /status            Còn thiếu file gì
   GET  /health            Kiểm tra sống
 
@@ -41,6 +43,8 @@ from app.routers import (
     packs as packs_router,
 )
 from app.version import SHORT_COMMIT, VERSION
+from app.asr_service import asr_status, search_asr
+from app.multimodal import multimodal_search
 from app.preprocess import (
     ensemble_search,
     single_model_search,
@@ -103,6 +107,113 @@ class SingleSearchRequest(EnsembleSearchRequest):
             "query": "lễ trao kinh phí hỗ trợ trẻ em mồ côi",
             "model": "beit3", "limit": 100, "top_m": 50, "use_rerank": True,
         }}
+
+
+class ASRSearchRequest(BaseModel):
+    query:           str = Field(..., min_length=1, description="Truy vấn văn bản cho ASR retrieval")
+    limit:           int = Field(50, ge=1, le=200, description="Số video ASR trả về")
+    windows_per_hit: int = Field(3, ge=1, le=10, description="Số transcript window giữ lại cho mỗi video")
+
+    class Config:
+        json_schema_extra = {"example": {
+            "query": "người dẫn chương trình nói về số tiền hỗ trợ",
+            "limit": 50,
+            "windows_per_hit": 3,
+        }}
+
+
+class ASRWindowResult(BaseModel):
+    window_id:         str
+    video_id:          str
+    start_s:           float
+    end_s:             float
+    transcript:        str
+    first_stage_score: float
+    reranker_score:    Optional[float] = None
+    final_score:       Optional[float] = None
+    reranked:          bool
+
+
+class ASRVideoResult(BaseModel):
+    rank:              int
+    video_id:          str
+    first_stage_rank:  int
+    first_stage_score: float
+    reranker_score:    Optional[float] = None
+    final_score:       Optional[float] = None
+    reranked:          bool
+    windows:           List[ASRWindowResult]
+
+
+class ASRSearchResponse(BaseModel):
+    query:      str
+    mode:       str
+    release_id: str
+    hits:       List[ASRVideoResult]
+    timings:    dict
+
+
+class MultimodalSearchRequest(BaseModel):
+    query:           str   = Field(..., min_length=1, description="Truy vấn văn bản")
+    limit:           int   = Field(50, ge=1, le=500, description="Số video fused trả về")
+    visual_top_k:    int   = Field(100, ge=1, le=500, description="Số keyframe visual lấy trước khi group theo video")
+    visual_top_m:    int   = Field(50, ge=1, le=200, description="Top-M mỗi visual model trước ensemble")
+    asr_top_k:       int   = Field(50, ge=1, le=200, description="Số video lấy từ ASR")
+    windows_per_hit: int   = Field(3, ge=1, le=10, description="Số transcript window giữ lại cho mỗi ASR video")
+    visual_weight:   float = Field(0.5, ge=0.0, le=1.0, description="Mức nhấn mạnh visual")
+    asr_weight:      float = Field(0.5, ge=0.0, le=1.0, description="Mức nhấn mạnh speech / ASR")
+
+    class Config:
+        json_schema_extra = {"example": {
+            "query": "người dẫn chương trình nói về số tiền hỗ trợ",
+            "limit": 50,
+            "visual_top_k": 100,
+            "visual_top_m": 50,
+            "asr_top_k": 50,
+            "windows_per_hit": 3,
+            "visual_weight": 0.5,
+            "asr_weight": 0.5,
+        }}
+
+
+class VisualVideoEvidence(BaseModel):
+    rank:            int
+    video_id:        str
+    best_frame_rank: int
+    frames:          List[SearchResultEx]
+
+
+class FusionEvidence(BaseModel):
+    policy:        str
+    score:         float
+    visual_weight: float
+    asr_weight:    float
+    rrf_k:         float
+
+
+class MultimodalVideoResult(BaseModel):
+    rank:         int
+    video_id:     str
+    fusion_score: float
+    visual:       Optional[VisualVideoEvidence] = None
+    asr:          Optional[ASRVideoResult] = None
+    fusion:       FusionEvidence
+
+
+class MultimodalFusionSummary(BaseModel):
+    policy:        str
+    visual_weight: float
+    asr_weight:    float
+    rrf_k:         float
+
+
+class MultimodalSearchResponse(BaseModel):
+    query:               str
+    results:             List[MultimodalVideoResult]
+    visual_result_count: int
+    visual_video_count:  int
+    asr_video_count:     int
+    fusion:              MultimodalFusionSummary
 
 
 class TemporalSearchRequest(BaseModel):
@@ -430,6 +541,62 @@ async def single_search_endpoint(req: SingleSearchRequest):
         raise HTTPException(500, f"Single search error: {e}")
 
 
+@app.post("/asr-search", response_model=ASRSearchResponse,
+          summary="ASR retrieval — ranked videos + supporting transcript windows")
+async def asr_search_endpoint(req: ASRSearchRequest):
+    """Search the frozen ASR retrieval release.
+
+    Returned order is authoritative. The endpoint does not re-sort videos by
+    final_score because ASR candidate and non-candidate scores are not globally
+    comparable.
+    """
+    try:
+        result = search_asr(
+            req.query,
+            top_k=req.limit,
+            windows_per_hit=req.windows_per_hit,
+        )
+        return ASRSearchResponse(**result)
+    except ValueError as e:
+        raise HTTPException(400, f"ASR search request error: {e}")
+    except RuntimeError as e:
+        raise HTTPException(503, f"ASR unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"ASR search error: {e}")
+    
+
+@app.post("/multimodal-search", response_model=MultimodalSearchResponse,
+          summary="Visual + Speech — video-level rank fusion")
+async def multimodal_search_endpoint(req: MultimodalSearchRequest):
+    """Run visual and ASR retrieval independently, convert visual keyframes to
+    video candidates, then fuse the two video rankings.
+
+    Cross-modal fusion uses ranks only. Visual distance and ASR final_score are
+    never directly combined.
+    """
+    if req.visual_weight + req.asr_weight <= 0.0:
+        raise HTTPException(400, "visual_weight và asr_weight không thể cùng bằng 0")
+
+    try:
+        result = multimodal_search(
+            req.query,
+            limit=req.limit,
+            visual_top_k=req.visual_top_k,
+            visual_top_m=req.visual_top_m,
+            asr_top_k=req.asr_top_k,
+            windows_per_hit=req.windows_per_hit,
+            visual_weight=req.visual_weight,
+            asr_weight=req.asr_weight,
+        )
+        return MultimodalSearchResponse(**result)
+    except ValueError as e:
+        raise HTTPException(400, f"Multimodal search request error: {e}")
+    except RuntimeError as e:
+        raise HTTPException(503, f"Multimodal search unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"Multimodal search error: {e}")    
+    
+
 @app.post("/temporal-search", response_model=TemporalSearchResponse,
           summary="Alg.4 — cặp frame bắt đầu/kết thúc quanh keyframe neo")
 async def temporal_search_endpoint(req: TemporalSearchRequest):
@@ -557,9 +724,21 @@ async def trake_search_text_endpoint(req: TrakeSearchTextRequest):
         raise HTTPException(500, f"TRAKE search text error: {e}")
 
 
-@app.get("/status", summary="Còn thiếu file gì")
+@app.get("/status", summary = "Còn thiếu file gì")
 def status():
-    return {**system_status(), "warmup": _warm}
+    try:
+        asr = asr_status()
+    except Exception as e:
+        asr = {
+            "state": "failed",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+    return {
+        **system_status(),
+        "warmup": _warm,
+        "asr": asr,
+    }
 
 
 @app.get("/health")
@@ -580,11 +759,15 @@ def root():
         "name":    "AI Challenge HCM 2026 – Video Moment Retrieval API",
         "version": VERSION,
         "paper":   "arXiv:2504.08384",
-        "pipeline": "search → rerank (per-model) → ensemble → temporal",
-        "endpoints": ["/ensemble-search", "/single-search", "/temporal-search",
-                      "/trake-search", "/temporal-search-candidates",
-                      "/trake-search-candidates", "/temporal-search-text",
-                      "/trake-search-text", "/status", "/health", "/docs"],
+        "pipeline": "visual retrieval + ASR retrieval → video-level fusion → temporal",
+        "endpoints": ["/ensemble-search", "/single-search",
+                    "/asr-search", "/multimodal-search",
+                    "/temporal-search", "/trake-search",
+                    "/temporal-search-candidates",
+                    "/trake-search-candidates",
+                    "/temporal-search-text",
+                    "/trake-search-text",
+                    "/status", "/health", "/docs"],
     }
 
 

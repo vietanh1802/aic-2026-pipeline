@@ -4,6 +4,7 @@ import Dropdown, { type DropdownOption } from "../DropDown";
 import {
   useQueryStore,
   type SearchType,
+  type SearchEmphasis,
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
@@ -22,6 +23,10 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
   const searchType = useQueryStore((state) => state.searchType);
   const setSearchType = useQueryStore((state) => state.setSearchType);
+
+  const searchEmphasis = useQueryStore((state) => state.searchEmphasis);
+  const setSearchEmphasis = useQueryStore((state) => state.setSearchEmphasis);
+  
   const singleModel = useQueryStore((state) => state.singleModel);
   const setSingleModel = useQueryStore((state) => state.setSingleModel);
 
@@ -54,12 +59,20 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     setisTranslated(true);
   };
 
-  const resultLimitOptions: DropdownOption[] = [
-    { id: 0, label: "10", value: "10" },
-    { id: 1, label: "50", value: "50" },
-    { id: 2, label: "100", value: "100" },
-    { id: 3, label: "500", value: "500" },
-  ];
+  const resultLimitOptions: DropdownOption[] =
+    searchType === "multimodal"
+      ? [
+          { id: 0, label: "10", value: "10" },
+          { id: 1, label: "50", value: "50" },
+          { id: 2, label: "100", value: "100" },
+          { id: 3, label: "200", value: "200" },
+        ]
+      : [
+          { id: 0, label: "10", value: "10" },
+          { id: 1, label: "50", value: "50" },
+          { id: 2, label: "100", value: "100" },
+          { id: 3, label: "500", value: "500" },
+        ];
 
   const topMOptions: DropdownOption[] = [
     { id: 0, label: "20", value: "20" },
@@ -80,8 +93,9 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const searchOptions: DropdownOption[] = [
     { id: 0, label: "Ensemble (BEiT3+CLIP)", value: "ensemble" as SearchType },
     { id: 1, label: "Single Model", value: "single" as SearchType },
-    { id: 2, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
-    { id: 3, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
+    { id: 2, label: "Visual + Speech", value: "multimodal" as SearchType },
+    { id: 3, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
+    { id: 4, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
   ];
 
   const modelOptions: DropdownOption[] = [
@@ -136,17 +150,19 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
             />
           </div>
 
-          <div className="flex flex-col items-start">
-            <p className="font-bold">Rerank (Alg.2)</p>
-            <label className="flex items-center gap-x-1 cursor-pointer p-2">
-              <input
-                type="checkbox"
-                checked={useRerank}
-                onChange={(e) => setUseRerank(e.target.checked)}
-              />
-              <span className="text-sm">bật</span>
-            </label>
-          </div>
+          {searchType !== "multimodal" && (
+            <div className="flex flex-col items-start">
+              <p className="font-bold">Rerank (Alg.2)</p>
+              <label className="flex items-center gap-x-1 cursor-pointer p-2">
+                <input
+                  type="checkbox"
+                  checked={useRerank}
+                  onChange={(e) => setUseRerank(e.target.checked)}
+                />
+                <span className="text-sm">bật</span>
+              </label>
+            </div>
+          )}
 
           {searchType === "single" && (
             <div className="items-center">
@@ -196,6 +212,32 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           </div>
         </div>
       </div>
+
+      {searchType === "multimodal" && (
+        <div className="flex items-center gap-3 flex-wrap -mt-2">
+          <span className="text-sm font-bold">Search emphasis</span>
+
+          <div className="flex gap-2">
+            {(
+              [
+                ["visual", "Visual"],
+                ["balanced", "Balanced"],
+                ["speech", "Speech"],
+              ] as [SearchEmphasis, string][]
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                size="sm"
+                variant={searchEmphasis === value ? "primary" : "outline"}
+                onClick={() => setSearchEmphasis(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
           text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}

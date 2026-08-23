@@ -49,6 +49,69 @@ export interface SearchResponse {
   demo_mode?: boolean;
 }
 
+export interface ASRWindowResult {
+  window_id: string;
+  video_id: string;
+  start_s: number;
+  end_s: number;
+  transcript: string;
+  first_stage_score: number;
+  reranker_score?: number | null;
+  final_score?: number | null;
+  reranked: boolean;
+}
+
+export interface ASRVideoResult {
+  rank: number;
+  video_id: string;
+  first_stage_rank: number;
+  first_stage_score: number;
+  reranker_score?: number | null;
+  final_score?: number | null;
+  reranked: boolean;
+  windows: ASRWindowResult[];
+}
+
+export interface VisualVideoEvidence {
+  rank: number;
+  video_id: string;
+  best_frame_rank: number;
+  frames: SearchResult[];
+}
+
+export interface FusionEvidence {
+  policy: string;
+  score: number;
+  visual_weight: number;
+  asr_weight: number;
+  rrf_k: number;
+}
+
+export interface MultimodalVideoResult {
+  rank: number;
+  video_id: string;
+  fusion_score: number;
+  visual?: VisualVideoEvidence | null;
+  asr?: ASRVideoResult | null;
+  fusion: FusionEvidence;
+}
+
+export interface MultimodalFusionSummary {
+  policy: string;
+  visual_weight: number;
+  asr_weight: number;
+  rrf_k: number;
+}
+
+export interface MultimodalSearchResponse {
+  query: string;
+  results: MultimodalVideoResult[];
+  visual_result_count: number;
+  visual_video_count: number;
+  asr_video_count: number;
+  fusion: MultimodalFusionSummary;
+}
+
 export interface TemporalCandidate {
   name: string;
   url: string;
@@ -214,6 +277,24 @@ class VideoSearchApi {
       limit,
       top_m: topM,
       use_rerank: useRerank,
+    });
+  }
+
+  async multimodalSearch(
+    query: string,
+    options?: {
+      limit?: number;
+      visualWeight?: number;
+      asrWeight?: number;
+      visualTopM?: number;
+    }
+  ): Promise<MultimodalSearchResponse> {
+    return this.post<MultimodalSearchResponse>("/multimodal-search", {
+      query,
+      limit: options?.limit ?? 50,
+      visual_weight: options?.visualWeight ?? 0.5,
+      asr_weight: options?.asrWeight ?? 0.5,
+      visual_top_m: options?.visualTopM ?? 50,
     });
   }
 

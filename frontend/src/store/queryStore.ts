@@ -9,7 +9,20 @@ export type QueryType = "text" | "image" | "audio";
 // nhập tách bằng dấu "."), /trake-search-text (N sự kiện tuần tự, cùng cách
 // tách). Đã bỏ text-search/faiss-search/combined-search/ocr-search — endpoint
 // không còn tồn tại (xem main.py: "Đã BỎ toàn bộ endpoint cũ").
-export type SearchType = "ensemble" | "single" | "temporal" | "trake";
+export type SearchType =
+  | "ensemble"
+  | "single"
+  | "multimodal"
+  | "temporal"
+  | "trake";
+
+export type SearchEmphasis = "visual" | "balanced" | "speech";
+
+export const SEARCH_EMPHASIS_WEIGHTS = {
+  visual:   { visualWeight: 0.8, asrWeight: 0.2 },
+  balanced: { visualWeight: 0.5, asrWeight: 0.5 },
+  speech:   { visualWeight: 0.2, asrWeight: 0.8 },
+} as const;
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 
@@ -24,6 +37,9 @@ export interface QueryStore {
   // ── Loại search: ensemble (BEiT3+CLIP) hoặc single (1 model) ──────────────
   searchType: SearchType;
   setSearchType: (type: SearchType) => void;
+  searchEmphasis: SearchEmphasis;
+  setSearchEmphasis: (emphasis: SearchEmphasis) => void;
+
   // Model dùng khi searchType === "single"
   singleModel: ModelName;
   setSingleModel: (model: ModelName) => void;
@@ -51,6 +67,8 @@ export const useQueryStore = create<QueryStore>((set) => ({
 
   searchType: "ensemble",
   setSearchType: (type) => set({ searchType: type }),
+  searchEmphasis: "balanced",
+  setSearchEmphasis: (emphasis) => set({ searchEmphasis: emphasis }),
   singleModel: "beit3",
   setSingleModel: (model) => set({ singleModel: model }),
 

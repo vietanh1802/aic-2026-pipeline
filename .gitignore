@@ -28,6 +28,9 @@ backend/app/data/*
 !backend/app/data/README.md
 backend/app/static/images/
 
+# ASR release artifacts (large runtime files, deployed separately)
+artifacts/
+
 # ===== Node (frontend, drive-video-proxy) =====
 node_modules/
 dist/

@@ -11,6 +11,7 @@ type ResultInfoAndSortProps = {
   // quyết (discovery_score) nên không có gì để người dùng sắp lại.
   unit?: "frames" | "videos";
   queryParts?: number;
+  videoSummary?: string;
 };
 
 const sortOptions: DropdownOption[] = [
@@ -25,6 +26,7 @@ export default function ResultInfoAndSort({
   onSortChange,
   unit = "frames",
   queryParts,
+  videoSummary,
 }: ResultInfoAndSortProps) {
   const isVideos = unit === "videos";
   return (
@@ -46,8 +48,12 @@ export default function ResultInfoAndSort({
       </div>
       {isVideos ? (
         <div className="text-sm text-proto-muted">
-          query tách <span className="font-bold">{queryParts ?? 0} đoạn</span> ·
-          sắp theo số đoạn khớp
+          {videoSummary ?? (
+            <>
+              query tách <span className="font-bold">{queryParts ?? 0} đoạn</span> ·
+              sắp theo số đoạn khớp
+            </>
+          )}
         </div>
       ) : (
         <div className="flex flex-row items-center gap-x-2">

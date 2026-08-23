@@ -8,7 +8,10 @@ import ResultInfoAndSort, {
   type SortType,
 } from "./components/ResultInfoAndSort";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
-import { useQueryStore } from "./store/queryStore";
+import {
+  SEARCH_EMPHASIS_WEIGHTS,
+  useQueryStore,
+} from "./store/queryStore";
 import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
@@ -25,8 +28,10 @@ import type {
   SearchResult,
   TemporalCandidateResult,
   TrakeCandidateResult,
+  MultimodalVideoResult,
 } from "./types/api";
 import KeyframeFPS from "./mapping/fps_map.json";
+import MultimodalResults from "./components/MultimodalResults";
 
 type BackendHealth = {
   status: "checking" | "starting" | "ready" | "offline" | "failed";
@@ -96,6 +101,7 @@ function App({
   const topM = useQueryStore((state) => state.topM);
   const useRerank = useQueryStore((state) => state.useRerank);
   const searchType = useQueryStore((state) => state.searchType);
+  const searchEmphasis = useQueryStore((state) => state.searchEmphasis);
   const singleModel = useQueryStore((state) => state.singleModel);
   const [showPopup, setShowPopup] = useState<boolean>(false);
   const [videoUrl, setVideoUrl] = useState<string>("");
@@ -204,12 +210,28 @@ function App({
     TrakeCandidateResult[]
   >([]);
 
+  const [multimodalResults, setMultimodalResults] = useState<
+    MultimodalVideoResult[]
+  >([]);
+  const [multimodalTime, setMultimodalTime] = useState(0);
+
   const doSearch = async () => {
     if (isSearchDisabled) {
       console.warn(`[health] Search blocked: ${backendHealth.message}`);
       return;
     }
     setIsLoading(true);
+
+    if (searchType === "multimodal") {
+      setMultimodalResults([]);
+    } else if (searchType === "temporal") {
+      setTemporalCandidates([]);
+    } else if (searchType === "trake") {
+      setTrakeCandidates([]);
+    } else {
+      useSearchStore.getState().setResults([]);
+      useSearchStore.getState().setMaxDistance(0);
+    }
     try {
       if (searchType === "temporal") {
         // topVideos: mặc định 5 quá ít khi video ứng viên trùng lặp/gần
@@ -243,6 +265,24 @@ function App({
           console.log("TRAKE candidates:", res.results);
           setTrakeCandidates(res.results ?? []);
         }
+        return;
+      }
+
+      if (searchType === "multimodal") {
+        const weights = SEARCH_EMPHASIS_WEIGHTS[searchEmphasis];
+        const startedAt = performance.now();
+
+        const res = await videoSearchApi.multimodalSearch(queryText, {
+          limit: Number(resultLimit),
+          visualTopM: topM,
+          visualWeight: weights.visualWeight,
+          asrWeight: weights.asrWeight,
+        });
+
+        setMultimodalResults(res.results);
+        setMultimodalTime((performance.now() - startedAt) / 1000);
+
+        console.log("Multimodal results:", res);
         return;
       }
 
@@ -294,6 +334,8 @@ function App({
   // preprocess.py:_split_query_text.
   const queryParts = splitQueryParts(queryText);
 
+  const isVisualSearch = searchType === "ensemble" || searchType === "single";
+
   const [groupedResult, setgroupedResult] = useState<
     Record<string, SearchResult[]>
   >({});
@@ -319,15 +361,26 @@ function App({
                   ? temporalCandidates.length
                   : searchType === "trake"
                   ? trakeCandidates.length
+                  : searchType === "multimodal"
+                  ? multimodalResults.length
                   : results.length
               }
               sortBy={sortFrameBy}
-              totalTime={totalTime}
+              totalTime={
+                searchType === "multimodal" ? multimodalTime : totalTime
+              }
               onSortChange={(option) => setSortFrameBy(option)}
               unit={
-                searchType === "temporal" || searchType === "trake"
+                searchType === "temporal" ||
+                searchType === "trake" ||
+                searchType === "multimodal"
                   ? "videos"
                   : "frames"
+              }
+              videoSummary={
+                searchType === "multimodal"
+                  ? "xếp theo bằng chứng hình ảnh + lời nói"
+                  : undefined
               }
               queryParts={queryParts.length}
             />
@@ -411,7 +464,7 @@ function App({
         />
       )}
 
-      {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
+      {isVisualSearch && (isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
         <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[200px]">
           <FrameDisplay
             results={results}
@@ -430,7 +483,7 @@ function App({
         </div>
       )}
 
-      {(isLoading || (hasQueried && sortFrameBy == "video_id")) && (
+      {isVisualSearch && (isLoading || (hasQueried && sortFrameBy == "video_id")) && (
         <div className="mb-[200px]">
           {Object.entries(groupedResult).map(([key, items]) => (
             <div
@@ -448,7 +501,7 @@ function App({
                   isLoading={isLoading}
                   onUseAsAnchor={handleUseAsAnchor}
                   onAddToBasket={activeTask ? handleAddToBasket : undefined}
-                        onClick={(result) => {
+                  onClick={(result) => {
                     setframeId(frameIdFromName(result.name));
                     setVideoUrl(videoIdFromFrame(result.frame));
                     setStartTime(startMsFromResult(result));
@@ -463,7 +516,7 @@ function App({
       )}
 
       {/* Temporal Search Results — Alg.4 text-query path */}
-      {(isLoading || (hasQueried && searchType === "temporal")) && (
+      {searchType === "temporal" && (isLoading || hasQueried) && (
         <div className="max-w-[98%] mx-auto mb-[200px] px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
@@ -484,7 +537,7 @@ function App({
       )}
 
       {/* TRAKE Search Results */}
-      {(isLoading || (hasQueried && searchType === "trake")) && (
+      {searchType === "trake" && (isLoading || hasQueried) && (
         <div className="max-w-[98%] mx-auto mb-[200px] px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
@@ -494,6 +547,34 @@ function App({
             <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
           ) : (
             <TrakeCandidates results={trakeCandidates} parts={queryParts} />
+          )}
+        </div>
+      )}
+
+      {/* Visual + Speech Results */}
+      {searchType === "multimodal" && (isLoading || hasQueried) && (
+        <div className="max-w-[98%] mx-auto mb-[200px] px-4">
+          {isLoading ? (
+            <p className="text-sm text-proto-muted animate-pulse">
+              Đang tìm kiếm…
+            </p>
+          ) : multimodalResults.length === 0 ? (
+            <p className="text-sm text-proto-muted">
+              Không tìm thấy kết quả.
+            </p>
+          ) : (
+            <MultimodalResults
+              results={multimodalResults}
+              onOpenFrame={(result) => {
+                setframeId(frameIdFromName(result.name));
+                setVideoUrl(videoIdFromFrame(result.frame));
+                setStartTime(startMsFromResult(result));
+                setShowPopup(true);
+                setResult(result);
+              }}
+              onUseAsAnchor={handleUseAsAnchor}
+              onAddToBasket={activeTask ? handleAddToBasket : undefined}
+            />
           )}
         </div>
       )}
