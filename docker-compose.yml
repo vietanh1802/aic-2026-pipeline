@@ -57,6 +57,7 @@ services:
       - "${AIC_HOST_IMAGES_DIR:-/opt/aic/static/images}:/opt/aic/static/images:ro"
       - "${AIC_HOST_MODEL_CACHE_DIR:-/opt/aic/model-cache}:/opt/aic/model-cache"
       - "${AIC_HOST_DATA_DIR:-/opt/aic/data}:/opt/aic/data"
+      - "${AIC_HOST_ASR_DIR:-/opt/aic/asr}:/opt/aic/asr:ro"
     healthcheck:
       # A 200 from /health only says the process is up: it answers even when the
       # warm-up thread has died, which once let `docker ps` report healthy while

@@ -21,6 +21,7 @@ open_clip_torch
 timm==0.4.12
 torchscale==0.2.0
 transformers
+sentence-transformers==5.4.0
 sentencepiece
 
 # unilm/beit3/utils.py import hai package này ở top-level → thiếu là

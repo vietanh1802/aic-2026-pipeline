@@ -11,6 +11,10 @@ services:
   api:
     environment:
       AIC_WARMUP: ${AIC_WARMUP:-0}
+      AIC_ASR_ENABLED: ${AIC_ASR_ENABLED:-1}
+      AIC_ASR_DEVICE: ${AIC_ASR_DEVICE:-cpu}
+      AIC_ASR_WARMUP: ${AIC_ASR_WARMUP:-0}
+      AIC_ASR_RELEASE_DIR: ${AIC_ASR_CONTAINER_RELEASE_DIR:-/opt/aic/asr/aic2026-full-20260817-r01}
     volumes:
       - "${AIC_HOST_INDEX_DIR:-./backend/app/indexes}:/opt/aic/indexes:ro"
       - "${AIC_HOST_IMAGES_DIR:-./backend/app/static/images}:/opt/aic/static/images:ro"
