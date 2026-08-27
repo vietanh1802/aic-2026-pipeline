@@ -59,11 +59,19 @@ from typing import Optional
 # app/data/ would mean a second S3 prefix, a second volume and a second step in
 # the runbook, all to carry 55 MB down a road that already exists.
 #
-# Both directories are in .gitignore, so the checkout CI builds the image from
-# is always empty — production MUST point AIC_OCR_DIR at the mounted volume
-# (see docker-compose.yml).
-OCR_DIR = os.environ.get(
-    "AIC_OCR_DIR",
+# Falls back to AIC_INDEX_DIR, not to a path of its own. That is the whole
+# point: deploy/p6/ssm-deploy-backend.sh runs `docker compose up` against the
+# copy of docker-compose.yml ALREADY ON THE HOST. A deploy ships a new image and
+# never the compose file, so adding a variable to the repo's compose does
+# nothing in production — which is exactly how the first attempt failed: the
+# container looked in /srv/aic/app/indexes (empty, since .gitignore keeps the
+# files out of the image) while the files sat in /opt/aic/indexes.
+#
+# AIC_INDEX_DIR is already set on the host and already points at the mounted
+# volume, so riding on it needs no deploy change at all. It is also simply
+# true: these two files live beside the FAISS indexes and travel with them.
+OCR_DIR = os.environ.get("AIC_OCR_DIR") or os.environ.get(
+    "AIC_INDEX_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "indexes"))
 WITH_MARKS_PATH = os.path.join(OCR_DIR, "ocr_clean.json")
 NO_MARKS_PATH = os.path.join(OCR_DIR, "ocr_clean_nodau.json")
