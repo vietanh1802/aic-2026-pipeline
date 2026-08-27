@@ -153,37 +153,23 @@ def _tokenize(text: str) -> list[str]:
     return [w for w in re.split(r"[^0-9a-zA-ZÀ-ỹ]+", text) if w]
 
 
-def _whole_word(term: str) -> re.Pattern:
-    """Match `term` only as a whole word, never inside a longer one.
-
-    Lookaround rather than \\b: \\b is defined against \\w, which counts the
-    underscore and every Unicode letter, so it behaves differently on the
-    two haystacks (one still carries diacritics, one does not). Spelling the
-    boundary out as "not a letter or digit either side" behaves the same on
-    both, and on terms that begin or end with punctuation.
-
-    Measured on 179,728 rows, the difference this makes is not marginal:
-
-      quan an cho lon   3,570 substring hits -> 180 whole-word   (95% junk)
-      hong nhung        2,300 -> 839                             (64% junk)
-      cho lon           4,212 -> 1,834                           (56% junk)
-
-    The junk is real text, matched by accident: 'lon' inside 'long an' and
-    'giua long thu do', 'cho' inside 'choi xich du'. An operator typing what
-    they see on screen means the word, not a fragment of a longer one.
-    """
-    return re.compile(rf"(?<![0-9a-z]){re.escape(term)}(?![0-9a-z])")
+# Whole-word matching was tried and REMOVED on request (see git history for the
+# regex). It cut "quan an cho lon" from 3,570 hits to 180 by refusing to match
+# 'lon' inside 'long an' — but it also refuses partial words the operator may
+# well have meant, and OCR splits words wrongly often enough that the strictness
+# cost more recall than it bought precision. Substring matching is back.
 
 
 def search(query: str,
            limit: int = 100,
            strip_diacritics: bool = True,
            video: Optional[str] = None) -> dict:
-    """Find frames containing EVERY word of `query`, each as a whole word.
+    """Find frames containing EVERY word of `query`.
 
-    Strict by design. A frame missing even one word is not returned, and a word
-    is not matched inside a longer one — 'lon' does not hit 'long an'. Nothing
-    is returned when nothing qualifies; there is no widening fallback.
+    A frame missing even one word is not returned, and nothing is returned when
+    nothing qualifies — there is no widening fallback. Words match as
+    substrings, so 'lon' does hit 'long an'; that is deliberate, see the note
+    above _tokenize.
 
     Ranking depends ONLY on the text the user typed; no model takes part:
 
@@ -223,44 +209,21 @@ def search(query: str,
     words = set(_tokenize(needle))
     word_count = len(words)
 
-    # ONE alternation covering every word, scanned once per frame — not one
-    # regex per word. Per-word scanning cost 3.6 SECONDS on "Quán ăn Chợ Lớn":
-    # "an" is a substring of nearly all 179,728 rows, so the cheap `in`
-    # prefilter rejected nothing and the regex ran the full length four times.
-    # One pass with findall() returns which words hit, and costs the same
-    # whether the query has one word or six.
-    #
-    # Longest alternative first: regex alternation is leftmost-first, so with
-    # "an" before "anh" a row containing "anh" would report the wrong word.
-    _alts = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
-    combined = re.compile(rf"(?<![0-9a-z])(?:{_alts})(?![0-9a-z])")
-    phrase_pattern = _whole_word(needle)
-
-    # Two stages, because the cheap test rejects almost everything.
-    #
-    # Stage 1 is `all(word in haystack)` — plain substring, C speed. A frame
-    # missing a word as a SUBSTRING cannot hold it as a WORD, so this rejects
-    # without ever being wrong, and `all()` stops at the first miss. Longest
-    # word first (see `probes`) because long words are the rare ones, and the
-    # first probe is the one that does the rejecting.
-    #
-    # Stage 2 is the regex, run only on what survives. For "Quán ăn Chợ Lớn"
-    # that is 3,570 frames instead of 179,728.
-    #
-    # Skipping stage 1 costs 1.8 SECONDS per query, on every query alike: "ăn"
-    # is a substring of nearly every row, so nothing is rejected and the regex
-    # walks the whole corpus.
+    # Longest word first. `all()` stops at the first miss, and long words are
+    # the rare ones, so the first probe is the one that does the rejecting.
     probes = sorted(words, key=len, reverse=True)
 
+    # A frame only earns a row when it holds EVERY word. There is no
+    # partial-match fallback: a query with no result is a true answer, and
+    # quietly widening it hands back near-misses that look like hits. Type
+    # fewer words to widen instead.
     scored, phrase_hits = [], 0
     for name, haystack in haystacks.items():
         if video and not name.startswith(video):
             continue
         if not all(probe in haystack for probe in probes):
             continue
-        if len(set(combined.findall(haystack))) < word_count:
-            continue
-        whole_phrase = bool(phrase_pattern.search(haystack))
+        whole_phrase = needle in haystack
         if whole_phrase:
             phrase_hits += 1
         # The whole phrase always beats the same words scattered — add a step
