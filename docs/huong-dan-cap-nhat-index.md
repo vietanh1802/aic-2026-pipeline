@@ -20,6 +20,18 @@ Runbook cho cả team. Phần lý do kỹ thuật và các bẫy nằm ở
    thì `faiss_id` trỏ sang frame khác: không hàm nào báo lỗi, tìm kiếm vẫn ra
    kết quả, kết quả chỉ đơn giản là sai.
 
+4. **Hai file OCR đi nhờ cùng tuyến, nhưng KHÔNG thuộc mẻ sinh.**
+   `ocr_clean.json` và `ocr_clean_nodau.json` (55 MB) nằm cùng thư mục
+   `backend/app/indexes/` và cùng prefix S3, nên mọi lệnh ở dưới tự chở chúng
+   theo — không phải làm gì thêm.
+
+   Chúng gắn với **tên frame** chứ không gắn với `faiss_id`, nên sinh lại FAISS
+   index không làm hỏng chúng và ngược lại. Chỉ phải sinh lại khi bộ keyframe
+   đổi, bằng `notebooks/thanhbangcao/79_Vanh_tao_ocr_khong_dau.ipynb`.
+
+   Thiếu hai file này thì **chỉ** `/ocr-search` trả 503; tuyến ảnh, đăng nhập,
+   bảng cộng tác vẫn chạy nguyên. `/status` có mục `ocr` để soi.
+
 ## Ai làm bước nào
 
 | Bước | Ai | Ở đâu |
@@ -79,8 +91,9 @@ aws s3api list-objects-v2 --bucket aic2026-artifacts --prefix indexes/ --profile
   --query 'Contents[].{Key:Key,Size:Size,LastModified:LastModified}' --output table
 ```
 
-Bộ đầy đủ hiện tại là **9 object, 15.0 GiB** — năm file index cộng bốn file
-trọng số model. Nếu thấy ít hơn thì chưa xong, đừng sang bước 3.
+Bộ đầy đủ hiện tại là **11 object, 15.1 GiB** — năm file index, bốn file trọng
+số model, cộng `ocr_clean.json` + `ocr_clean_nodau.json`. Nếu thấy ít hơn thì
+chưa xong, đừng sang bước 3.
 
 ## Bước 3 — Bấm nút để máy API kéo về
 

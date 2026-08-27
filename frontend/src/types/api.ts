@@ -49,6 +49,33 @@ export interface SearchResponse {
   demo_mode?: boolean;
 }
 
+/** One OCR text hit. Same shape as SearchResult, so the grid is reused. */
+export interface OcrSearchResult extends SearchResult {
+  /** What Vintern read on this frame - read it directly, no need to open it. */
+  ocr_text?: string;
+  /** The frame holds the WHOLE typed phrase, not its words scattered about. */
+  exact_phrase?: boolean;
+  matched_words?: number;
+  total_words?: number;
+}
+
+export interface OcrSearchResponse extends SearchResponse {
+  results: OcrSearchResult[];
+  /** Images holding the typed phrase verbatim. */
+  phrase_matches: number;
+  /**
+   * Images holding every word. The number to watch: measured over the 25
+   * preliminary queries (notebook 78), <= 4 puts the right video first 6 times
+   * out of 6, while >= 142 gets it right only 1 in 6 - meaning type more text
+   * rather than paging through 500 images.
+   */
+  all_word_matches: number;
+  /** Images holding at least one word. Usually huge; reference only. */
+  any_word_matches: number;
+  /** Total frames carrying text - the denominator for everything above. */
+  searched_frames: number;
+}
+
 export interface TemporalCandidate {
   name: string;
   url: string;
@@ -242,6 +269,37 @@ class VideoSearchApi {
       top_m: topM,
       use_rerank: useRerank,
     });
+  }
+
+  /**
+   * Search by TEXT ON SCREEN - pure lexical route, no model involved, not
+   * blended with the visual route.
+   *
+   * @param stripDiacritics strip diacritics from both sides before comparing.
+   *   On, it also catches OCR diacritic errors (`HỂ THAO` ~ `THỂ THAO`); off,
+   *   it matches more precisely.
+   * @param video narrow to one batch (`"L25"`) or one video (`"L25_V041"`).
+   */
+  async ocrSearch(
+    query: string,
+    limit = 100,
+    stripDiacritics = true,
+    video?: string
+  ): Promise<OcrSearchResponse> {
+    return this.post<OcrSearchResponse>("/ocr-search", {
+      query,
+      limit,
+      strip_diacritics: stripDiacritics,
+      ...(video ? { video } : {}),
+    });
+  }
+
+  /** OCR text for one frame - shown even for frames from the visual route. */
+  async ocrText(name: string): Promise<{ name: string; ocr_text: string }> {
+    const response = await fetch(
+      `${API_BASE_URL}/ocr-text/${encodeURIComponent(name)}`
+    );
+    return this.handleResponse<{ name: string; ocr_text: string }>(response);
   }
 
   /**
