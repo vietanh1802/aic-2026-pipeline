@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from app import audit
 from app.answers.autofill import spread
 from app.auth.deps import active_user
 from app.db.connection import get_db, utcnow_iso
@@ -168,15 +169,61 @@ def patch_answer(
 @router.delete("/answers/{answer_id}")
 def delete_answer(
     answer_id: int,
-    _: Annotated[sqlite3.Row, Depends(active_user)],
+    user: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
+    # Read the row before destroying it: the audit entry carries it, so a
+    # misclick is recoverable rather than only explainable.
+    snapshot = audit.snapshot_answers(conn, "id = ?", (answer_id,))
     cursor = conn.execute("DELETE FROM answers WHERE id = ?", (answer_id,))
     if cursor.rowcount != 1:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No such answer"
         )
+    gone = snapshot[0]
+    audit.record(
+        conn,
+        user["id"],
+        audit.ANSWER_DELETE,
+        f"task:{gone['task_id']}",
+        f"Xoá 1 dòng ({gone['video_id']} · {gone['frames']})",
+        {"answers": snapshot},
+    )
     return {"ok": True}
+
+
+@router.delete("/tasks/{task_id}/answers")
+def clear_answers(
+    task_id: int,
+    user: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """Throw away the whole answer set for one task.
+
+    Distinct from `autofill mode="clear"`, which spares the manual pins because
+    its job is to let the spread be redone with a different step. This one is
+    for the export screen: the reviewer looks at the CSV a query is about to
+    submit, decides it is wrong, and starts that query over.
+
+    `removed` rather than a bare ok, so the screen can say what it just threw
+    away instead of leaving the reviewer guessing whether the click landed.
+
+    This throws away a whole query's work for everyone, so the rows go into the
+    audit entry on the way out and an admin can put them back.
+    """
+    task = load_task(conn, task_id)
+    snapshot = audit.snapshot_answers(conn, "task_id = ?", (task_id,))
+    removed = conn.execute("DELETE FROM answers WHERE task_id = ?", (task_id,)).rowcount
+    if removed:
+        audit.record(
+            conn,
+            user["id"],
+            audit.ANSWERS_CLEAR,
+            f"task:{task_id}",
+            f"Xoá sạch {removed} dòng của task {task['code']}",
+            {"answers": snapshot},
+        )
+    return {"removed": removed, "total": 0}
 
 
 @router.post("/tasks/{task_id}/answers/reorder")
@@ -212,9 +259,21 @@ def autofill_answers(
     target = min(payload.limit, rows_per_query(conn))
 
     if payload.mode in ("replace_auto", "clear"):
+        snapshot = audit.snapshot_answers(
+            conn, "task_id = ? AND origin = 'auto'", (task_id,)
+        )
         removed = conn.execute(
             "DELETE FROM answers WHERE task_id = ? AND origin = 'auto'", (task_id,)
         ).rowcount
+        if removed:
+            audit.record(
+                conn,
+                user["id"],
+                audit.ANSWERS_AUTOFILL_CLEAR,
+                f"task:{task_id}",
+                f"Xoá {removed} dòng auto của task {task['code']}",
+                {"answers": snapshot},
+            )
         if payload.mode == "clear":
             total = conn.execute(
                 "SELECT COUNT(*) AS n FROM answers WHERE task_id = ?", (task_id,)

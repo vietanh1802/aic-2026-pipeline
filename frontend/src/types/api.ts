@@ -175,9 +175,16 @@ export interface SubmitRespond {
 //  API client
 // ─────────────────────────────────────────────────────────────────────────────
 
+// `??`, not `||`, and matching api/base.ts.
+//
+// An empty VITE_API_BASE_URL is a meaningful value: it means "same origin", so
+// requests go through the dev server and get proxied to whatever AIC_DEV_API
+// points at (see vite.config.ts). `||` treated that as unset and substituted
+// localhost:8000, which meant the collaboration API proxied correctly while
+// every search call here went to a backend nobody was running.
 const API_BASE_URL =
   (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env
-    ?.VITE_API_BASE_URL || "http://localhost:8000";
+    ?.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 class VideoSearchApi {
   private async handleResponse<T>(response: Response): Promise<T> {

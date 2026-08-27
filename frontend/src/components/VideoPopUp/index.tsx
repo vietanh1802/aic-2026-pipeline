@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
 import VideoDrive from "./VideoDisplay";
 import { getFileIdByVideoId } from "../../helpers/getFileIdByVideoId.helper";
@@ -10,6 +10,25 @@ import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { extractTimestamp } from "../FrameDisplay";
 import type { BoardTask } from "../../api/board";
+import TaskBrief from "../TaskBrief";
+import AnswerPanel from "./AnswerPanel";
+import FrameMarkStrip from "./FrameMarkStrip";
+
+/**
+ * Opened on one event of a TRAKE line rather than on a search result.
+ *
+ * The popup is otherwise identical — same player, same frame readout, same
+ * stepping. Only the submit button changes: it pins this instant into one
+ * event's cell instead of writing a whole answer, because a single frame is
+ * not a TRAKE row.
+ */
+export interface TrakeSlot {
+  /** 0-based event index. */
+  index: number;
+  label: string;
+  total: number;
+  onCommit: (frame: number) => void;
+}
 
 interface VideoPopupProps {
   videoId: string;
@@ -19,6 +38,7 @@ interface VideoPopupProps {
   onBasketChanged?: () => void;
   onClose: () => void;
   setStartAt: (val: number) => void;
+  trakeSlot?: TrakeSlot | null;
 }
 type VideoId = keyof typeof KeyframeFPS;
 type MatchingKeyframe = {
@@ -45,6 +65,7 @@ export default function VideoPopup({
   onBasketChanged,
   onClose,
   setStartAt,
+  trakeSlot = null,
 }: VideoPopupProps) {
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
   const setSubmissionFileName = useSubmitStore(
@@ -53,6 +74,30 @@ export default function VideoPopup({
   const submitType = useSubmitStore((state) => state.submitType);
 
   const [frameIdx, setFrameIdx] = useState<string>("");
+
+  // Bumped after every add so the panel beside the video re-reads the task's
+  // answers. Without it the list only refreshed when the popup was reopened.
+  const [answerTick, setAnswerTick] = useState<number>(0);
+
+  // Marked edges of the moment, in seconds. They live here rather than in the
+  // submit form because the strip that sets them sits against the video, and
+  // the form only needs the result.
+  const [markIn, setMarkIn] = useState<number | null>(null);
+  const [markOut, setMarkOut] = useState<number | null>(null);
+
+  // The element itself, so a mark reads the exact currentTime at the instant it
+  // is pressed. `playhead` below is the same value throttled to timeupdate's
+  // four-a-second, which is fine for a readout and far too coarse for a frame.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playhead, setPlayhead] = useState<number>(startAt / 1000);
+  const livePosition = () => videoRef.current?.currentTime ?? playhead;
+
+  // A different video is a different moment; carrying marks across would submit
+  // a frame number the user pinned somewhere else entirely.
+  useEffect(() => {
+    setMarkIn(null);
+    setMarkOut(null);
+  }, [videoId]);
 
   // 0 = metadata not loaded yet. Previously this was 1 and the form below was
   // gated on `duration !== 1`, which silently tied the submission form to the
@@ -75,7 +120,23 @@ export default function VideoPopup({
     useSubmitTasks();
   return (
     <div className="fixed inset-0 bg-black/60 bg-opacity-60 flex items-center justify-center z-999 gap-x-5">
-      <div className="relative bg-white rounded-xl p-6 shadow-lg max-w-[800px] w-4/5">
+      <div className="relative bg-white rounded-xl p-6 shadow-lg max-w-[800px] w-4/5 max-h-[95vh] overflow-y-auto">
+        {/* Đề bài đi theo popup. Banner pin trên trang không cứu được ở đây:
+            popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất. */}
+        {activeTask && <TaskBrief task={activeTask} variant="popup" />}
+        {/* Which moment this popup is pinning. Without it the player looks the
+            same for E1 and E3 and the frame lands in whichever cell was last
+            clicked, with nothing on screen saying which. */}
+        {trakeSlot && (
+          <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-full w-fit border border-proto-primary bg-proto-primary/10 font-baloo">
+            <b className="font-mono text-[12.5px] text-proto-primary-active">
+              E{trakeSlot.index + 1}/{trakeSlot.total}
+            </b>
+            <span className="text-[12.5px] text-proto-body">
+              {trakeSlot.label}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between items-center mb-[15px]">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-[8px]">
@@ -119,7 +180,11 @@ export default function VideoPopup({
           <VideoDrive
             videoId={videoId}
             onDuration={(s) => setDuration(s)}
-            onFrameIdx={(frameIdx) => setFrameIdx(frameIdx)}
+            videoRef={videoRef}
+            onPosition={(seconds) => {
+              setPlayhead(seconds);
+              setFrameIdx(String(seconds));
+            }}
             jumpTo={startAt / 1000}
             setStartAt={setStartAt}
             mapping_frame={matching_keyframe}
@@ -127,20 +192,53 @@ export default function VideoPopup({
           />
         </div>
 
+        <FrameMarkStrip
+          currentSeconds={playhead}
+          duration={duration}
+          fps={frame_detect}
+          markIn={markIn}
+          markOut={markOut}
+          onMarkIn={() => setMarkIn(livePosition())}
+          onMarkOut={() => setMarkOut(livePosition())}
+          onClear={() => {
+            setMarkIn(null);
+            setMarkOut(null);
+          }}
+          onSeek={(seconds) => setStartAt(seconds * 1000)}
+          disabled={activeTask?.type === "trake"}
+        />
+
         {duration > 0 && (
           <div className="mt-[10px]">
             <SubmitForm
               activeTask={activeTask}
-              onBasketChanged={onBasketChanged}
+              onBasketChanged={() => {
+                setAnswerTick((tick) => tick + 1);
+                onBasketChanged?.();
+              }}
               videoId={videoId}
               duration={duration}
               startAt={startAt / 1000}
               setStartAt={setStartAt}
               frame_detect={frame_detect}
+              markIn={markIn}
+              markOut={markOut}
+              getPlayhead={livePosition}
+              trakeSlot={trakeSlot}
             />
           </div>
         )}
       </div>
+
+      {/* Có task đang mở thì Add Answer ghi thẳng lên server, nên panel phải
+          đọc từ đó. Giỏ Zustand bên dưới chỉ còn dùng khi chưa nhận task nào. */}
+      {activeTask ? (
+        <AnswerPanel
+          task={activeTask}
+          reloadKey={answerTick}
+          onChanged={() => onBasketChanged?.()}
+        />
+      ) : (
       <div className="w-1/5 h-[70%] bg-white rounded-sm p-6 shadow-lg flex flex-col">
         <h1>
           <b>Filename:</b> {submissionFileName}.csv
@@ -194,6 +292,7 @@ export default function VideoPopup({
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -102,6 +102,13 @@ export default function Board({
         <span className="text-xs text-proto-muted font-mono">
           {board?.round?.source_filename}
         </span>
+        {/* Only reachable by asking for a pack_id explicitly, but if a screen
+            ever does, saying so beats letting someone work a dead round. */}
+        {board?.round && !board.round.active && (
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#d4a017]/20 text-[#8a6a0f]">
+            Vòng đã nghỉ
+          </span>
+        )}
         <span className="text-sm text-proto-muted ml-auto">
           <b className="text-proto-ink">{done}</b>/{board?.tasks.length ?? 0} đủ{" "}
           {rowsPerQuery} dòng

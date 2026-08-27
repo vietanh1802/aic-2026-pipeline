@@ -1,9 +1,12 @@
-"""Apply schema.sql.
+"""Apply schema.sql, then the numbered steps on top of it.
 
-Idempotent by construction — the whole file is IF NOT EXISTS — because the API
-runs this on every startup and a second run must never lose data. There is no
-version table yet: there is one schema and it only grows. When a column has to
-change shape, that is the moment to add versioning, not before.
+Idempotent by construction — schema.sql is entirely IF NOT EXISTS — because the
+API runs this on every startup and a second run must never lose data.
+
+That property is also schema.sql's limit: a CREATE that is skipped cannot add a
+column to a table that already exists. This file's original note said versioning
+should wait until a column had to change shape. It has, so migrations.py now
+runs after the baseline; see it for the version bookkeeping.
 """
 from __future__ import annotations
 
@@ -11,11 +14,13 @@ import sqlite3
 from pathlib import Path
 
 from app.db.connection import get_conn
+from app.db.migrations import apply_steps
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 TABLES = (
     "answers",
+    "audit_log",
     "edit_requests",
     "packs",
     "presence",
@@ -33,6 +38,7 @@ def migrate(conn: sqlite3.Connection | None = None) -> list[str]:
     conn = conn if conn is not None else get_conn()
     try:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        apply_steps(conn)
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()

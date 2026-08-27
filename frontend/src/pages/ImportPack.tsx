@@ -17,6 +17,11 @@ import Button from "../components/Button";
  * mis-inferred Q&A question gets caught — which is the whole point of having a
  * middle step. The pattern is a field rather than a constant because the
  * organizer has not frozen the filename format.
+ *
+ * Committing creates the round and stops there. It used to also make the new
+ * round the live one, which is how a second import could take the round being
+ * competed in off every board at once. Going live is a separate decision, made
+ * on the rounds screen in front of the numbers it costs.
  */
 export default function ImportPack({
   onImported,
@@ -61,11 +66,15 @@ export default function ImportPack({
           question_text,
         })),
       });
+      // No automatic jump to the board any more. The new round is not active,
+      // so the board would still be showing the old one — which reads exactly
+      // like the import having done nothing. Say what happened and where to go.
       setDone(
-        `Đã tạo ${result.tasks_created} task, bỏ qua ${result.skipped} file.`
+        `Đã tạo ${result.tasks_created} task ở vòng “${result.round_label}”` +
+          (result.skipped ? `, bỏ qua ${result.skipped} file` : "") +
+          " — chưa kích hoạt."
       );
       setPreview(null);
-      onImported();
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : "Không lưu được");
     } finally {
@@ -131,7 +140,14 @@ export default function ImportPack({
       </label>
 
       {error && <p className="text-[#c64545] text-sm mt-3">{error}</p>}
-      {done && <p className="text-[#3d7a4d] text-sm mt-3">{done}</p>}
+      {done && (
+        <div className="flex items-center gap-3 flex-wrap mt-4 px-4 py-3 rounded-[10px] border border-[#5db872] bg-[#5db872]/10">
+          <span className="text-sm text-[#3d7a4d]">{done}</span>
+          <span className="ml-auto">
+            <Button onClick={onImported}>Sang màn Vòng để kích hoạt</Button>
+          </span>
+        </div>
+      )}
 
       {preview && (
         <>

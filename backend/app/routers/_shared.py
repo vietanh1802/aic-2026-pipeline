@@ -44,6 +44,63 @@ def rows_per_query(conn: sqlite3.Connection) -> int:
     return int(all_settings(conn).get("export.rows_per_query", 100))
 
 
+def active_pack(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """The one round everybody is working in, or None before the first import.
+
+    One function because there were two spellings of this query and they did not
+    agree: /api/packs/active was a bare `WHERE active = 1` taking whatever row
+    came back first, while /api/board ordered by imported_at. Neither excluded a
+    deleted pack. Two screens disagreeing about which round is live is precisely
+    the confusion this whole change is meant to end.
+    """
+    return conn.execute(
+        "SELECT * FROM packs WHERE active = 1 AND deleted_at IS NULL "
+        "ORDER BY imported_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+
+
+def load_pack(conn: sqlite3.Connection, pack_id: int) -> sqlite3.Row:
+    """A pack by id, deleted ones included — admin screens have to see those."""
+    row = conn.execute("SELECT * FROM packs WHERE id = ?", (pack_id,)).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không có vòng này"
+        )
+    return row
+
+
+def pack_counts(conn: sqlite3.Connection, pack_id: int) -> tuple[int, int]:
+    """(tasks, answers) — what an admin needs before retiring or deleting one."""
+    tasks = conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks WHERE pack_id = ?", (pack_id,)
+    ).fetchone()["n"]
+    answers = conn.execute(
+        "SELECT COUNT(*) AS n FROM answers a JOIN tasks t ON t.id = a.task_id "
+        "WHERE t.pack_id = ?",
+        (pack_id,),
+    ).fetchone()["n"]
+    return int(tasks), int(answers)
+
+
+def pack_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    tasks, answers = pack_counts(conn, row["id"])
+    who = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (row["imported_by"],)
+    ).fetchone()
+    return {
+        "id": row["id"],
+        "label": row["round_label"],
+        "source_filename": row["source_filename"],
+        "imported_at": row["imported_at"],
+        "imported_by": user_out(who),
+        "deadline_at": row["deadline_at"],
+        "active": bool(row["active"]),
+        "deleted_at": row["deleted_at"],
+        "task_count": tasks,
+        "answer_count": answers,
+    }
+
+
 def load_task(conn: sqlite3.Connection, task_id: int) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is None:
