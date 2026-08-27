@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { BoardTask } from "../../api/board";
+import { taskQueryForSearch } from "../../helpers/taskBrief";
 import { useQueryStore } from "../../store/queryStore";
 
 /**
@@ -62,9 +63,7 @@ export default function TaskBrief({
             type="button"
             className="text-[12.5px] text-proto-primary-active underline"
             onClick={() =>
-              useQueryStore
-                .getState()
-                .setQueryText(task.query_text.replace(/\s+/g, " ").trim())
+              useQueryStore.getState().setQueryText(taskQueryForSearch(task))
             }
           >
             Chép đề bài xuống ô search

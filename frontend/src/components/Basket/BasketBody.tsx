@@ -158,6 +158,40 @@ export default function BasketBody({
 
   const { anchor, autoCount, needed, from, to } = autofillPlan(rows, rowsPerQuery, step);
 
+  // ── Áp đáp án cho tất cả dòng ────────────────────────────────────────────
+  // A Q&A task has one answer; only the frame varies per row. The anchor
+  // (rank 1) usually gets typed first, so this copies it onto every other
+  // row instead of leaving them to autofill with whatever `addAnswer` sent —
+  // often nothing, which is exactly the gap this closes.
+  const [applyAllNote, setApplyAllNote] = useState<string | null>(null);
+  const applyAllTargets = anchor ? rows.filter((row) => row.id !== anchor.id) : [];
+  const canApplyAll =
+    task.type === "qa" && !readOnly && Boolean(anchor?.answer_text);
+
+  const applyAnswerToAll = () => {
+    if (!anchor?.answer_text || applyAllTargets.length === 0) {
+      return;
+    }
+    const text = anchor.answer_text;
+    const targets = applyAllTargets;
+    setApplyAllNote(null);
+    return act(async () => {
+      let applied = 0;
+      try {
+        for (const row of targets) {
+          await patchAnswer(row.id, { version: row.version, answer_text: text });
+          applied += 1;
+        }
+      } catch (err) {
+        setApplyAllNote(
+          `Đã áp cho ${applied}/${targets.length} dòng rồi dừng vì lỗi`
+        );
+        throw err;
+      }
+      setApplyAllNote(`Đã áp cho ${applied}/${targets.length} dòng`);
+    });
+  };
+
   // The step that would make the fill exactly blanket the marked interval.
   // Panel-only: the dialog basket (opened from the Board) has no marks.
   const suggestion =
@@ -379,6 +413,9 @@ export default function BasketBody({
       )}
 
       {error && <p className={`text-[#c64545] text-sm ${padX} pt-2`}>{error}</p>}
+      {applyAllNote && (
+        <p className={`text-[11px] text-proto-muted ${padX} pt-2`}>{applyAllNote}</p>
+      )}
 
       <div className={`flex-1 overflow-y-auto ${padX} py-3`}>
         {rows.length === 0 && (
@@ -449,6 +486,20 @@ export default function BasketBody({
                     }
                   }}
                 />
+              )}
+              {index === 0 && canApplyAll && (
+                <button
+                  type="button"
+                  disabled={busy || applyAllTargets.length === 0}
+                  title="Chép đáp án này sang mọi dòng còn lại của task"
+                  className="shrink-0 text-[10.5px] font-semibold text-proto-primary-active underline decoration-dotted disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void applyAnswerToAll();
+                  }}
+                >
+                  Áp đáp án cho tất cả dòng
+                </button>
               )}
               <span className="ml-auto flex gap-1" onClick={(event) => event.stopPropagation()}>
                 {!readOnly && (

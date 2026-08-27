@@ -32,6 +32,11 @@ interface SubmitFormData {
   getPlayhead?: () => number;
   /** Set when the popup was opened on one event of a TRAKE line. */
   trakeSlot?: TrakeSlot | null;
+  /** The Q&A answer already on the task's first row. A Q&A task has exactly
+   *  one answer — only the frame varies per row — so "Trải K dòng" falls back
+   *  to this when the popup's answer box is left empty, instead of writing
+   *  `null` into every new row. */
+  fallbackAnswer?: string | null;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -46,6 +51,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   markOut = null,
   getPlayhead,
   trakeSlot = null,
+  fallbackAnswer = null,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
@@ -134,11 +140,16 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     setSpreading(true);
     let added = 0;
     try {
+      // An empty box must not blank out the K new rows: a Q&A task has one
+      // answer for the whole task, so the first row's answer (passed in as
+      // fallbackAnswer) is what an empty box really means here.
+      const qaAnswerText =
+        activeTask.type === "qa" ? answer || fallbackAnswer || null : null;
       for (const frame of frames) {
         await addAnswer(activeTask.id, {
           video_id: videoId,
           frames: [frame],
-          answer_text: activeTask.type === "qa" ? answer || null : null,
+          answer_text: qaAnswerText,
         });
         added += 1;
         setSpreadNote(`${added}/${frames.length}…`);

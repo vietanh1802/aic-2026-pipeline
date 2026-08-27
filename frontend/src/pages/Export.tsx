@@ -19,6 +19,7 @@ import {
 import Button from "../components/Button";
 import FramePreview from "../components/FramePreview";
 import { startMsAt } from "../helpers/frameIdentity";
+import { taskBriefText } from "../helpers/taskBrief";
 import { videoUrlAt } from "../helpers/videoSource";
 import { useAuthStore } from "../store/authStore";
 
@@ -417,161 +418,175 @@ export default function ExportPage() {
           </div>
         </div>
 
-        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden">
-          <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-            {selectedTask
-              ? `Task ${selectedTask.code} · ${
-                  selectedTask.type === "qa" ? "Q&A" : selectedTask.type
-                }`
-              : "Xem trước một file"}
-          </div>
-          <div className="p-3 max-h-[620px] overflow-y-auto">
-            {selectedTask ? (
-              <div className="flex flex-col gap-3 mb-3">
-                {/* The brief, verbatim — never the search screen's TaskBrief,
-                    which is laid out for a page with a result grid, not a
-                    narrow side panel. */}
-                <div>
-                  <p
-                    className={`text-[13px] text-proto-ink whitespace-pre-wrap ${
-                      briefExpanded ? "" : "line-clamp-3"
-                    }`}
-                  >
-                    {selectedTask.query_text}
-                  </p>
-                  {selectedTask.query_text.length > 140 && (
-                    <button
-                      type="button"
-                      className="text-[11px] text-proto-muted underline mt-0.5"
-                      onClick={() => setBriefExpanded((value) => !value)}
+        {/* Bounded height so the grid rows below actually mean something —
+            row 1 (auto) never scrolls, row 2 (minmax(0,1fr)) absorbs the rest
+            of the height and is the only thing that scrolls. That keeps the
+            video on screen while stepping through the answer list, which is
+            the whole point of watching it while reviewing rows. */}
+        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden h-[660px] grid grid-rows-[auto_minmax(0,1fr)]">
+          <div>
+            <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+              {selectedTask
+                ? `Task ${selectedTask.code} · ${
+                    selectedTask.type === "qa" ? "Q&A" : selectedTask.type
+                  }`
+                : "Xem trước một file"}
+            </div>
+            <div className="p-3">
+              {selectedTask ? (
+                <div className="flex flex-col gap-3">
+                  {/* The brief, verbatim — never the search screen's TaskBrief,
+                      which is laid out for a page with a result grid, not a
+                      narrow side panel. */}
+                  <div>
+                    <p
+                      className={`text-[13px] text-proto-ink whitespace-pre-wrap ${
+                        briefExpanded ? "" : "line-clamp-3"
+                      }`}
                     >
-                      {briefExpanded ? "Thu gọn" : "Mở rộng"}
-                    </button>
-                  )}
-                </div>
-
-                {/* Video and still side by side — the still is the real
-                    keyframe and the video is the real position, so a mismatch
-                    between the two shows up at a glance. flex-wrap (not a
-                    viewport breakpoint) is what lets them stack: it is the
-                    panel's own width that is narrow, not necessarily the
-                    window's. */}
-                <div className="flex flex-wrap gap-3 items-start">
-                  <div className="flex-1 min-w-[220px]">
-                    {selectedAnswer ? (
-                      videoSrc ? (
-                        <video
-                          ref={videoRef}
-                          key={activeVideoId}
-                          src={videoSrc}
-                          controls
-                          autoPlay
-                          preload="metadata"
-                          className="rounded-[8px] w-full"
-                          onLoadedMetadata={(e) => {
-                            if (selectedAnswer) {
-                              e.currentTarget.currentTime =
-                                startMsAt(
-                                  selectedAnswer.video_id,
-                                  selectedAnswer.frames[0] ?? 0
-                                ) / 1000;
-                            }
-                          }}
-                        />
-                      ) : (
-                        <p className="text-[11.5px] text-proto-muted">
-                          Chưa cấu hình kho video (VITE_VIDEO_BASE_URL).
-                        </p>
-                      )
-                    ) : (
-                      <div className="rounded-[8px] w-full aspect-video bg-proto-dark flex items-center justify-center">
-                        <span className="text-[11px] text-neutral-400 px-2 text-center">
-                          {answersLoading
-                            ? "Đang tải…"
-                            : "Chọn một dòng bên dưới để xem video."}
-                        </span>
-                      </div>
-                    )}
-                    {selectedAnswer && (
-                      <div className="text-xs font-mono text-proto-ink mt-1">
-                        {selectedAnswer.video_id} · frame{" "}
-                        {selectedAnswer.frames[0] ?? 0}
-                      </div>
+                      {taskBriefText(selectedTask)}
+                    </p>
+                    {taskBriefText(selectedTask).length > 140 && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-proto-muted underline mt-0.5"
+                        onClick={() => setBriefExpanded((value) => !value)}
+                      >
+                        {briefExpanded ? "Thu gọn" : "Mở rộng"}
+                      </button>
                     )}
                   </div>
-                  {selectedAnswer && (
-                    <FramePreview
-                      videoId={selectedAnswer.video_id}
-                      frameIdx={selectedAnswer.frames[0] ?? 0}
-                      size="large"
-                    />
-                  )}
-                </div>
 
-                {/* The answer list. KeyframeImg already sets loading="lazy",
-                    so a hundred rows here does not fire a hundred requests. */}
-                <div className="border border-proto-line rounded-[8px] overflow-hidden">
-                  <div className="max-h-[280px] overflow-y-auto divide-y divide-proto-line">
-                    {answersLoading && (
-                      <p className="p-3 text-[11.5px] text-proto-muted">
-                        Đang tải danh sách…
-                      </p>
-                    )}
-                    {!answersLoading && answers?.length === 0 && (
-                      <p className="p-3 text-[11.5px] text-proto-muted">
-                        Chưa có dòng nào.
-                      </p>
-                    )}
-                    {!answersLoading &&
-                      answers?.map((row) => (
-                        <div
-                          key={row.id}
-                          onClick={() => setSelectedAnswerId(row.id)}
-                          className={`flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer ${
-                            row.id === selectedAnswerId
-                              ? "bg-proto-primary/10"
-                              : "hover:bg-proto-soft"
-                          }`}
-                        >
-                          <FramePreview
-                            videoId={row.video_id}
-                            frameIdx={row.frames[0] ?? 0}
+                  {/* Video and still side by side — the still is the real
+                      keyframe and the video is the real position, so a mismatch
+                      between the two shows up at a glance. flex-wrap (not a
+                      viewport breakpoint) is what lets them stack: it is the
+                      panel's own width that is narrow, not necessarily the
+                      window's. */}
+                  <div className="flex flex-wrap gap-3 items-start">
+                    <div className="flex-1 min-w-[220px]">
+                      {selectedAnswer ? (
+                        videoSrc ? (
+                          <video
+                            ref={videoRef}
+                            key={activeVideoId}
+                            src={videoSrc}
+                            controls
+                            autoPlay
+                            preload="metadata"
+                            className="rounded-[8px] w-full"
+                            onLoadedMetadata={(e) => {
+                              if (selectedAnswer) {
+                                e.currentTarget.currentTime =
+                                  startMsAt(
+                                    selectedAnswer.video_id,
+                                    selectedAnswer.frames[0] ?? 0
+                                  ) / 1000;
+                              }
+                            }}
                           />
-                          <b className="font-mono text-proto-ink w-7">
-                            #{row.rank}
-                          </b>
-                          <span className="font-mono text-proto-ink truncate">
-                            {row.video_id}
-                          </span>
-                          <span className="font-mono text-proto-muted ml-auto">
-                            frame {row.frames[0] ?? 0}
+                        ) : (
+                          <p className="text-[11.5px] text-proto-muted">
+                            Chưa cấu hình kho video (VITE_VIDEO_BASE_URL).
+                          </p>
+                        )
+                      ) : (
+                        <div className="rounded-[8px] w-full aspect-video bg-proto-dark flex items-center justify-center">
+                          <span className="text-[11px] text-neutral-400 px-2 text-center">
+                            {answersLoading
+                              ? "Đang tải…"
+                              : "Chọn một dòng bên dưới để xem video."}
                           </span>
                         </div>
-                      ))}
+                      )}
+                      {selectedAnswer && (
+                        <div className="text-xs font-mono text-proto-ink mt-1">
+                          {selectedAnswer.video_id} · frame{" "}
+                          {selectedAnswer.frames[0] ?? 0}
+                        </div>
+                      )}
+                    </div>
+                    {selectedAnswer && (
+                      <FramePreview
+                        videoId={selectedAnswer.video_id}
+                        frameIdx={selectedAnswer.frames[0] ?? 0}
+                        size="large"
+                      />
+                    )}
                   </div>
                 </div>
-              </div>
-            ) : (
-              <p className="text-[11.5px] text-proto-muted mb-3">
-                Chọn một dòng ở danh sách bên trái để xem cả task, hoặc dùng{" "}
-                <b>▶ Top-1</b> để mở nhanh dòng hạng 1.
-              </p>
-            )}
+              ) : (
+                <p className="text-[11.5px] text-proto-muted">
+                  Chọn một dòng ở danh sách bên trái để xem cả task, hoặc dùng{" "}
+                  <b>▶ Top-1</b> để mở nhanh dòng hạng 1.
+                </p>
+              )}
+            </div>
+          </div>
 
-            {preview && (
-              <>
-                <div className="text-xs font-mono text-proto-ink mb-1">
-                  {preview.filename} · {preview.rows} dòng
-                </div>
-                <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-x-auto whitespace-pre">
-                  {preview.content.split("\n").slice(0, 12).join("\n")}
-                  {preview.content.split("\n").length > 12 ? "\n…" : ""}
-                </pre>
-              </>
+          {/* The answer list. KeyframeImg already sets loading="lazy", so a
+              hundred rows here does not fire a hundred requests. min-h-0 is
+              what lets a grid row shrink below its content's height instead
+              of stretching the grid to fit it — without it overflow-y-auto
+              on a grid row does nothing. */}
+          <div className="min-h-0 overflow-y-auto px-3 pb-3">
+            {selectedTask && (
+              <div className="border border-proto-line rounded-[8px] overflow-hidden divide-y divide-proto-line">
+                {answersLoading && (
+                  <p className="p-3 text-[11.5px] text-proto-muted">
+                    Đang tải danh sách…
+                  </p>
+                )}
+                {!answersLoading && answers?.length === 0 && (
+                  <p className="p-3 text-[11.5px] text-proto-muted">
+                    Chưa có dòng nào.
+                  </p>
+                )}
+                {!answersLoading &&
+                  answers?.map((row) => (
+                    <div
+                      key={row.id}
+                      onClick={() => setSelectedAnswerId(row.id)}
+                      className={`flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer ${
+                        row.id === selectedAnswerId
+                          ? "bg-proto-primary/10"
+                          : "hover:bg-proto-soft"
+                      }`}
+                    >
+                      <FramePreview
+                        videoId={row.video_id}
+                        frameIdx={row.frames[0] ?? 0}
+                      />
+                      <b className="font-mono text-proto-ink w-7">
+                        #{row.rank}
+                      </b>
+                      <span className="font-mono text-proto-ink truncate">
+                        {row.video_id}
+                      </span>
+                      <span className="font-mono text-proto-muted ml-auto">
+                        frame {row.frames[0] ?? 0}
+                      </span>
+                    </div>
+                  ))}
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* CSV preview is a different job from reviewing frames — full width,
+          below the two-column area, not fighting the video for space. */}
+      {preview && (
+        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden mt-5 p-3">
+          <div className="text-xs font-mono text-proto-ink mb-1">
+            {preview.filename} · {preview.rows} dòng
+          </div>
+          <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-x-auto whitespace-pre">
+            {preview.content.split("\n").slice(0, 12).join("\n")}
+            {preview.content.split("\n").length > 12 ? "\n…" : ""}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

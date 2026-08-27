@@ -33,6 +33,27 @@ from app.settings_store import all_settings
 router = APIRouter(prefix="/api", tags=["export"])
 
 
+# Smart quotes come in from the organizer's briefs and from anything pasted out
+# of Word, and a plain " makes csv.writer wrap the whole field and double the
+# quote — which is correct RFC-4180 and wrong for this competition. §2.1.2 of
+# the rules writes an answer row as `L05_V005, 888, màu xanh`: plain, unquoted.
+# So fold the curly forms back to ASCII and drop the character that triggers
+# the escaping. An answer is a short phrase; a double quote inside one is never
+# the thing being graded.
+_QUOTE_FOLD = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"',
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "«": '"', "»": '"',
+})
+
+
+def clean_answer(text: str | None) -> str:
+    """The answer as it should appear in the submission: no quote characters."""
+    if not text:
+        return ""
+    return text.translate(_QUOTE_FOLD).replace('"', "").strip()
+
+
 def export_filename(source_filename: str, settings: dict[str, Any] | None = None,
                     code: str = "", task_type: str = "") -> str:
     """`query-p1-15-qa.txt` -> `query-p1-15-qa.csv`.
@@ -71,7 +92,7 @@ def csv_content(
         frames = row["frames"]
         if task["type"] == "qa":
             writer.writerow(
-                [row["video_id"], frames[0] if frames else "", row["answer_text"] or ""]
+                [row["video_id"], frames[0] if frames else "", clean_answer(row["answer_text"])]
             )
         elif task["type"] == "trake":
             writer.writerow([row["video_id"], *frames])
@@ -124,6 +145,19 @@ def validate_export(
                         "task_code": task["code"],
                         "severity": "warning",
                         "message": f"{empty} dòng chưa có đáp án chữ",
+                    }
+                )
+
+            # A comma in the answer still makes csv.writer quote the whole
+            # field (kept as-is, see csv_content) — flag it so the team can
+            # check the wording before it goes into the zip.
+            has_comma = sum(1 for row in rows if "," in (row["answer_text"] or ""))
+            if has_comma:
+                issues.append(
+                    {
+                        "task_code": task["code"],
+                        "severity": "warning",
+                        "message": f"{has_comma} dòng có dấu phẩy trong đáp án, kiểm tra lại trước khi nộp",
                     }
                 )
 

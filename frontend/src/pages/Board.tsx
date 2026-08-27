@@ -9,6 +9,7 @@ import {
 } from "../api/board";
 import { ApiRequestError } from "../api/base";
 import Button from "../components/Button";
+import { taskBriefText } from "../helpers/taskBrief";
 import { useAuthStore } from "../store/authStore";
 
 const POLL_MS = 3000;
@@ -170,7 +171,7 @@ export default function Board({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-proto-body">
-                    <span className="line-clamp-2">{task.query_text}</span>
+                    <span className="line-clamp-2">{taskBriefText(task)}</span>
                     {task.viewers.length > 0 && (
                       <span className="text-[10.5px] text-[#9b6dd6] block mt-0.5">
                         đang xem: {task.viewers.map((v) => v.display_name).join(", ")}

@@ -8,7 +8,7 @@ import { neighbourKeyframesFor } from "../../helpers/keyframes";
 import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { extractTimestamp } from "../FrameDisplay";
-import type { AnswerRow } from "../../api/answers";
+import { getAnswers, type AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
@@ -82,6 +82,31 @@ export default function VideoPopup({
   // Bumped after every add so the panel beside the video re-reads the task's
   // answers. Without it the list only refreshed when the popup was reopened.
   const [answerTick, setAnswerTick] = useState<number>(0);
+
+  // The Q&A answer already on the task's first row — SubmitForm's fallback
+  // when "Trải K dòng" is used with an empty answer box. AnswerPanel already
+  // fetches the task's rows for the list beside the video, but that state
+  // lives inside BasketBody; refetching this one field here is the smaller
+  // change than threading it back up through AnswerPanel.
+  const [firstAnswerText, setFirstAnswerText] = useState<string | null>(null);
+  useEffect(() => {
+    const taskId = activeTask?.id;
+    if (!taskId) {
+      setFirstAnswerText(null);
+      return;
+    }
+    let cancelled = false;
+    void getAnswers(taskId)
+      .then((result) => {
+        if (!cancelled) {
+          setFirstAnswerText(result.answers[0]?.answer_text ?? null);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTask?.id, answerTick]);
 
   // The basket row the user last clicked, so the panel can highlight which one
   // they are currently checking against the video.
@@ -251,6 +276,7 @@ export default function VideoPopup({
                 markOut={markOut}
                 getPlayhead={livePosition}
                 trakeSlot={trakeSlot}
+                fallbackAnswer={firstAnswerText}
               />
             </div>
           )}
