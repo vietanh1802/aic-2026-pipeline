@@ -50,8 +50,7 @@ export default function ExportPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [answers, setAnswers] = useState<AnswerRow[] | null>(null);
   const [answersLoading, setAnswersLoading] = useState(false);
-  // Which answer row's still is beside the video and which frame the player
-  // is seeking to.
+  // The row the player is parked on. Set by a click, never by hovering.
   const [selectedAnswerId, setSelectedAnswerId] = useState<number | null>(
     null
   );
@@ -93,9 +92,10 @@ export default function ExportPage() {
     board?.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedAnswer =
     answers?.find((row) => row.id === selectedAnswerId) ?? null;
-  // What the still shows: whatever is under the pointer, else the clicked row.
-  const stillAnswer =
-    answers?.find((row) => row.id === hoveredAnswerId) ?? selectedAnswer;
+  // Only what the pointer is on. Falling back to the clicked row would leave a
+  // still permanently parked over the player, which is what it is not for.
+  const hoveredAnswer =
+    answers?.find((row) => row.id === hoveredAnswerId) ?? null;
 
   // A different video needs a new `src` — changing it is what makes the
   // browser reload the file. The same video just needs the element's
@@ -474,7 +474,7 @@ export default function ExportPage() {
                       answer list underneath was squeezed to about two rows.
                       Both children now size to this row instead of dictating
                       it, so the list always keeps the rest. */}
-                  <div className="flex gap-3 items-stretch h-[200px]">
+                  <div className="relative flex gap-3 items-stretch h-[220px]">
                     <div className="flex-1 min-w-0 flex flex-col">
                       {selectedAnswer ? (
                         videoSrc ? (
@@ -517,16 +517,23 @@ export default function ExportPage() {
                         </div>
                       )}
                     </div>
-                    {stillAnswer && (
-                      <div className="h-full aspect-video shrink-0 relative">
+                    {/* The still floats over the player instead of sitting
+                        beside it. As a sibling it was `h-full aspect-video` —
+                        200px tall by 355px wide — while the video only got
+                        whatever was left, so the image ended up larger than the
+                        thing it was meant to be checked against. It also only
+                        appears while the pointer is on a row: the video is what
+                        you keep, the still is what you glance at. */}
+                    {hoveredAnswer && (
+                      <div className="pointer-events-none absolute right-2 top-2 bottom-2 aspect-video overflow-hidden rounded-[6px] shadow-2xl ring-2 ring-white">
                         <FramePreview
-                          videoId={stillAnswer.video_id}
-                          frameIdx={stillAnswer.frames[0] ?? 0}
+                          videoId={hoveredAnswer.video_id}
+                          frameIdx={hoveredAnswer.frames[0] ?? 0}
                           size="fill"
                         />
-                        <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white font-mono text-[10px] px-1 py-0.5 text-center">
-                          #{stillAnswer.rank} · frame {stillAnswer.frames[0] ?? 0}
-                          {stillAnswer.id !== selectedAnswer?.id && " · đang trỏ"}
+                        <span className="absolute bottom-0 inset-x-0 bg-black/70 text-white font-mono text-[10px] px-1 py-0.5 text-center">
+                          #{hoveredAnswer.rank} · frame{" "}
+                          {hoveredAnswer.frames[0] ?? 0}
                         </span>
                       </div>
                     )}
