@@ -110,3 +110,37 @@ docs/vintern_gt_eval.png
 # file nhẹ lại.
 notebooks/*.ipynb
 notebooks/thanhbangcao/*.ipynb
+
+# ===== Kết quả OCR Vintern (sinh lại được, quá nặng cho git) =====
+# ocr_all.json  34 MB — gộp từ các file *_ocr*.jsonl trên Drive bằng
+#                       notebooks/thanhbangcao/70_Vanh_gop_ocr.ipynb
+# ocr_clean.json 29 MB — làm sạch từ ocr_all bằng 77_Vanh_lam_sach_ocr.ipynb
+# ocr_clean_report.json 22 MB — nhật ký đã gỡ gì khỏi ảnh nào
+#
+# CẢNH BÁO: ba file này CHỈ nằm trên máy này và trên Drive. Dựng lại được từ
+# các .jsonl gốc, nhưng phải chạy lại notebook gộp + làm sạch.
+data_raw/ocr_all.json
+data_raw/ocr_clean.json
+data_raw/ocr_clean_report.json
+
+# 25 câu vòng sơ tuyển + toàn bộ bài đã nộp, dựng từ aic2026-sotuyen/round1/.
+data_raw/round1_queries.json
+
+# Bài nộp vòng sơ tuyển do BTC/đội giữ, không phải nguồn của repo.
+aic2026-sotuyen/
+
+# Bảng tra 76 notebook. Bản thân notebook đã ignore ở trên nên bảng tra cũng
+# không có ích cho người khác clone repo.
+notebooks/thanhbangcao/INDEX.md
+notebooks/thanhbangcao/INDEX.json
+
+# ===== Chính sách AWS mở quyền chéo tài khoản =====
+# File thử để một tài khoản AWS khác truy cập được S3 của mình. Chúng chứa
+# account ID và ARN của instance EC2 — không phải khoá bí mật, nhưng là bản đồ
+# hạ tầng: ai đọc được thì biết đích danh cần tấn công vào đâu.
+#
+# Cũng là file dùng một lần, sửa liên tục theo từng lần cấp quyền, nên đưa lên
+# repo thì bản trong git luôn lệch với chính sách đang áp trên AWS — nguy hiểm
+# hơn là không có gì, vì người sau sẽ tin bản trong git.
+bucket-policy-backup/
+deploy/p6/iam-operator-policy.json
