@@ -8,6 +8,7 @@ import ResultInfoAndSort, {
   type SortType,
 } from "./components/ResultInfoAndSort";
 import TaskBrief from "./components/TaskBrief";
+import OcrCountBanner from "./components/OcrCountBanner";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore } from "./store/queryStore";
 import VideoPopup from "./components/VideoPopUp";
@@ -89,6 +90,7 @@ function App({
   const resultLimit = useQueryStore((state) => state.resultLimit);
   const topM = useQueryStore((state) => state.topM);
   const useRerank = useQueryStore((state) => state.useRerank);
+  const ocrStripDiacritics = useQueryStore((state) => state.ocrStripDiacritics);
   const searchType = useQueryStore((state) => state.searchType);
   const singleModel = useQueryStore((state) => state.singleModel);
   const [showPopup, setShowPopup] = useState<boolean>(false);
@@ -198,6 +200,16 @@ function App({
     TrakeCandidateResult[]
   >([]);
 
+  // The OCR route's three counts. Kept out of useSearchStore because that
+  // store is shared with the visual route, which has no notion of "how many
+  // images contain this text".
+  const [ocrCounts, setOcrCounts] = useState<{
+    phrase: number;
+    allWords: number;
+    anyWord: number;
+    searched: number;
+  } | null>(null);
+
   // ── TRAKE line ───────────────────────────────────────────────────────────
   // Which frame each event of each card is currently standing on, when it is
   // not the one the DP chose. Held here rather than inside TrakeCard because
@@ -303,6 +315,27 @@ function App({
         return;
       }
 
+      if (searchType === "ocr") {
+        // Pure lexical route - no model call, no blending with the visual
+        // route. Results share the SearchResult shape, so they go straight
+        // into useSearchStore and the existing grid renders them as-is.
+        const res = await videoSearchApi.ocrSearch(
+          queryText,
+          Number(resultLimit),
+          ocrStripDiacritics
+        );
+        useSearchStore.getState().setTotalTime(res.processing_time);
+        useSearchStore.getState().setResults(res.results);
+        useSearchStore.getState().setMaxDistance(res.max_distance);
+        setOcrCounts({
+          phrase: res.phrase_matches,
+          allWords: res.all_word_matches,
+          anyWord: res.any_word_matches,
+          searched: res.searched_frames,
+        });
+        return;
+      }
+
       const response =
         searchType === "single"
           ? await videoSearchApi.singleSearch(
@@ -389,6 +422,9 @@ function App({
               queryParts={queryParts.length}
             />
           </div>
+        )}
+        {hasQueried && searchType === "ocr" && ocrCounts && (
+          <OcrCountBanner counts={ocrCounts} shown={results.length} />
         )}
         <div
           className={`absolute top-0 right-0 z-999 max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}

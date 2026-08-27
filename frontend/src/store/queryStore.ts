@@ -4,12 +4,17 @@ import type { ModelName } from "../types/api";
 
 export type QueryType = "text" | "image" | "audio";
 
-// Khớp 5 endpoint thật của backend: /ensemble-search (Alg.3 đầy đủ),
-// /single-search (1 model, phục vụ Q4), /temporal-search-text (Alg.4, 1 ô
-// nhập tách bằng dấu "."), /trake-search-text (N sự kiện tuần tự, cùng cách
-// tách). Đã bỏ text-search/faiss-search/combined-search/ocr-search — endpoint
-// không còn tồn tại (xem main.py: "Đã BỎ toàn bộ endpoint cũ").
-export type SearchType = "ensemble" | "single" | "temporal" | "trake";
+// Mirrors the backend's real endpoints: /ensemble-search (full Alg.3),
+// /single-search (one model, for Q4), /temporal-search-text (Alg.4, one input
+// split on "."), /trake-search-text (N sequential events, split the same way),
+// /ocr-search (text on screen).
+//
+// "ocr" is the PURE LEXICAL route: no model takes part and its scores are not
+// blended with the visual route - see the app/ocr_search.py docstring. It
+// therefore ignores topM/useRerank/model entirely and uses only resultLimit
+// plus the "strip diacritics" checkbox below.
+// (text-search/faiss-search/combined-search remain gone.)
+export type SearchType = "ensemble" | "single" | "temporal" | "trake" | "ocr";
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 
@@ -33,6 +38,14 @@ export interface QueryStore {
   setTopM: (topM: number) => void;
   useRerank: boolean; // bật Alg.2 rerank lân cận từng model trước ensemble
   setUseRerank: (value: boolean) => void;
+
+  // ── OCR route ────────────────────────────────────────────────────────────
+  // Strip diacritics from both the query and the corpus before comparing. ON
+  // by default: Vintern most often misreads the diacritics themselves
+  // (HỂ THAO ~ THỂ THAO, MỘT LÀNH ĐẠO ~ LÃNH ĐẠO), so stripping catches more.
+  // Turn it off when an exact match is what you want.
+  ocrStripDiacritics: boolean;
+  setOcrStripDiacritics: (value: boolean) => void;
 
   // Translate — độc lập với backend, gọi thẳng Google Translate ở client
   translateLang: TranslateLanguage;
@@ -58,6 +71,9 @@ export const useQueryStore = create<QueryStore>((set) => ({
   setTopM: (topM) => set({ topM }),
   useRerank: true,
   setUseRerank: (value) => set({ useRerank: value }),
+
+  ocrStripDiacritics: true,
+  setOcrStripDiacritics: (value) => set({ ocrStripDiacritics: value }),
 
   translateLang: "en-vi",
   setTranslateLang: (lang) => set({ translateLang: lang }),
