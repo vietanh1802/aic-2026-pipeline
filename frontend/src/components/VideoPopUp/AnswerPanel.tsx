@@ -1,5 +1,6 @@
 import type { AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
+import type { MarkedRange } from "../../helpers/basketMath";
 import BasketBody from "../Basket/BasketBody";
 
 /**
@@ -22,6 +23,7 @@ export default function AnswerPanel({
   onRowClick,
   onChanged,
   activeRowId = null,
+  markedRange = null,
 }: {
   task: BoardTask;
   rowsPerQuery: number;
@@ -31,6 +33,8 @@ export default function AnswerPanel({
   onChanged: () => void;
   /** The row the user last clicked, highlighted so they know what they are checking. */
   activeRowId?: number | null;
+  /** The mark-in/mark-out interval, in frames. Null when either mark is unset. */
+  markedRange?: MarkedRange | null;
 }) {
   return (
     <div className="relative flex flex-col h-full w-full font-baloo">
@@ -42,6 +46,7 @@ export default function AnswerPanel({
         onRowClick={onRowClick}
         onChanged={onChanged}
         activeRowId={activeRowId}
+        markedRange={markedRange}
       />
     </div>
   );

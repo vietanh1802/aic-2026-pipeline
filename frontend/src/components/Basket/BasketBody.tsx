@@ -13,7 +13,7 @@ import { ApiRequestError } from "../../api/base";
 import type { BoardTask } from "../../api/board";
 import Button from "../Button";
 import FramePreview from "../FramePreview";
-import { autofillPlan } from "../../helpers/basketMath";
+import { autofillPlan, suggestStep, type MarkedRange } from "../../helpers/basketMath";
 import { parseManualFrames } from "../../helpers/manualAnswer";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { useAuthStore } from "../../store/authStore";
@@ -56,6 +56,7 @@ export default function BasketBody({
   onRowClick,
   onChanged,
   activeRowId = null,
+  markedRange = null,
 }: {
   task: BoardTask;
   rowsPerQuery: number;
@@ -67,6 +68,8 @@ export default function BasketBody({
   onChanged?: () => void;
   /** The row the user last clicked, highlighted so they know what they are checking. */
   activeRowId?: number | null;
+  /** Mark-in/mark-out on the video, in frames. Only ever set by the popup panel. */
+  markedRange?: MarkedRange | null;
 }) {
   const isDialog = variant === "dialog";
   const me = useAuthStore((state) => state.user);
@@ -155,6 +158,25 @@ export default function BasketBody({
 
   const { anchor, autoCount, needed, from, to } = autofillPlan(rows, rowsPerQuery, step);
 
+  // The step that would make the fill exactly blanket the marked interval.
+  // Panel-only: the dialog basket (opened from the Board) has no marks.
+  const suggestion =
+    !isDialog && markedRange && anchor
+      ? suggestStep(anchor.frames[0], markedRange, needed)
+      : null;
+
+  // Applied only when the marks themselves change, not on every render this
+  // recomputes on — `needed` drops by one after every added row, so keying
+  // this effect on it would overwrite the number the user just typed on
+  // every single add.
+  useEffect(() => {
+    if (suggestion !== null) {
+      setStep(suggestion);
+      setStepText(String(suggestion));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markedRange?.start, markedRange?.end]);
+
   const stripe = (row: AnswerRow) => {
     if (row.origin === "auto") return ORIGIN_STRIPE.auto;
     return row.created_by?.id === me?.id ? ORIGIN_STRIPE.mine : ORIGIN_STRIPE.mate;
@@ -228,7 +250,27 @@ export default function BasketBody({
                   />
                   <span className="text-[10px] text-proto-muted">frame</span>
                 </label>
+                {/* Only when the step differs from what the marked interval
+                    calls for — hidden the moment they agree, so it never
+                    fights the field the user is actively editing. */}
+                {!isDialog && suggestion !== null && suggestion !== step && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStep(suggestion);
+                      setStepText(String(suggestion));
+                    }}
+                    className="text-[10px] font-semibold text-proto-primary-active underline decoration-dotted"
+                  >
+                    gợi ý {suggestion}
+                  </button>
+                )}
               </div>
+              {!isDialog && markedRange && (
+                <p className="text-[11.5px] text-proto-muted mt-2">
+                  Đoạn đã ghim {markedRange.start} → {markedRange.end}
+                </p>
+              )}
               <div className="flex items-center gap-3 mt-2 flex-wrap">
                 <span className="text-[11.5px] text-proto-muted">
                   {!anchor

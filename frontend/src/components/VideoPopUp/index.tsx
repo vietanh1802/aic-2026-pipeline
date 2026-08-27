@@ -15,6 +15,8 @@ import AnswerPanel from "./AnswerPanel";
 import FrameMarkStrip from "./FrameMarkStrip";
 import { usePopupStore } from "../../store/popupStore";
 import { startMsAt } from "../../helpers/frameIdentity";
+import { frameRange } from "../../helpers/frameRange";
+import type { MarkedRange } from "../../helpers/basketMath";
 
 /**
  * Opened on one event of a TRAKE line rather than on a search result.
@@ -117,6 +119,17 @@ export default function VideoPopup({
     () => getMatchingKeyframe(videoId, Number.isFinite(computed) ? computed : 0),
     [computed, videoId]
   );
+
+  // The marked interval, in frames, for the autofill step suggestion. Null
+  // whenever either edge is unset or the video's fps is unknown — the same
+  // condition SubmitForm uses to disable submission on the marked interval.
+  const markedRange: MarkedRange | null = useMemo(() => {
+    if (markIn === null || markOut === null) {
+      return null;
+    }
+    const range = frameRange(markIn, markOut, frame_detect);
+    return range ? { start: range.start, end: range.end } : null;
+  }, [markIn, markOut, frame_detect]);
   const fileId = getFileIdByVideoId(videoId);
 
   const driveWatchUrl = `https://drive.google.com/file/d/${fileId}/view?t=${Math.floor(
@@ -255,6 +268,7 @@ export default function VideoPopup({
               onRowClick={handleAnswerRowClick}
               onChanged={() => onBasketChanged?.()}
               activeRowId={activeRowId}
+              markedRange={markedRange}
             />
           ) : (
             <div className="flex flex-col h-full p-4 overflow-hidden">
