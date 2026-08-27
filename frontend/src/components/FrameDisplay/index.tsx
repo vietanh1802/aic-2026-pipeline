@@ -134,61 +134,6 @@ export default function FrameDisplay({
                       <MissingFrame name={result.name} />
                     </div>
                   )}
-                  {/* Dùng frame này làm mốc cho Temporal Search (Alg.4).
-                      stopPropagation() để không kích hoạt onClick cũ (mở
-                      VideoPopup). Đặt góc trên-phải để không đè nút search
-                      sẵn có ở góc dưới-phải. */}
-                  {onAddToBasket && (
-                    <div
-                      className="absolute top-0 left-0 ml-1 mt-1 hover:cursor-pointer px-1.5 py-0.5 bg-proto-primary text-white w-fit h-fit rounded-[4px] text-xs font-bold"
-                      title="Thêm vào giỏ đáp án"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAddToBasket(result);
-                      }}
-                    >
-                      +
-                    </div>
-                  )}
-                  {onUseAsAnchor && (
-                    <div
-                      className="absolute top-0 right-0 mr-1 mt-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]"
-                      title="Dùng làm mốc cho Temporal Search"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUseAsAnchor(result);
-                      }}
-                    >
-                      ⏱
-                    </div>
-                  )}
-                  {onToggleFocus && (
-                    <div
-                      className={`absolute top-0 right-0 mr-1 mt-9 hover:cursor-pointer p-1 w-fit h-fit rounded-[4px] border-2 ${
-                        focusVideos.includes(videoOf(result))
-                          ? "bg-proto-primary border-proto-primary"
-                          : "bg-[#EFEFEF] border-[#E3E3E3]"
-                      }`}
-                      title={
-                        focusVideos.includes(videoOf(result))
-                          ? "Bỏ lọc video này"
-                          : "Chỉ xem video này"
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleFocus(videoOf(result));
-                      }}
-                    >
-                      🎯
-                    </div>
-                  )}
-                  <div className="absolute bottom-0 right-0 mr-1 mb-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">
-                    <img
-                      src="/search.svg"
-                      alt="search_icon"
-                      onClick={() => onClick(result)}
-                    />
-                  </div>
                 </div>
                 <div className="flex flex-col w-full px-2 py-1 text-xs text-proto-muted gap-0.5">
                   <span className="flex items-center gap-1 min-w-0">
@@ -216,6 +161,68 @@ export default function FrameDisplay({
                       {result.distance.toFixed(1)}%
                     </span>
                   </span>
+                  {/* Action row — these 4 buttons used to float on top of the
+                      image (+ top-left, ⏱/🎯 top-right nearly touching,
+                      search bottom-right) and obscured the frame. Moved down
+                      here, below the name/timestamp/score block, so the
+                      image is only ever used to look at the frame. */}
+                  <div className="flex items-center gap-1 pt-1">
+                    {onAddToBasket && (
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-proto-primary text-white text-xs font-bold"
+                        title="Thêm vào giỏ đáp án"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAddToBasket(result);
+                        }}
+                      >
+                        +
+                      </button>
+                    )}
+                    {onUseAsAnchor && (
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-[#E3E3E3] bg-[#EFEFEF]"
+                        title="Dùng làm mốc cho Temporal Search"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUseAsAnchor(result);
+                        }}
+                      >
+                        ⏱
+                      </button>
+                    )}
+                    {onToggleFocus && (
+                      <button
+                        type="button"
+                        className={`flex h-7 w-7 items-center justify-center rounded-[4px] border-2 ${
+                          focusVideos.includes(videoOf(result))
+                            ? "bg-proto-primary border-proto-primary"
+                            : "bg-[#EFEFEF] border-[#E3E3E3]"
+                        }`}
+                        title={
+                          focusVideos.includes(videoOf(result))
+                            ? "Bỏ lọc video này"
+                            : "Chỉ xem video này"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleFocus(videoOf(result));
+                        }}
+                      >
+                        🎯
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-[#E3E3E3] bg-[#EFEFEF]"
+                      title="Mở video"
+                      onClick={() => onClick(result)}
+                    >
+                      <img src="/search.svg" alt="search_icon" className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );

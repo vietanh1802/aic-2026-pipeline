@@ -168,7 +168,11 @@ export default function Root() {
       {/* Kept mounted rather than unmounted, so switching to the board and back
           does not throw away the current search results. */}
       <div hidden={screen !== "search"}>
-        <App activeTask={task} onBasketChanged={() => void refreshCount()} />
+        <App
+          activeTask={task}
+          rowsPerQuery={rowsPerQuery}
+          onBasketChanged={() => void refreshCount()}
+        />
       </div>
 
       <AnswerBasket

@@ -80,10 +80,13 @@ function describeBackendHealth(health: HealthResponse): BackendHealth {
 
 function App({
   activeTask = null,
+  rowsPerQuery = 100,
   onBasketChanged,
 }: {
   /** The task claimed on the board, if any. Read-only context for the search. */
   activeTask?: BoardTask | null;
+  /** From the round the task belongs to; threaded down to the popup's answer panel. */
+  rowsPerQuery?: number;
   onBasketChanged?: () => void;
 } = {}) {
   const results = useSearchStore((state) => state.results);
@@ -320,7 +323,6 @@ function App({
           console.error("Temporal search text error:", res.error);
           setTemporalCandidates([]);
         } else {
-          console.log("Temporal candidates:", res.results);
           setTemporalCandidates(res.results ?? []);
         }
         return;
@@ -336,7 +338,6 @@ function App({
           console.error("TRAKE search text error:", res.error);
           setTrakeCandidates([]);
         } else {
-          console.log("TRAKE candidates:", res.results);
           setTrakeCandidates(res.results ?? []);
         }
         return;
@@ -357,7 +358,6 @@ function App({
               topM,
               useRerank
             );
-      console.log(response);
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
@@ -412,37 +412,19 @@ function App({
 
   return (
     <div className="relative min-h-screen bg-proto-canvas p-2">
-      {/* Header */}
-      <div className="w-full relative">
-        <Header />
-        {hasQueried && (
-          <div className="absolute top-0 left-1/2 transform -translate-x-1/2 z-999">
-            <ResultInfoAndSort
-              numberOfResults={
-                searchType === "temporal"
-                  ? temporalCandidates.length
-                  : searchType === "trake"
-                  ? trakeCandidates.length
-                  : results.length
-              }
-              sortBy={sortFrameBy}
-              totalTime={totalTime}
-              onSortChange={(option) => setSortFrameBy(option)}
-              unit={
-                searchType === "temporal" || searchType === "trake"
-                  ? "videos"
-                  : "frames"
-              }
-              queryParts={queryParts.length}
-              filtered={
-                focusVideos.length > 0
-                  ? { shown: shownResults.length, total: results.length }
-                  : undefined
-              }
-            />
-          </div>
-        )}
-        <div className="absolute top-0 right-0 z-999 flex items-start gap-2">
+      {/* Header — one flex row, nothing stacked.
+          The counter, the goto-frame box and the API chip used to be absolutely
+          positioned on top of <Header/>. Header's `my-9` collapsed through this
+          wrapper, so `top-0` landed on Header's own content instead of above it,
+          and the right-hand pair sat straight over "VQF — Video Query Finder"
+          and the build badge. Laying them out rather than stacking them makes the
+          collision impossible, and `flex-wrap` drops the right-hand cluster onto
+          its own line on a narrow window instead of letting it ride over anything. */}
+      <div className="w-full flex flex-wrap items-center gap-x-4 gap-y-2 pr-2">
+        <div className="flex-1 min-w-[260px]">
+          <Header />
+        </div>
+        <div className="flex items-start gap-2 shrink-0">
           <GotoFrame />
           <div
             className={`max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}
@@ -471,6 +453,7 @@ function App({
       {showPopup && videoUrl !== "" && (
         <VideoPopup
           activeTask={activeTask}
+          rowsPerQuery={rowsPerQuery}
           onBasketChanged={onBasketChanged}
           videoId={videoUrl}
           frameId={frameId}
@@ -541,8 +524,41 @@ function App({
         </div>
       )}
 
+      {/* ResultInfoAndSort describes the results, so it sits directly above
+          the results grid it describes rather than up in the header row —
+          it used to crowd the logo/version badge there and wrap onto a
+          second line. Condition is `hasQueried` alone (not sortFrameBy or
+          searchType) so it shows for every search type, exactly as before. */}
+      {hasQueried && (
+        <div className="max-w-[98%] mx-auto mb-2">
+          <ResultInfoAndSort
+            numberOfResults={
+              searchType === "temporal"
+                ? temporalCandidates.length
+                : searchType === "trake"
+                ? trakeCandidates.length
+                : results.length
+            }
+            sortBy={sortFrameBy}
+            totalTime={totalTime}
+            onSortChange={(option) => setSortFrameBy(option)}
+            unit={
+              searchType === "temporal" || searchType === "trake"
+                ? "videos"
+                : "frames"
+            }
+            queryParts={queryParts.length}
+            filtered={
+              focusVideos.length > 0
+                ? { shown: shownResults.length, total: results.length }
+                : undefined
+            }
+          />
+        </div>
+      )}
+
       {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
-        <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[200px]">
+        <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[280px]">
           <FrameDisplay
             results={shownResults}
             maxDistance={maxDistance}
@@ -566,7 +582,7 @@ function App({
       )}
 
       {(isLoading || (hasQueried && sortFrameBy == "video_id")) && (
-        <div className="mb-[200px]">
+        <div className="mb-[280px]">
           {Object.entries(groupedResult).map(([key, items]) => (
             <div
               key={key}
@@ -620,7 +636,7 @@ function App({
 
       {/* Temporal Search Results — Alg.4 text-query path */}
       {(isLoading || (hasQueried && searchType === "temporal")) && (
-        <div className="max-w-[98%] mx-auto mb-[200px] px-4">
+        <div className="max-w-[98%] mx-auto mb-[280px] px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
               Đang tìm kiếm…
@@ -641,7 +657,7 @@ function App({
 
       {/* TRAKE Search Results */}
       {(isLoading || (hasQueried && searchType === "trake")) && (
-        <div className="max-w-[98%] mx-auto mb-[200px] px-4">
+        <div className="max-w-[98%] mx-auto mb-[280px] px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
               Đang tìm kiếm…

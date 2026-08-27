@@ -6,11 +6,12 @@ export default function Header() {
         <div className="font-bold">Scavenger</div>
       </div>
       <div className="flex flex-row items-center gap-x-3">
-        <div className="hover:cursor-pointer">
-          <span className="font-bold">VQF</span> - Video Query Finder
+        <div className="hover:cursor-pointer whitespace-nowrap">
+          <span className="font-bold">VQF</span>
+          <span className="hidden xl:inline"> - Video Query Finder</span>
         </div>
         <span
-          className="text-xs font-medium text-proto-muted border border-proto-line rounded-[6px] px-2 py-0.5"
+          className="whitespace-nowrap text-xs font-medium text-proto-muted border border-proto-line rounded-[6px] px-2 py-0.5"
           title={`Build ${__APP_VERSION__} · commit ${__APP_COMMIT__}`}
         >
           v{__APP_VERSION__}
