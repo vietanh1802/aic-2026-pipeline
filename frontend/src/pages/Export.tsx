@@ -56,6 +56,9 @@ export default function ExportPage() {
     null
   );
   const [briefExpanded, setBriefExpanded] = useState(false);
+  // Pointing at a row previews its still; only a click moves the player.
+  // Sweeping the list to compare frames should not yank the video around.
+  const [hoveredAnswerId, setHoveredAnswerId] = useState<number | null>(null);
 
   // The mounted player, so a row click on the same video can seek in place
   // instead of the `src` change that a video swap needs.
@@ -90,6 +93,9 @@ export default function ExportPage() {
     board?.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedAnswer =
     answers?.find((row) => row.id === selectedAnswerId) ?? null;
+  // What the still shows: whatever is under the pointer, else the clicked row.
+  const stillAnswer =
+    answers?.find((row) => row.id === hoveredAnswerId) ?? selectedAnswer;
 
   // A different video needs a new `src` — changing it is what makes the
   // browser reload the file. The same video just needs the element's
@@ -459,12 +465,17 @@ export default function ExportPage() {
 
                   {/* Video and still side by side — the still is the real
                       keyframe and the video is the real position, so a mismatch
-                      between the two shows up at a glance. flex-wrap (not a
-                      viewport breakpoint) is what lets them stack: it is the
-                      panel's own width that is narrow, not necessarily the
-                      window's. */}
-                  <div className="flex flex-wrap gap-3 items-start">
-                    <div className="flex-1 min-w-[220px]">
+                      between the two shows up at a glance.
+
+                      Fixed height, and NO wrapping. This row used to be
+                      flex-wrap with a 360x240 still, so on a panel narrower
+                      than ~590px the still dropped onto its own line, the
+                      top grid row grew to ~570px of the panel's 660, and the
+                      answer list underneath was squeezed to about two rows.
+                      Both children now size to this row instead of dictating
+                      it, so the list always keeps the rest. */}
+                  <div className="flex gap-3 items-stretch h-[200px]">
+                    <div className="flex-1 min-w-0 flex flex-col">
                       {selectedAnswer ? (
                         videoSrc ? (
                           <video
@@ -474,7 +485,7 @@ export default function ExportPage() {
                             controls
                             autoPlay
                             preload="metadata"
-                            className="rounded-[8px] w-full"
+                            className="rounded-[8px] flex-1 min-h-0 w-full object-contain bg-black"
                             onLoadedMetadata={(e) => {
                               if (selectedAnswer) {
                                 e.currentTarget.currentTime =
@@ -491,11 +502,11 @@ export default function ExportPage() {
                           </p>
                         )
                       ) : (
-                        <div className="rounded-[8px] w-full aspect-video bg-proto-dark flex items-center justify-center">
+                        <div className="rounded-[8px] w-full flex-1 min-h-0 bg-proto-dark flex items-center justify-center">
                           <span className="text-[11px] text-neutral-400 px-2 text-center">
                             {answersLoading
                               ? "Đang tải…"
-                              : "Chọn một dòng bên dưới để xem video."}
+                              : "Bấm một dòng bên dưới để mở video. Trỏ chuột để xem nhanh ảnh frame."}
                           </span>
                         </div>
                       )}
@@ -506,12 +517,18 @@ export default function ExportPage() {
                         </div>
                       )}
                     </div>
-                    {selectedAnswer && (
-                      <FramePreview
-                        videoId={selectedAnswer.video_id}
-                        frameIdx={selectedAnswer.frames[0] ?? 0}
-                        size="large"
-                      />
+                    {stillAnswer && (
+                      <div className="h-full aspect-video shrink-0 relative">
+                        <FramePreview
+                          videoId={stillAnswer.video_id}
+                          frameIdx={stillAnswer.frames[0] ?? 0}
+                          size="fill"
+                        />
+                        <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white font-mono text-[10px] px-1 py-0.5 text-center">
+                          #{stillAnswer.rank} · frame {stillAnswer.frames[0] ?? 0}
+                          {stillAnswer.id !== selectedAnswer?.id && " · đang trỏ"}
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -547,6 +564,12 @@ export default function ExportPage() {
                     <div
                       key={row.id}
                       onClick={() => setSelectedAnswerId(row.id)}
+                      onMouseEnter={() => setHoveredAnswerId(row.id)}
+                      onMouseLeave={() =>
+                        setHoveredAnswerId((current) =>
+                          current === row.id ? null : current
+                        )
+                      }
                       className={`flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer ${
                         row.id === selectedAnswerId
                           ? "bg-proto-primary/10"

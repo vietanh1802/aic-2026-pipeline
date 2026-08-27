@@ -20,11 +20,17 @@ export default function FramePreview({
 }: {
   videoId: string;
   frameIdx: number;
-  size?: "thumb" | "large";
+  /** "fill" sizes to the parent box — for panels that own their height. */
+  size?: "thumb" | "large" | "fill";
   className?: string;
 }) {
   const keyframe = nearestKeyframeFor(videoId, frameIdx);
-  const box = size === "large" ? "w-[360px] h-[240px]" : "w-12 h-8";
+  const box =
+    size === "fill"
+      ? "w-full h-full"
+      : size === "large"
+      ? "w-[360px] h-[240px]"
+      : "w-12 h-8";
   const exact = keyframe?.frameIdx === frameIdx;
 
   return (
