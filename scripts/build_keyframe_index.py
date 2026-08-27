@@ -25,6 +25,13 @@ import os
 import sys
 from collections import defaultdict
 
+# The Vietnamese progress lines below are unprintable on a default Windows
+# console (cp1252), and the failure lands before any work is done. Reconfigure
+# rather than dropping the diacritics — every other script in this repo prints
+# Vietnamese too.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 META = os.environ.get(
     "AIC_META",
     os.path.join("backend", "app", "indexes", "keyframe_metadata.json"),

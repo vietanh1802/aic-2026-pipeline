@@ -118,7 +118,7 @@ export default function VideoPopup({
   const { task1, task2, task3, popTask1, popTask2, popTask3 } =
     useSubmitTasks();
   return (
-    <div className="fixed inset-0 bg-black/60 bg-opacity-60 flex items-center justify-center z-999 gap-x-5">
+    <div className="fixed inset-0 bg-black/60 bg-opacity-60 flex items-center justify-center z-[1000] gap-x-5">
       <div className="relative bg-white rounded-xl p-6 shadow-lg max-w-[800px] w-4/5 max-h-[95vh] overflow-y-auto">
         {/* Đề bài đi theo popup. Banner pin trên trang không cứu được ở đây:
             popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất. */}
@@ -136,7 +136,7 @@ export default function VideoPopup({
             </span>
           </div>
         )}
-        <div className="flex justify-between items-center mb-[15px]">
+        <div className="flex justify-between items-center mb-[15px] pr-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-[8px]">
               <span className="font-bold">Video ID :</span>
@@ -171,7 +171,7 @@ export default function VideoPopup({
         </div>
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 text-gray-500 hover:text-red-500 text-xl font-bold"
+          className="absolute top-2 right-2 z-30 flex h-10 w-10 items-center justify-center text-gray-500 hover:text-red-500 text-xl font-bold"
         >
           ×
         </button>

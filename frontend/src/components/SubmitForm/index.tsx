@@ -9,10 +9,11 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
-import { frameAt, frameRange } from "../../helpers/frameRange";
+import { frameAt, frameRange, spreadFrames } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import type { TrakeSlot } from "../VideoPopUp";
+import { useAuthStore } from "../../store/authStore";
 import { gapi } from "gapi-script";
 // ====== GOOGLE API CONFIG ======
 const CLIENT_ID =
@@ -91,6 +92,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
   const [, setSpreadsheetId] = useState<string | null>(null);
+  const me = useAuthStore((state) => state.user);
 
   const submissionFileName = useSubmitStore((state) => state.submissonFileName);
 
@@ -114,6 +116,79 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     }
     return frameRange(markIn ?? now, markOut ?? now, frame_detect)?.frame
       ?? here ?? Number.NaN;
+  };
+
+  // ── Trải K dòng ──────────────────────────────────────────────────────────
+  const [spreadK, setSpreadK] = useState<number>(5);
+  const [spreadNote, setSpreadNote] = useState<string | null>(null);
+  const [spreading, setSpreading] = useState<boolean>(false);
+
+  // Both edges marked, a real task open, and not TRAKE — a TRAKE row is N
+  // moments in one row, so K rows over an interval means nothing there. The
+  // mark strip is already disabled for TRAKE, so this can never light up.
+  const canSpread =
+    activeTask !== null &&
+    activeTask.type !== "trake" &&
+    // Same rule as the answer basket: a task with an owner who is not you is
+    // read-only at the UI layer. Boolean() first, because an unclaimed task has
+    // no owner and must not lock out the person holding it.
+    !(Boolean(activeTask.owner) && activeTask.owner?.id !== me?.id) &&
+    markIn !== null &&
+    markOut !== null &&
+    Number.isFinite(frame_detect) &&
+    frame_detect > 0;
+
+  const spreadOptions: DropdownOption[] = [
+    { id: 0, label: "3 dòng", value: "3" },
+    { id: 1, label: "5 dòng", value: "5" },
+    { id: 2, label: "7 dòng", value: "7" },
+    { id: 3, label: "9 dòng", value: "9" },
+  ];
+
+  /**
+   * Sequential on purpose, and not atomic.
+   *
+   * The rows are ranked in the order they arrive, and that order is the whole
+   * point — it is the bisection priority. Firing them together would rank them
+   * by whichever response came back first. A failure part-way leaves the rows
+   * that landed in place: they are correct rows, individually deletable, and
+   * silently rolling them back would be worse than saying how far it got.
+   */
+  const handleSpread = async () => {
+    if (!activeTask || markIn === null || markOut === null) {
+      return;
+    }
+    const range = frameRange(markIn, markOut, frame_detect);
+    if (!range) {
+      setSpreadNote(`Không tính được frame: thiếu fps cho ${videoId}`);
+      return;
+    }
+    const frames = spreadFrames(range.start, range.end, spreadK);
+    if (frames.length === 0) {
+      setSpreadNote("Khoảng đã ghim không có frame nào");
+      return;
+    }
+
+    setSpreading(true);
+    let added = 0;
+    try {
+      for (const frame of frames) {
+        await addAnswer(activeTask.id, {
+          video_id: videoId,
+          frames: [frame],
+          answer_text: activeTask.type === "qa" ? answer || null : null,
+        });
+        added += 1;
+        setSpreadNote(`${added}/${frames.length}…`);
+        onBasketChanged?.();
+      }
+      setSpreadNote(`Đã thêm ${added}/${frames.length} dòng`);
+    } catch (err) {
+      console.error("Trải K dòng dừng giữa chừng:", err);
+      setSpreadNote(`Đã thêm ${added}/${frames.length} dòng rồi dừng vì lỗi`);
+    } finally {
+      setSpreading(false);
+    }
   };
 
   const { task1, task2, task3, addTask1, addTask2, addTask3 } =
@@ -397,7 +472,6 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           )}
           <div className="flex gap-3 items-stretch">
             <Button
-              // leadingIcon={<img src="/send.svg" />}
               className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
               onClick={handleSubmit}
               size="xs"
@@ -409,7 +483,6 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
             </Button>
             {!trakeSlot && (
               <Button
-                // leadingIcon={<img src="/send.svg" />}
                 className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
                 size="xs"
                 onClick={createSheet}
@@ -418,6 +491,43 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               </Button>
             )}
           </div>
+
+          {/* Item 5 — one press instead of "add the edges, add the middle,
+              then subdivide", which is minutes of clicking per query. */}
+          {!trakeSlot && (
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-2 items-stretch">
+                <Dropdown
+                  options={spreadOptions}
+                  value={String(spreadK)}
+                  onChange={(opt) => setSpreadK(Number(opt.value))}
+                  dropDownWidth={96}
+                  dropDirection="up"
+                  size="sm"
+                />
+                <Button
+                  className="bg-proto-primary hover:opacity-90 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10"
+                  size="xs"
+                  onClick={() => void handleSpread()}
+                  disabled={!canSpread || spreading}
+                  title={
+                    canSpread
+                      ? "Trải đều K dòng trên đoạn đã ghim"
+                      : activeTask &&
+                        Boolean(activeTask.owner) &&
+                        activeTask.owner?.id !== me?.id
+                      ? "Giỏ của người khác — chỉ đọc"
+                      : "Ghim cả điểm đầu và điểm cuối trước"
+                  }
+                >
+                  {spreading ? spreadNote ?? "Đang thêm…" : `Trải ${spreadK} dòng`}
+                </Button>
+              </div>
+              {!spreading && spreadNote && (
+                <span className="text-[11px] text-proto-muted">{spreadNote}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </>

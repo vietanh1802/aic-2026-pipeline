@@ -17,6 +17,14 @@ interface SearchState {
 
   totalTime: number;
   setTotalTime: (totalTime: number) => void;
+
+  /**
+   * Videos the grid is narrowed to. Deliberately not cleared by setResults:
+   * the whole point is re-querying while watching the same few clips.
+   */
+  focusVideos: string[];
+  toggleFocusVideo: (videoId: string) => void;
+  clearFocus: () => void;
 }
 
 export const useSearchStore = create<SearchState>((set) => ({
@@ -26,6 +34,14 @@ export const useSearchStore = create<SearchState>((set) => ({
   setMaxDistance: (distance) => set({ maxDistance: distance }),
   totalTime: 0,
   setTotalTime: (totalTime) => set({ totalTime: totalTime }),
+  focusVideos: [],
+  toggleFocusVideo: (videoId) =>
+    set((state) => ({
+      focusVideos: state.focusVideos.includes(videoId)
+        ? state.focusVideos.filter((id) => id !== videoId)
+        : [...state.focusVideos, videoId],
+    })),
+  clearFocus: () => set({ focusVideos: [] }),
 }));
 
 type isQueryStore = {

@@ -11,6 +11,7 @@ import {
   type Keyframe,
   type KeyframeIndex,
 } from "./keyframeIndex";
+import { spreadTrakeSlots, type SpreadPick } from "./trakeSpread";
 
 const KEYFRAMES = INDEX as unknown as KeyframeIndex;
 
@@ -29,3 +30,12 @@ export function neighbourKeyframesFor(
 }
 
 export { KEYFRAMES };
+
+export function spreadTrakeSlotsFor(
+  video: string,
+  min: number,
+  max: number,
+  n: number
+): SpreadPick[] {
+  return spreadTrakeSlots(video, min, max, n, KEYFRAMES);
+}

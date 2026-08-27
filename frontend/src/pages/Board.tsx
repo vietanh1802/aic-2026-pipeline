@@ -31,7 +31,7 @@ const TYPE_LABEL: Record<BoardTask["type"], string> = {
 export default function Board({
   onOpenTask,
 }: {
-  onOpenTask: (task: BoardTask) => void;
+  onOpenTask: (task: BoardTask, options?: { openBasket?: boolean }) => void;
 }) {
   const me = useAuthStore((state) => state.user);
   const [board, setBoard] = useState<BoardResponse | null>(null);
@@ -187,10 +187,26 @@ export default function Board({
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono">
-                    <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
-                      {task.answer_count}
-                    </span>
-                    <span className="text-proto-muted">/{rowsPerQuery}</span>
+                    {task.owner ? (
+                      <button
+                        type="button"
+                        title={`Xem giỏ của ${task.owner.display_name}`}
+                        onClick={() => onOpenTask(task, { openBasket: true })}
+                        className="underline decoration-dotted underline-offset-2"
+                      >
+                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
+                          {task.answer_count}
+                        </span>
+                        <span className="text-proto-muted">/{rowsPerQuery}</span>
+                      </button>
+                    ) : (
+                      <>
+                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
+                          {task.answer_count}
+                        </span>
+                        <span className="text-proto-muted">/{rowsPerQuery}</span>
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     {!task.owner && (

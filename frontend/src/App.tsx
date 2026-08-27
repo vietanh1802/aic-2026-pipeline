@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
+import GotoFrame from "./components/GotoFrame";
 import Header from "./components/Header";
 import ProjectDescription from "./components/ProjectDescription";
 import QueryInput from "./components/QueryInput";
@@ -29,6 +30,7 @@ import {
   videoIdFromFrame,
 } from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
+import { filterByFocus } from "./helpers/focusFilter";
 import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
 import type {
@@ -87,6 +89,9 @@ function App({
   const results = useSearchStore((state) => state.results);
   const maxDistance = useSearchStore((state) => state.maxDistance);
   const totalTime = useSearchStore((state) => state.totalTime);
+  const focusVideos = useSearchStore((state) => state.focusVideos);
+  const toggleFocusVideo = useSearchStore((state) => state.toggleFocusVideo);
+  const clearFocus = useSearchStore((state) => state.clearFocus);
   const resultLimit = useQueryStore((state) => state.resultLimit);
   const topM = useQueryStore((state) => state.topM);
   const useRerank = useQueryStore((state) => state.useRerank);
@@ -246,6 +251,18 @@ function App({
     }));
   };
 
+  const resetTrakeEvent = (cardKey: string, index: number) => {
+    setTrakeSwaps((prev) => {
+      const card = prev[cardKey];
+      if (!card || !(index in card)) {
+        return prev;
+      }
+      const next = { ...card };
+      delete next[index];
+      return { ...prev, [cardKey]: next };
+    });
+  };
+
   const openTrakeEvent = (
     cardKey: string,
     index: number,
@@ -369,6 +386,17 @@ function App({
     }
   }, [results, hasQueried, setHasQueried, queryText, isLoading]);
 
+  // Everything below renders `shownResults`, never `results`, so the grid, the
+  // grouping and the count all agree about what is on screen.
+  //
+  // Memoised because it feeds the grouping effect's dependency array. Unmemoised,
+  // filterByFocus hands back a fresh array on every render whenever a focus is
+  // active, so the effect re-ran and re-set groupedResult forever.
+  const shownResults = useMemo(
+    () => filterByFocus(results, focusVideos),
+    [results, focusVideos]
+  );
+
   // Nhãn E1…EN là chính các đoạn người dùng gõ, tách đúng luật của
   // preprocess.py:_split_query_text.
   const queryParts = splitQueryParts(queryText);
@@ -377,13 +405,10 @@ function App({
     Record<string, SearchResult[]>
   >({});
   useEffect(() => {
-    if (sortFrameBy == "video_id" && results) {
-      const grouped = formatResultByVideoID(results);
-      setgroupedResult(grouped);
-      console.log(grouped);
-      console.log(Object.keys(grouped).length);
+    if (sortFrameBy == "video_id" && shownResults) {
+      setgroupedResult(formatResultByVideoID(shownResults));
     }
-  }, [sortFrameBy, results]);
+  }, [sortFrameBy, shownResults]);
 
   return (
     <div className="relative min-h-screen bg-proto-canvas p-2">
@@ -409,17 +434,25 @@ function App({
                   : "frames"
               }
               queryParts={queryParts.length}
+              filtered={
+                focusVideos.length > 0
+                  ? { shown: shownResults.length, total: results.length }
+                  : undefined
+              }
             />
           </div>
         )}
-        <div
-          className={`absolute top-0 right-0 z-999 max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}
-          title={backendHealth.detail}
-        >
-          <span>{backendHealth.message}</span>
-          {backendHealth.detail && (
-            <span className="ml-2 font-normal">{backendHealth.detail}</span>
-          )}
+        <div className="absolute top-0 right-0 z-999 flex items-start gap-2">
+          <GotoFrame />
+          <div
+            className={`max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}
+            title={backendHealth.detail}
+          >
+            <span>{backendHealth.message}</span>
+            {backendHealth.detail && (
+              <span className="ml-2 font-normal">{backendHealth.detail}</span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -477,10 +510,41 @@ function App({
         />
       )}
 
+      {focusVideos.length > 0 && (
+        <div className="max-w-[98%] mx-auto mb-2 flex flex-wrap items-center gap-1.5 font-baloo">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+            Đang soi
+          </span>
+          {focusVideos.map((video) => (
+            <span
+              key={video}
+              className="flex items-center gap-1 rounded-full border border-proto-primary bg-proto-primary/10 pl-2.5 text-[12px] font-mono text-proto-primary-active"
+            >
+              {video}
+              <button
+                type="button"
+                title={`Bỏ lọc ${video}`}
+                onClick={() => toggleFocusVideo(video)}
+                className="flex h-10 w-10 items-center justify-center font-bold"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={clearFocus}
+            className="text-[12px] px-2.5 py-1 rounded-[7px] border border-proto-line text-proto-muted"
+          >
+            Xoá lọc
+          </button>
+        </div>
+      )}
+
       {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
         <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[200px]">
           <FrameDisplay
-            results={results}
+            results={shownResults}
             maxDistance={maxDistance}
             isLoading={isLoading}
             onUseAsAnchor={handleUseAsAnchor}
@@ -489,6 +553,8 @@ function App({
                 ? handleAddToBasket
                 : undefined
             }
+            onToggleFocus={toggleFocusVideo}
+            focusVideos={focusVideos}
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
@@ -506,9 +572,25 @@ function App({
               key={key}
               className="border border-proto-line bg-white m-[15px] mb-[30px] p-[10px] py-[20px] rounded-[8px] flex flex-col"
             >
-              <div className="pl-[14px] mb-[12px] flex text-lg">
+              <div className="pl-[14px] mb-[12px] flex items-center text-lg">
                 <span className="font-bold">Video ID :</span>
                 <span className="ml-[10px]">{key}</span>
+                <button
+                  type="button"
+                  title={
+                    focusVideos.includes(key)
+                      ? "Bỏ lọc video này"
+                      : "Chỉ xem video này"
+                  }
+                  onClick={() => toggleFocusVideo(key)}
+                  className={`ml-2 flex h-10 w-10 items-center justify-center rounded-[6px] border-2 ${
+                    focusVideos.includes(key)
+                      ? "bg-proto-primary border-proto-primary"
+                      : "bg-[#EFEFEF] border-[#E3E3E3]"
+                  }`}
+                >
+                  🎯
+                </button>
               </div>
               <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6">
                 <FrameDisplay
@@ -521,6 +603,8 @@ function App({
                 ? handleAddToBasket
                 : undefined
             }
+                  onToggleFocus={toggleFocusVideo}
+                  focusVideos={focusVideos}
                         onClick={(result) => {
                     setframeId(frameIdFromName(result.name));
                     setVideoUrl(videoIdFromFrame(result.frame));
@@ -572,6 +656,7 @@ function App({
               onSwap={swapTrakeEvent}
               onOpenEvent={openTrakeEvent}
               onCommit={activeTask?.type === "trake" ? commitTrakeRow : undefined}
+              onResetSlot={resetTrakeEvent}
             />
           )}
         </div>

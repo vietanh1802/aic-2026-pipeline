@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { frameAt, frameRange } from "./frameRange";
+import { frameAt, frameRange, spreadFrames } from "./frameRange";
 
 describe("frameAt", () => {
   it("survives the frame -> seconds -> frame round trip", () => {
@@ -68,5 +68,52 @@ describe("frameRange", () => {
 
   it("returns null when a marker is not a number", () => {
     expect(frameRange(Number.NaN, 104, 25)).toBeNull();
+  });
+});
+
+describe("spreadFrames", () => {
+  it("emits the edges first, then the middle, then the quarters", () => {
+    // Rank order is submission order, and R@1..R@100 is what is scored, so the
+    // most defensible guesses have to come out first.
+    expect(spreadFrames(0, 8, 9)).toEqual([0, 8, 4, 2, 6, 1, 3, 5, 7]);
+  });
+
+  it("stops at k", () => {
+    expect(spreadFrames(0, 1000, 5)).toEqual([0, 1000, 500, 250, 750]);
+  });
+
+  it("shrinks to the frames that exist rather than padding", () => {
+    // Three frames in the interval and five asked for: three rows, not five.
+    expect(spreadFrames(100, 102, 5)).toEqual([100, 102, 101]);
+  });
+
+  it("returns one frame when both edges are the same", () => {
+    expect(spreadFrames(500, 500, 7)).toEqual([500]);
+  });
+
+  it("returns just the edges for k = 2", () => {
+    expect(spreadFrames(10, 20, 2)).toEqual([10, 20]);
+  });
+
+  it("returns just the start for k = 1", () => {
+    expect(spreadFrames(10, 20, 1)).toEqual([10]);
+  });
+
+  it("returns nothing for k of zero or less", () => {
+    expect(spreadFrames(10, 20, 0)).toEqual([]);
+    expect(spreadFrames(10, 20, -3)).toEqual([]);
+  });
+
+  it("reads a reversed interval as the same interval", () => {
+    expect(spreadFrames(20, 10, 5)).toEqual(spreadFrames(10, 20, 5));
+  });
+
+  it("never repeats a frame", () => {
+    const frames = spreadFrames(0, 4, 20);
+    expect(new Set(frames).size).toBe(frames.length);
+  });
+
+  it("returns nothing when an edge is not a number", () => {
+    expect(spreadFrames(Number.NaN, 20, 5)).toEqual([]);
   });
 });

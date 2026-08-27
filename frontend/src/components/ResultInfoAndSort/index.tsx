@@ -11,6 +11,8 @@ type ResultInfoAndSortProps = {
   // quyết (discovery_score) nên không có gì để người dùng sắp lại.
   unit?: "frames" | "videos";
   queryParts?: number;
+  /** Set while a focus filter is on, so the count cannot pass for a bad search. */
+  filtered?: { shown: number; total: number };
 };
 
 const sortOptions: DropdownOption[] = [
@@ -25,6 +27,7 @@ export default function ResultInfoAndSort({
   onSortChange,
   unit = "frames",
   queryParts,
+  filtered,
 }: ResultInfoAndSortProps) {
   const isVideos = unit === "videos";
   return (
@@ -38,9 +41,25 @@ export default function ResultInfoAndSort({
           </>
         ) : (
           <>
-            Searched Results{" "}
-            <span className="font-bold">({numberOfResults} Frames Matched)</span>{" "}
-            in {totalTime.toFixed(1)}s
+            {filtered ? (
+              <>
+                <span className="font-bold">
+                  {filtered.shown}/{filtered.total} kết quả
+                </span>{" "}
+                <span className="text-proto-primary-active font-bold">
+                  (đang lọc)
+                </span>{" "}
+                in {totalTime.toFixed(1)}s
+              </>
+            ) : (
+              <>
+                Searched Results{" "}
+                <span className="font-bold">
+                  ({numberOfResults} Frames Matched)
+                </span>{" "}
+                in {totalTime.toFixed(1)}s
+              </>
+            )}
           </>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  addAnswer,
   autofillAnswers,
   deleteAnswer,
   getAnswers,
@@ -11,6 +12,9 @@ import {
 import { ApiRequestError } from "../../api/base";
 import type { BoardTask } from "../../api/board";
 import Button from "../Button";
+import FramePreview from "../FramePreview";
+import { parseManualFrames } from "../../helpers/manualAnswer";
+import KeyframeFPS from "../../mapping/fps_map.json";
 import { useAuthStore } from "../../store/authStore";
 
 // Final Score = (R@1 + R@5 + R@20 + R@50 + R@100) / 5, so there are exactly
@@ -31,16 +35,20 @@ const ORIGIN_STRIPE: Record<string, string> = {
   auto: "border-l-transparent",
 };
 
+const VIDEO_IDS = Object.keys(KeyframeFPS as Record<string, number>);
+
 export default function AnswerBasket({
   task,
   rowsPerQuery,
   open,
   onClose,
+  onOpenVideo,
 }: {
   task: BoardTask | null;
   rowsPerQuery: number;
   open: boolean;
   onClose: () => void;
+  onOpenVideo: (videoId: string, frameIdx: number) => void;
 }) {
   const me = useAuthStore((state) => state.user);
   const [rows, setRows] = useState<AnswerRow[]>([]);
@@ -50,6 +58,12 @@ export default function AnswerBasket({
   // What is in the box, which may briefly be empty or half-typed. `step` only
   // ever holds a value the server would accept.
   const [stepText, setStepText] = useState("25");
+  // ── Nhập tay ─────────────────────────────────────────────────────────────
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualVideo, setManualVideo] = useState("");
+  const [manualFrames, setManualFrames] = useState("");
+  const [manualText, setManualText] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!task) return;
@@ -77,6 +91,10 @@ export default function AnswerBasket({
     return null;
   }
 
+  // Not `task.owner?.id !== me?.id`: an unclaimed task has no owner, and that
+  // form would lock the holder out of a basket nobody owns.
+  const readOnly = Boolean(task.owner) && task.owner?.id !== me?.id;
+
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
@@ -88,6 +106,31 @@ export default function AnswerBasket({
     } finally {
       setBusy(false);
     }
+  };
+
+  const submitManual = async () => {
+    if (!VIDEO_IDS.includes(manualVideo.trim())) {
+      setManualError(`Không có video ${manualVideo.trim() || "—"}`);
+      return;
+    }
+    const parsed = parseManualFrames(
+      manualFrames,
+      task.type === "trake" ? task.n_events ?? 1 : 1
+    );
+    if ("error" in parsed) {
+      setManualError(parsed.error);
+      return;
+    }
+    setManualError(null);
+    await act(() =>
+      addAnswer(task.id, {
+        video_id: manualVideo.trim(),
+        frames: parsed.frames,
+        answer_text: task.type === "qa" ? manualText || null : null,
+      })
+    );
+    setManualFrames("");
+    setManualText("");
   };
 
   const anchor = rows[0];
@@ -114,7 +157,7 @@ export default function AnswerBasket({
           <button
             type="button"
             onClick={onClose}
-            className="text-[#c64545] hover:bg-[#c64545]/15 rounded-full px-3 py-1 font-bold"
+            className="flex h-10 w-10 items-center justify-center text-[#c64545] hover:bg-[#c64545]/15 rounded-full font-bold"
           >
             ×
           </button>
@@ -122,6 +165,7 @@ export default function AnswerBasket({
 
         {/* Autofill — a panel rather than a bare button, because the step
             decides the coverage and nobody can pick it blind. */}
+        {!readOnly && (
         <div className="px-5 py-3 border-b border-proto-line bg-proto-soft">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
@@ -197,6 +241,79 @@ export default function AnswerBasket({
             </span>
           </div>
         </div>
+        )}
+
+        {/* Item 7 — the way in when search found nothing at all. */}
+        {!readOnly && (
+        <div className="px-5 py-2 border-b border-proto-line">
+          <button
+            type="button"
+            onClick={() => setManualOpen((open) => !open)}
+            className="text-[12px] font-semibold text-proto-primary-active"
+          >
+            {manualOpen ? "− Đóng nhập tay" : "+ Nhập tay"}
+          </button>
+
+          {manualOpen && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                list="basket-video-ids"
+                value={manualVideo}
+                onChange={(event) => {
+                  setManualVideo(event.target.value);
+                  setManualError(null);
+                }}
+                placeholder="L01_V001"
+                className="w-[130px] px-2 py-1 rounded-[6px] border border-proto-line bg-white font-mono text-xs"
+              />
+              <datalist id="basket-video-ids">
+                {VIDEO_IDS.map((id) => (
+                  <option key={id} value={id} />
+                ))}
+              </datalist>
+
+              <input
+                value={manualFrames}
+                onChange={(event) => {
+                  setManualFrames(event.target.value);
+                  setManualError(null);
+                }}
+                placeholder={
+                  task.type === "trake"
+                    ? `${task.n_events ?? 1} mốc, cách nhau dấu phẩy`
+                    : "số frame"
+                }
+                className="w-[200px] px-2 py-1 rounded-[6px] border border-proto-line bg-white font-mono text-xs"
+              />
+
+              {task.type === "qa" && (
+                <input
+                  value={manualText}
+                  onChange={(event) => setManualText(event.target.value)}
+                  placeholder="đáp án"
+                  className="flex-1 min-w-[120px] px-2 py-1 rounded-[6px] border border-proto-line bg-white text-xs"
+                />
+              )}
+
+              <Button size="xs" disabled={busy} onClick={() => void submitManual()}>
+                Thêm dòng
+              </Button>
+
+              {manualError && (
+                <span className="w-full text-[11px] text-[#c64545]">
+                  {manualError}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        )}
+
+        {readOnly && (
+          <p className="px-5 py-2 border-b border-proto-line bg-proto-soft text-[12px] text-proto-muted">
+            Đang xem giỏ của <b className="text-proto-ink">{task.owner?.display_name}</b> — chỉ đọc.
+          </p>
+        )}
 
         {error && <p className="text-[#c64545] text-sm px-5 pt-2">{error}</p>}
 
@@ -217,10 +334,30 @@ export default function AnswerBasket({
                 </div>
               )}
               <div
-                className={`flex items-center gap-2 px-2 py-1 rounded-[7px] bg-white border border-proto-line border-l-[3px] mb-1 text-xs ${stripe(
+                className={`group relative flex items-center gap-2 px-2 py-0.5 rounded-[7px] bg-white border border-proto-line border-l-[3px] mb-1 text-xs cursor-pointer ${stripe(
                   row
                 )} ${index === 0 ? "bg-proto-primary/10" : ""}`}
+                onClick={() => onOpenVideo(row.video_id, row.frames[0])}
+                title={
+                  row.origin === "auto"
+                    ? "Dòng tự sinh"
+                    : `Thêm bởi ${row.created_by?.display_name ?? "—"}`
+                }
               >
+                <FramePreview
+                  videoId={row.video_id}
+                  frameIdx={row.frames[0]}
+                />
+                {/* Rendered always, revealed on hover: no fetch on hover, and
+                    the browser has the file from the thumbnail already. */}
+                <div className="pointer-events-none absolute left-14 top-0 z-[1000] hidden group-hover:block">
+                  <FramePreview
+                    videoId={row.video_id}
+                    frameIdx={row.frames[0]}
+                    size="large"
+                    className="shadow-2xl border-2 border-white"
+                  />
+                </div>
                 <i className="not-italic w-6 text-right font-mono font-extrabold text-proto-muted">
                   {row.rank}
                 </i>
@@ -230,9 +367,11 @@ export default function AnswerBasket({
                 </span>
                 {task.type === "qa" && (
                   <input
-                    className="flex-1 min-w-[80px] px-2 py-0.5 rounded-[6px] bg-proto-soft border border-proto-line"
+                    className="flex-1 min-w-[80px] px-2 py-0.5 rounded-[6px] bg-proto-soft border border-proto-line disabled:opacity-60 disabled:cursor-not-allowed"
                     defaultValue={row.answer_text ?? ""}
                     placeholder="đáp án"
+                    disabled={readOnly}
+                    onClick={(event) => event.stopPropagation()}
                     onBlur={(e) => {
                       if (e.target.value !== (row.answer_text ?? "")) {
                         void act(() =>
@@ -245,27 +384,34 @@ export default function AnswerBasket({
                     }}
                   />
                 )}
-                <span className="ml-auto flex gap-1">
-                  {index > 0 && (
-                    <button
-                      type="button"
-                      title="Đưa lên hạng 1"
-                      className="px-1.5 text-proto-muted hover:text-proto-primary-active"
-                      onClick={() =>
-                        void act(() => reorderAnswer(task.id, { answer_id: row.id }))
-                      }
-                    >
-                      ↑1
-                    </button>
+                <span
+                  className="ml-auto flex gap-1"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {!readOnly && (
+                    <>
+                      {index > 0 && (
+                        <button
+                          type="button"
+                          title="Đưa lên hạng 1"
+                          className="flex h-10 w-10 items-center justify-center text-proto-muted hover:text-proto-primary-active"
+                          onClick={() =>
+                            void act(() => reorderAnswer(task.id, { answer_id: row.id }))
+                          }
+                        >
+                          ↑1
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        title="Xoá dòng"
+                        className="flex h-10 w-10 items-center justify-center text-proto-muted hover:text-[#c64545]"
+                        onClick={() => void act(() => deleteAnswer(row.id))}
+                      >
+                        ×
+                      </button>
+                    </>
                   )}
-                  <button
-                    type="button"
-                    title="Xoá dòng"
-                    className="px-1.5 text-proto-muted hover:text-[#c64545]"
-                    onClick={() => void act(() => deleteAnswer(row.id))}
-                  >
-                    ×
-                  </button>
                 </span>
               </div>
             </div>

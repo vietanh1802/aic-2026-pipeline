@@ -4,6 +4,9 @@ import { deleteAnswer, getAnswers, type AnswerRow } from "../../api/answers";
 import { ApiRequestError } from "../../api/base";
 import type { BoardTask } from "../../api/board";
 import Button from "../Button";
+import FramePreview from "../FramePreview";
+import { useAuthStore } from "../../store/authStore";
+import { usePopupStore } from "../../store/popupStore";
 
 /**
  * The task's real answers, beside the video, refreshed the moment one is added.
@@ -25,9 +28,13 @@ export default function AnswerPanel({
   reloadKey: number;
   onChanged: () => void;
 }) {
+  const me = useAuthStore((state) => state.user);
+  const openPopup = usePopupStore((state) => state.open);
+  const readOnly = Boolean(task.owner) && task.owner?.id !== me?.id;
   const [rows, setRows] = useState<AnswerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hovered, setHovered] = useState<AnswerRow | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -60,7 +67,7 @@ export default function AnswerPanel({
   };
 
   return (
-    <div className="w-1/5 h-[70%] bg-white rounded-sm p-4 shadow-lg flex flex-col font-baloo">
+    <div className="relative w-1/5 h-[70%] bg-white rounded-sm p-4 shadow-lg flex flex-col font-baloo">
       <div className="flex items-center justify-between mb-2">
         <b className="text-sm text-proto-ink font-mono">Task {task.code}</b>
         <span className="font-mono text-sm text-proto-ink">{rows.length}</span>
@@ -77,10 +84,19 @@ export default function AnswerPanel({
         {rows.map((row, index) => (
           <div
             key={row.id}
-            className={`flex items-baseline gap-2 px-1.5 py-1 rounded-[6px] border border-proto-line mb-1 text-[11px] ${
+            className={`group relative flex items-baseline gap-2 px-1.5 py-1 rounded-[6px] border border-proto-line mb-1 text-[11px] cursor-pointer ${
               index === 0 ? "bg-proto-primary/10" : "bg-proto-soft"
             }`}
+            onClick={() => openPopup(row.video_id, row.frames[0])}
+            onMouseEnter={() => setHovered(row)}
+            onMouseLeave={() => setHovered(null)}
+            title={
+              row.origin === "auto"
+                ? "Dòng tự sinh"
+                : `Thêm bởi ${row.created_by?.display_name ?? "—"}`
+            }
           >
+            <FramePreview videoId={row.video_id} frameIdx={row.frames[0]} />
             <i className="not-italic w-5 text-right font-mono font-extrabold text-proto-muted">
               {row.rank}
             </i>
@@ -92,10 +108,27 @@ export default function AnswerPanel({
         ))}
       </div>
 
+      {hovered && (
+        <div className="pointer-events-none absolute right-full top-0 z-[1000] mr-2">
+          <FramePreview
+            videoId={hovered.video_id}
+            frameIdx={hovered.frames[0]}
+            size="large"
+            className="shadow-2xl border-2 border-white"
+          />
+        </div>
+      )}
+
       <div className="flex justify-end mt-3">
-        <Button size="xs" disabled={busy || !last} onClick={() => void removeLast()}>
-          Xoá dòng cuối
-        </Button>
+        {readOnly ? (
+          <span className="text-[11px] text-proto-muted">
+            Giỏ của {task.owner?.display_name} — chỉ đọc
+          </span>
+        ) : (
+          <Button size="xs" disabled={busy || !last} onClick={() => void removeLast()}>
+            Xoá dòng cuối
+          </Button>
+        )}
       </div>
     </div>
   );

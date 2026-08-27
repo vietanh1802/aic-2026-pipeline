@@ -2,6 +2,7 @@ import type { SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
+import { videoOf } from "../../helpers/focusFilter";
 
 type FrameDisplayProps2 = {
   results: SearchResult[];
@@ -16,6 +17,9 @@ type FrameDisplayProps2 = {
   // MỚI — optional như onUseAsAnchor: không truyền thì nút không hiện, nên
   // mọi chỗ gọi FrameDisplay chưa cập nhật vẫn chạy nguyên.
   onAddToBasket?: (result: SearchResult) => void;
+  // MỚI — optional like the two above. Narrows the grid to this video.
+  onToggleFocus?: (videoId: string) => void;
+  focusVideos?: string[];
 };
 
 export function extractTimestamp(filename: string): string {
@@ -81,6 +85,8 @@ export default function FrameDisplay({
   onClick,
   onUseAsAnchor,
   onAddToBasket,
+  onToggleFocus,
+  focusVideos = [],
 }: FrameDisplayProps2) {
   const timestamp = results.map(frameTimestamp);
   // The ramp is normalised across the results actually on screen. Raw distance
@@ -154,6 +160,26 @@ export default function FrameDisplay({
                       }}
                     >
                       ⏱
+                    </div>
+                  )}
+                  {onToggleFocus && (
+                    <div
+                      className={`absolute top-0 right-0 mr-1 mt-9 hover:cursor-pointer p-1 w-fit h-fit rounded-[4px] border-2 ${
+                        focusVideos.includes(videoOf(result))
+                          ? "bg-proto-primary border-proto-primary"
+                          : "bg-[#EFEFEF] border-[#E3E3E3]"
+                      }`}
+                      title={
+                        focusVideos.includes(videoOf(result))
+                          ? "Bỏ lọc video này"
+                          : "Chỉ xem video này"
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleFocus(videoOf(result));
+                      }}
+                    >
+                      🎯
                     </div>
                   )}
                   <div className="absolute bottom-0 right-0 mr-1 mb-1 hover:cursor-pointer p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">

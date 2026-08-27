@@ -3,6 +3,8 @@ import { useState } from "react";
 import KeyframeImg from "../KeyframeImg";
 import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
 import { frameGap } from "../../helpers/candidates";
+import { spreadTrakeSlotsFor } from "../../helpers/keyframes";
+import { keyframeUrl } from "../../helpers/videoSource";
 import type {
   TemporalCandidate,
   TemporalCandidateResult,
@@ -135,7 +137,7 @@ function Lightbox({
           <button
             type="button"
             onClick={onClose}
-            className="text-white/80 hover:text-white text-2xl leading-none px-2"
+            className="flex h-10 w-10 items-center justify-center text-white/80 hover:text-white text-2xl leading-none"
           >
             ✕
           </button>
@@ -500,6 +502,7 @@ function TrakeCard({
   onSwap,
   onOpenEvent,
   onCommit,
+  onResetSlot,
 }: {
   result: TrakeCandidateResult;
   rank: number;
@@ -510,6 +513,8 @@ function TrakeCard({
   onOpenEvent?: (eventIndex: number, pick: EventPick) => void;
   /** Write the whole line as one answer. Undefined hides the button. */
   onCommit?: (video: string, frames: number[]) => void;
+  /** Drop this slot's override and go back to the DP's pick. */
+  onResetSlot?: (eventIndex: number) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [lightboxAt, setLightboxAt] = useState<number | null>(null);
@@ -529,6 +534,33 @@ function TrakeCard({
   const missing = frames.findIndex((frame) => typeof frame !== "number");
   const complete = missing === -1;
 
+  // Every frame this card knows about, main picks and candidate pools alike —
+  // the widest window the backend thinks the action lives in.
+  const spreadEven = () => {
+    const known = slots
+      .flatMap((index) => [events[index], ...poolAt(index)])
+      .map((candidate) => candidate?.frame_idx)
+      .filter((frame): frame is number => typeof frame === "number");
+    if (known.length === 0) {
+      return;
+    }
+    const picks = spreadTrakeSlotsFor(
+      result.video ?? "",
+      Math.min(...known),
+      Math.max(...known),
+      count
+    );
+    picks.forEach((pick, index) =>
+      onSwap(index, {
+        name: pick.name,
+        url: pick.byHand ? "" : keyframeUrl(pick.name),
+        frame_idx: pick.frameIdx,
+        timestamp: "",
+        byHand: pick.byHand,
+      })
+    );
+  };
+
   return (
     <div
       className={`rounded-[10px] bg-white overflow-hidden mb-2 border ${
@@ -545,21 +577,31 @@ function TrakeCard({
         onToggle={() => setOpen((value) => !value)}
         openLabel="Ứng viên từng mốc"
         action={
-          onCommit ? (
+          <span className="flex items-center gap-1.5">
             <button
               type="button"
-              disabled={!complete}
-              title={
-                complete
-                  ? "Thêm cả hàng vào giỏ thành một dòng"
-                  : `Thiếu mốc E${missing + 1}`
-              }
-              onClick={() => onCommit(result.video ?? "", frames as number[])}
-              className="text-[11.5px] font-bold px-2.5 py-1 rounded-[7px] border border-proto-primary bg-proto-primary text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Rải đều N mốc trên toàn bộ khoảng ứng viên rồi chỉnh tay"
+              onClick={spreadEven}
+              className="text-[11.5px] font-bold px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-proto-body"
             >
-              Chọn ▸
+              Trải đều
             </button>
-          ) : null
+            {onCommit && (
+              <button
+                type="button"
+                disabled={!complete}
+                title={
+                  complete
+                    ? "Thêm cả hàng vào giỏ thành một dòng"
+                    : `Thiếu mốc E${missing + 1}`
+                }
+                onClick={() => onCommit(result.video ?? "", frames as number[])}
+                className="text-[11.5px] font-bold px-2.5 py-1 rounded-[7px] border border-proto-primary bg-proto-primary text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Chọn ▸
+              </button>
+            )}
+          </span>
         }
       />
 
@@ -628,6 +670,19 @@ function TrakeCard({
                       tay
                     </span>
                   )}
+
+                  {/* Swapping used to be one-way: try an alternative and the
+                      DP's pick was gone. */}
+                  {onResetSlot && swaps[index] !== undefined && (
+                    <button
+                      type="button"
+                      title="Trả về lựa chọn của DP"
+                      onClick={() => onResetSlot(index)}
+                      className="absolute top-0 right-0 mr-1 mt-1 flex h-10 w-10 items-center justify-center rounded-[4px] bg-[#EFEFEF] hover:bg-white border-2 border-[#E3E3E3] text-[11px] font-bold"
+                    >
+                      ↩ DP
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-0.5 px-1.5 py-1 text-[10px] text-proto-muted">
@@ -687,6 +742,7 @@ export function TrakeCandidates({
   onSwap,
   onOpenEvent,
   onCommit,
+  onResetSlot,
 }: {
   results: TrakeCandidateResult[];
   parts: string[];
@@ -699,6 +755,7 @@ export function TrakeCandidates({
     video: string
   ) => void;
   onCommit?: (video: string, frames: number[]) => void;
+  onResetSlot?: (cardKey: string, eventIndex: number) => void;
 }) {
   return (
     <div>
@@ -719,6 +776,11 @@ export function TrakeCandidates({
                 : undefined
             }
             onCommit={onCommit}
+            onResetSlot={
+              onResetSlot
+                ? (eventIndex) => onResetSlot(key, eventIndex)
+                : undefined
+            }
           />
         );
       })}
