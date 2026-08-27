@@ -9,6 +9,7 @@ import ResultInfoAndSort, {
   type SortType,
 } from "./components/ResultInfoAndSort";
 import TaskBrief from "./components/TaskBrief";
+import OcrCountBanner from "./components/OcrCountBanner";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore } from "./store/queryStore";
 import { usePopupStore } from "./store/popupStore";
@@ -98,6 +99,7 @@ function App({
   const resultLimit = useQueryStore((state) => state.resultLimit);
   const topM = useQueryStore((state) => state.topM);
   const useRerank = useQueryStore((state) => state.useRerank);
+  const ocrStripDiacritics = useQueryStore((state) => state.ocrStripDiacritics);
   const searchType = useQueryStore((state) => state.searchType);
   const singleModel = useQueryStore((state) => state.singleModel);
   const [showPopup, setShowPopup] = useState<boolean>(false);
@@ -206,6 +208,15 @@ function App({
   const [trakeCandidates, setTrakeCandidates] = useState<
     TrakeCandidateResult[]
   >([]);
+
+  // The OCR route's three counts. Kept out of useSearchStore because that
+  // store is shared with the visual route, which has no notion of "how many
+  // images contain this text".
+  const [ocrCounts, setOcrCounts] = useState<{
+    phrase: number;
+    allWords: number;
+    searched: number;
+  } | null>(null);
 
   // ── TRAKE line ───────────────────────────────────────────────────────────
   // Which frame each event of each card is currently standing on, when it is
@@ -340,6 +351,26 @@ function App({
         } else {
           setTrakeCandidates(res.results ?? []);
         }
+        return;
+      }
+
+      if (searchType === "ocr") {
+        // Pure lexical route - no model call, no blending with the visual
+        // route. Results share the SearchResult shape, so they go straight
+        // into useSearchStore and the existing grid renders them as-is.
+        const res = await videoSearchApi.ocrSearch(
+          queryText,
+          Number(resultLimit),
+          ocrStripDiacritics
+        );
+        useSearchStore.getState().setTotalTime(res.processing_time);
+        useSearchStore.getState().setResults(res.results);
+        useSearchStore.getState().setMaxDistance(res.max_distance);
+        setOcrCounts({
+          phrase: res.phrase_matches,
+          allWords: res.all_word_matches,
+          searched: res.searched_frames,
+        });
         return;
       }
 
@@ -529,6 +560,12 @@ function App({
           it used to crowd the logo/version badge there and wrap onto a
           second line. Condition is `hasQueried` alone (not sortFrameBy or
           searchType) so it shows for every search type, exactly as before. */}
+      {hasQueried && searchType === "ocr" && ocrCounts && (
+        <div className="max-w-[98%] mx-auto mb-2">
+          <OcrCountBanner counts={ocrCounts} shown={results.length} />
+        </div>
+      )}
+
       {hasQueried && (
         <div className="max-w-[98%] mx-auto mb-2">
           <ResultInfoAndSort

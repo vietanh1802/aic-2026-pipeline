@@ -9,13 +9,22 @@ Endpoints:
   GET  /status            Còn thiếu file gì
   GET  /health            Kiểm tra sống
 
-Đã BỎ toàn bộ endpoint cũ: /text-search, /text-no-agent-search, /faiss-search,
-/ocr-search, /combined-search, /filter-search. Chúng đọc temp.json với các
-trường content/ocr/object/color/action của mùa trước — pipeline hiện tại không
-sinh ra file đó, nên chúng luôn trả rỗng mà vẫn HTTP 200 (thất bại im lặng).
+  POST /ocr-search        Tìm bằng chữ Vintern OCR đọc được trên màn hình
 
-Tuyến từ vựng (OCR / ASR / caption / tag → BM25 → RRF) CHƯA có ở đây. Đó là
-nửa dưới của sơ đồ online, sẽ thêm sau khi chốt Q5/Q6.
+Đã BỎ các endpoint cũ: /text-search, /text-no-agent-search, /faiss-search,
+/combined-search, /filter-search. Chúng đọc temp.json với các trường
+content/ocr/object/color/action của mùa trước — pipeline hiện tại không sinh ra
+file đó, nên chúng luôn trả rỗng mà vẫn HTTP 200 (thất bại im lặng).
+
+/ocr-search is BACK, but rewritten from scratch on app/ocr_search.py, reading
+indexes/ocr_clean.json (360,531 keyframes, 179,728 of them carrying text)
+rather than the old temp.json.
+
+The OCR route runs ON ITS OWN and is not blended with the visual route. That is
+deliberate: over the 25 preliminary queries (notebook 78), 13 of 25 answer
+frames carry no text at all, while distinctive text puts the right video first
+immediately — an RRF blend would smear out exactly that advantage. Blending
+(OCR / ASR / caption / tag -> BM25 -> RRF) waits until Q5/Q6 are settled.
 """
 
 import os
@@ -42,6 +51,11 @@ from app.routers import (
     rounds as rounds_router,
 )
 from app.version import SHORT_COMMIT, VERSION
+from app import ocr_search as ocr_route
+# Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
+# rather than mutating it, so `from ... import _name2meta` would hold the empty
+# startup dict forever and every OCR result would lose video/timestamp.
+from app import preprocess as _pp
 from app.preprocess import (
     ensemble_search,
     single_model_search,
@@ -104,6 +118,47 @@ class SingleSearchRequest(EnsembleSearchRequest):
             "query": "lễ trao kinh phí hỗ trợ trẻ em mồ côi",
             "model": "beit3", "limit": 100, "top_m": 50, "use_rerank": True,
         }}
+
+
+class OcrSearchRequest(BaseModel):
+    query: str  = Field(..., min_length=1,
+                        description="Cụm chữ nhìn thấy trên màn hình")
+    limit: int  = Field(100, ge=1, le=2000, description="Số dòng trả về")
+    strip_diacritics: bool = Field(
+        True,
+        description="Bỏ dấu cả 2 phía trước khi so. Bật thì bắt được cả lỗi dấu "
+                    "của OCR (HỂ THAO ~ THỂ THAO); tắt thì khớp chính xác hơn.")
+    video: Optional[str] = Field(
+        None, description='Bó hẹp trong 1 batch hoặc 1 video: "L25" hoặc "L25_V041"')
+
+    class Config:
+        json_schema_extra = {"example": {
+            "query": "Quán ăn Chợ Lớn", "limit": 100, "strip_diacritics": True,
+        }}
+
+
+class OcrSearchResultEx(SearchResultEx):
+    """An OCR hit — same shape as a visual-route hit, so the UI grid is reused
+    unchanged; the extra fields only explain WHY it matched.
+
+    `ocr_text` is the valuable one: the operator reads the line directly and
+    decides on the spot whether it is what they want, without opening the image.
+    """
+    ocr_text:      Optional[str]  = None
+    exact_phrase:  Optional[bool] = None
+    matched_words: Optional[int]  = None
+    total_words:   Optional[int]  = None
+
+
+class OcrSearchResponse(SearchResponse):
+    results: List[OcrSearchResultEx]
+    # Three counts, not one. Notebook 78 measured: all_word_matches <= 4 puts
+    # the right video first (6/6), >= 142 gets it right only 1/6 — so surface
+    # all three and the operator knows at once whether 500 images are worth
+    # paging through.
+    phrase_matches:   int = 0
+    all_word_matches: int = 0
+    searched_frames:  int = 0
 
 
 class TemporalSearchRequest(BaseModel):
@@ -309,6 +364,10 @@ def _run_warmup() -> None:
     _warm["state"] = "warming"
     try:
         preload()
+        # After preload(): 1.3 s against several minutes for indexes and models.
+        # Missing OCR files only print a warning — they must never flip the
+        # whole warm-up to failed and take the visual route down with them.
+        ocr_route.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
@@ -373,6 +432,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _frame_idx_from_name(name: str) -> Optional[int]:
+    """Read the frame number out of a filename: "L24_V010-0031-8228.jpg" -> 8228.
+
+    A fallback for the OCR route. ocr_clean.json covers all 360,531 keyframes of
+    L21-L30, while keyframe_metadata.json may be regenerated from a different
+    set of ZIPs — when they diverge, frame_idx=None breaks the UI's "open the
+    video at this second" button, over a number the filename already carries.
+    """
+    try:
+        return int(name.rsplit("-", 1)[1].split(".")[0])
+    except (IndexError, ValueError):
+        return None
 
 
 def _make_response(results: list[dict], query_type: str, t0: datetime) -> SearchResponseEx:
@@ -560,9 +633,75 @@ def trake_search_text_endpoint(req: TrakeSearchTextRequest):
         raise HTTPException(500, f"TRAKE search text error: {e}")
 
 
+@app.post("/ocr-search", response_model=OcrSearchResponse,
+          summary="Tìm bằng chữ Vintern OCR đọc được trên màn hình")
+def ocr_search_endpoint(req: OcrSearchRequest):
+    """Pure lexical route: give it a phrase, get the frames containing it.
+
+    No model takes part in scoring. Order is decided entirely by what was
+    typed — whole phrase first, then word count, then shorter text first.
+
+    Deliberately NOT blended with /ensemble-search. See the app/ocr_search.py
+    docstring for why (13 of the 25 preliminary answer frames carry no text).
+    """
+    started = datetime.now()
+    try:
+        found = ocr_route.search(req.query, limit=req.limit,
+                                 strip_diacritics=req.strip_diacritics,
+                                 video=req.video)
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"OCR search error: {e}")
+
+    # Fill in video/frame_idx/timestamp/url to match the visual route's shape,
+    # so the existing UI grid renders these without a new component.
+    _pp._load_meta()
+    rows = []
+    for hit in found["results"]:
+        name = hit["name"]
+        meta = _pp._name2meta.get(name, {})
+        rows.append(OcrSearchResultEx(
+            frame=name, name=name, url=_pp._image_url(name),
+            # distance: the UI scales its score bar against max_distance. Whole
+            # phrases get +1000, so they separate into their own top band.
+            distance=hit["score"],
+            video=meta.get("video") or name.split("-")[0],
+            frame_idx=meta.get("frame_idx", _frame_idx_from_name(name)),
+            timestamp=meta.get("timestamp"),
+            has_image=_pp._has_image(name),
+            ocr_text=hit["ocr_text"],
+            exact_phrase=hit["exact_phrase"],
+            matched_words=hit["matched_words"],
+            total_words=hit["total_words"],
+        ))
+
+    return OcrSearchResponse(
+        total_results=found["all_word_matches"],
+        returned_results=len(rows),
+        results=rows,
+        query_type="ocr" + ("" if req.strip_diacritics else ":with_marks"),
+        processing_time=(datetime.now() - started).total_seconds(),
+        max_distance=max((r.distance for r in rows), default=0.0),
+        phrase_matches=found["phrase_matches"],
+        all_word_matches=found["all_word_matches"],
+        searched_frames=found["searched_frames"],
+    )
+
+
+@app.get("/ocr-text/{name}", summary="Chữ OCR của đúng 1 keyframe")
+def ocr_text_endpoint(name: str):
+    """Lets the UI show the text on whichever frame the user is looking at,
+    including frames that came from the visual route rather than this one."""
+    try:
+        return {"name": name, "ocr_text": ocr_route.get_text(name)}
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+
+
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
-    return {**system_status(), "warmup": _warm}
+    return {**system_status(), "warmup": _warm, "ocr": ocr_route.status()}
 
 
 @app.get("/health")
@@ -587,7 +726,8 @@ def root():
         "endpoints": ["/ensemble-search", "/single-search", "/temporal-search",
                       "/trake-search", "/temporal-search-candidates",
                       "/trake-search-candidates", "/temporal-search-text",
-                      "/trake-search-text", "/status", "/health", "/docs"],
+                      "/trake-search-text", "/ocr-search", "/ocr-text/{name}",
+                      "/status", "/health", "/docs"],
     }
 
 

@@ -1,8 +1,95 @@
-import type { SearchResult } from "../../types/api";
+import type { OcrSearchResult, SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
+
+/**
+ * The OCR text read off this frame — only present on OCR-route results.
+ *
+ * Visual-route results carry no `ocr_text`, so this renders nothing and every
+ * existing <FrameDisplay/> call site is unaffected.
+ *
+ * Printed onto the card rather than hidden in a tooltip: reading the line is
+ * what tells you instantly whether this is the frame you want, without zooming
+ * into each image. That is precisely why the OCR route beats the visual one
+ * when the screen carries text.
+ */
+function OcrLine({ result }: { result: SearchResult }) {
+  const text = (result as OcrSearchResult).ocr_text;
+  if (!text) return null;
+  const wholePhrase = (result as OcrSearchResult).exact_phrase;
+  return (
+    <span
+      className={`mt-0.5 line-clamp-3 whitespace-pre-wrap break-words leading-tight ${
+        wholePhrase ? "font-bold text-proto-body" : "text-proto-muted"
+      }`}
+      title={text}
+    >
+      {text}
+    </span>
+  );
+}
+
+/**
+ * How well this frame matched — read differently per route.
+ *
+ * The visual route keeps the red-to-green percentage: its scores really are a
+ * similarity spread, and where a frame sits within the current result set is
+ * the useful thing to see.
+ *
+ * The OCR route does not, because it has no such spread. Its `distance` is the
+ * number of matched words plus 1000 for a whole-phrase hit — printing it as a
+ * percentage produced "5.0%" on every card, which is neither a percentage nor
+ * a difference between the cards. What actually separates two OCR hits is
+ * whether the typed text appeared as ONE PHRASE or as words scattered across
+ * the frame, so that is what this says.
+ */
+function MatchLabel({
+  result,
+  minScore,
+  maxScore,
+  shown,
+}: {
+  result: SearchResult;
+  minScore: number;
+  maxScore: number;
+  shown: number;
+}) {
+  const ocr = result as OcrSearchResult;
+
+  if (typeof ocr.total_words === "number") {
+    const whole = ocr.exact_phrase;
+    return (
+      <span
+        className={`font-bold tabular-nums ${
+          whole ? "text-[#3d7a4d]" : "text-proto-muted"
+        }`}
+        title={
+          whole
+            ? "Cả cụm chữ nằm liền một mạch trên frame này"
+            : "Đủ các chữ đã gõ, nhưng nằm rời rạc trên frame"
+        }
+      >
+        {whole ? "nguyên cụm" : `khớp ${ocr.matched_words}/${ocr.total_words} chữ`}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="font-bold tabular-nums"
+      style={{
+        color: accuracyColor(accuracyPercent(result.distance, minScore, maxScore)),
+      }}
+      title={`điểm thô ${result.distance.toFixed(
+        2
+      )} · thang màu chuẩn hoá theo ${shown} kết quả đang hiện`}
+    >
+      {result.distance.toFixed(1)}%
+    </span>
+  );
+}
 
 type FrameDisplayProps2 = {
   results: SearchResult[];
@@ -147,20 +234,14 @@ export default function FrameDisplay({
                   </span>
                   <span className="flex items-center justify-between">
                     <span>{timestamp[index]}</span>
-                    <span
-                      className="font-bold tabular-nums"
-                      style={{
-                        color: accuracyColor(
-                          accuracyPercent(result.distance, minScore, maxScore)
-                        ),
-                      }}
-                      title={`điểm thô ${result.distance.toFixed(
-                        2
-                      )} · thang màu chuẩn hoá theo ${scores.length} kết quả đang hiện`}
-                    >
-                      {result.distance.toFixed(1)}%
-                    </span>
+                    <MatchLabel
+                      result={result}
+                      minScore={minScore}
+                      maxScore={maxScore}
+                      shown={scores.length}
+                    />
                   </span>
+                  <OcrLine result={result} />
                   {/* Action row — these 4 buttons used to float on top of the
                       image (+ top-left, ⏱/🎯 top-right nearly touching,
                       search bottom-right) and obscured the frame. Moved down
