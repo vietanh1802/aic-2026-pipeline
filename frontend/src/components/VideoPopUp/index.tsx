@@ -3,8 +3,7 @@ import { SubmitForm } from "../SubmitForm";
 import VideoDrive from "./VideoDisplay";
 import { getFileIdByVideoId } from "../../helpers/getFileIdByVideoId.helper";
 import { useSubmitStore, useSubmitTasks } from "../../store/submitStore";
-import { findMatchingKeyframes } from "../../helpers/findMatchingKeyframe";
-import KeyframeDB from "../../mapping/keyframes.json";
+import { neighbourKeyframesFor } from "../../helpers/keyframes";
 
 import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
@@ -50,10 +49,10 @@ function getMatchingKeyframe(
   videoId: string,
   frameNum: number
 ): MatchingKeyframe {
-  const match = findMatchingKeyframes(videoId, frameNum, KeyframeDB);
+  const match = neighbourKeyframesFor(videoId, frameNum);
   return {
-    smaller: match.smaller ?? "",
-    larger: match.larger ?? "",
+    smaller: match.smaller?.name ?? "",
+    larger: match.larger?.name ?? "",
   };
 }
 

@@ -10,6 +10,7 @@ import ResultInfoAndSort, {
 import TaskBrief from "./components/TaskBrief";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore } from "./store/queryStore";
+import { usePopupStore } from "./store/popupStore";
 import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
@@ -212,6 +213,27 @@ function App({
     label: string;
     total: number;
   } | null>(null);
+
+  // A popup asked for from outside App — a basket row, the goto-frame box.
+  // The paths already inside App set this state directly and do not go
+  // through the store.
+  const popupRequest = usePopupStore((state) => state.request);
+  const clearPopupRequest = usePopupStore((state) => state.clear);
+
+  useEffect(() => {
+    if (!popupRequest) {
+      return;
+    }
+    const { videoId, frameIdx } = popupRequest;
+    // No keyframe name to take an id from, so the header shows the frame
+    // number itself — the same thing a hand-pinned TRAKE moment shows.
+    setframeId(String(frameIdx));
+    setVideoUrl(videoId);
+    setStartTime(startMsAt(videoId, frameIdx));
+    setTrakeSlot(null);
+    setShowPopup(true);
+    clearPopupRequest();
+  }, [popupRequest, clearPopupRequest]);
 
   const swapTrakeEvent = (
     cardKey: string,
