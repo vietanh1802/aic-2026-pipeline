@@ -64,14 +64,13 @@ export interface OcrSearchResponse extends SearchResponse {
   /** Images holding the typed phrase verbatim. */
   phrase_matches: number;
   /**
-   * Images holding every word. The number to watch: measured over the 25
-   * preliminary queries (notebook 78), <= 4 puts the right video first 6 times
-   * out of 6, while >= 142 gets it right only 1 in 6 - meaning type more text
-   * rather than paging through 500 images.
+   * Images holding every word, each as a whole word - also the size of the
+   * result. The number to watch: measured over the 25 preliminary queries
+   * (notebook 78), <= 4 puts the right video first 6 times out of 6, while
+   * >= 142 gets it right only 1 in 6 - meaning type more text rather than
+   * paging through 500 images.
    */
   all_word_matches: number;
-  /** Images holding at least one word. Usually huge; reference only. */
-  any_word_matches: number;
   /** Total frames carrying text - the denominator for everything above. */
   searched_frames: number;
 }

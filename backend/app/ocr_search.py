@@ -153,11 +153,37 @@ def _tokenize(text: str) -> list[str]:
     return [w for w in re.split(r"[^0-9a-zA-ZÀ-ỹ]+", text) if w]
 
 
+def _whole_word(term: str) -> re.Pattern:
+    """Match `term` only as a whole word, never inside a longer one.
+
+    Lookaround rather than \\b: \\b is defined against \\w, which counts the
+    underscore and every Unicode letter, so it behaves differently on the
+    two haystacks (one still carries diacritics, one does not). Spelling the
+    boundary out as "not a letter or digit either side" behaves the same on
+    both, and on terms that begin or end with punctuation.
+
+    Measured on 179,728 rows, the difference this makes is not marginal:
+
+      quan an cho lon   3,570 substring hits -> 180 whole-word   (95% junk)
+      hong nhung        2,300 -> 839                             (64% junk)
+      cho lon           4,212 -> 1,834                           (56% junk)
+
+    The junk is real text, matched by accident: 'lon' inside 'long an' and
+    'giua long thu do', 'cho' inside 'choi xich du'. An operator typing what
+    they see on screen means the word, not a fragment of a longer one.
+    """
+    return re.compile(rf"(?<![0-9a-z]){re.escape(term)}(?![0-9a-z])")
+
+
 def search(query: str,
            limit: int = 100,
            strip_diacritics: bool = True,
            video: Optional[str] = None) -> dict:
-    """Find frames containing `query`.
+    """Find frames containing EVERY word of `query`, each as a whole word.
+
+    Strict by design. A frame missing even one word is not returned, and a word
+    is not matched inside a longer one — 'lon' does not hit 'long an'. Nothing
+    is returned when nothing qualifies; there is no widening fallback.
 
     Ranking depends ONLY on the text the user typed; no model takes part:
 
@@ -169,10 +195,14 @@ def search(query: str,
     is almost certainly what someone is after, whereas the same phrase buried in
     200 characters of scrolling slide text is usually a coincidence.
 
-    Returns three counts rather than one:
-      * `phrase_matches`   — contain the whole phrase  <- the count to trust
-      * `all_word_matches` — contain every word, scattered
-      * `any_word_matches` — contain at least one word
+    Returns two counts:
+      * `phrase_matches`   — hold the whole phrase  <- the count to trust
+      * `all_word_matches` — hold every word, scattered; the size of the result
+
+    There is deliberately no "holds at least one word" count. Under this rule
+    such frames are not returned, so reporting them would advertise a looseness
+    that no longer exists — and computing it is what forced the regex across
+    all 179,728 rows on every query.
 
     Notebook 78 measured: `all_word_matches` <= 4 puts the right video first,
     6 times out of 6; >= 142 gets it right only 1 time in 6. Surfacing this
@@ -186,57 +216,57 @@ def search(query: str,
     needle = (_strip_marks(query) if strip_diacritics else query).lower().strip()
     if not needle:
         return {"results": [], "phrase_matches": 0, "all_word_matches": 0,
-                "any_word_matches": 0, "searched_frames": len(haystacks),
-                "processing_time": 0.0}
+                "searched_frames": len(haystacks), "processing_time": 0.0}
 
-    words = _tokenize(needle)
+    # A set, not a list: "chợ chợ" would otherwise want two distinct words and
+    # match nothing, because one word can only be found once.
+    words = set(_tokenize(needle))
     word_count = len(words)
 
-    # ONE pass: tally all three counts, but only build result rows for frames
-    # containing EVERY word.
+    # ONE alternation covering every word, scanned once per frame — not one
+    # regex per word. Per-word scanning cost 3.6 SECONDS on "Quán ăn Chợ Lớn":
+    # "an" is a substring of nearly all 179,728 rows, so the cheap `in`
+    # prefilter rejected nothing and the regex ran the full length four times.
+    # One pass with findall() returns which words hit, and costs the same
+    # whether the query has one word or six.
     #
-    # This used to build a row for every frame matching even one word. Typing
-    # "Quán ăn Chợ Lớn" matches 87,429 frames on at least one word (because "ăn"
-    # appears inside countless strings); building that many tuples and sorting
-    # them took 3.5 SECONDS, to then return the first 100. Dropping partial
-    # matches brings it to ~0.3 s, and is also closer to the request: "which
-    # frames CONTAIN THIS TEXT", not "part of this text".
+    # Longest alternative first: regex alternation is leftmost-first, so with
+    # "an" before "anh" a row containing "anh" would report the wrong word.
+    _alts = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    combined = re.compile(rf"(?<![0-9a-z])(?:{_alts})(?![0-9a-z])")
+    phrase_pattern = _whole_word(needle)
+
+    # Two stages, because the cheap test rejects almost everything.
     #
-    # If needle is inside haystack then every word of needle is too, so the
-    # whole-phrase group is a subset of the every-word group and nothing is lost.
-    scored, phrase_hits, all_word_hits, any_word_hits = [], 0, 0, 0
+    # Stage 1 is `all(word in haystack)` — plain substring, C speed. A frame
+    # missing a word as a SUBSTRING cannot hold it as a WORD, so this rejects
+    # without ever being wrong, and `all()` stops at the first miss. Longest
+    # word first (see `probes`) because long words are the rare ones, and the
+    # first probe is the one that does the rejecting.
+    #
+    # Stage 2 is the regex, run only on what survives. For "Quán ăn Chợ Lớn"
+    # that is 3,570 frames instead of 179,728.
+    #
+    # Skipping stage 1 costs 1.8 SECONDS per query, on every query alike: "ăn"
+    # is a substring of nearly every row, so nothing is rejected and the regex
+    # walks the whole corpus.
+    probes = sorted(words, key=len, reverse=True)
+
+    scored, phrase_hits = [], 0
     for name, haystack in haystacks.items():
         if video and not name.startswith(video):
             continue
-        hits = 0
-        for word in words:
-            if word in haystack:
-                hits += 1
-        if hits == 0:
+        if not all(probe in haystack for probe in probes):
             continue
-        any_word_hits += 1
-        if hits < word_count:
+        if len(set(combined.findall(haystack))) < word_count:
             continue
-        all_word_hits += 1
-        whole_phrase = word_count == 1 or needle in haystack
+        whole_phrase = bool(phrase_pattern.search(haystack))
         if whole_phrase:
             phrase_hits += 1
         # The whole phrase always beats the same words scattered — add a step
         # taller than any achievable word count, so one comparison suffices.
-        scored.append(((1000 if whole_phrase else 0) + hits,
+        scored.append(((1000 if whole_phrase else 0) + word_count,
                        len(_display[name]), name))
-
-    # Only fall back to partial matches when nothing contains every word — one
-    # extra pass, taken only in the case where the result list would otherwise
-    # be empty. An approximate answer beats making the operator believe the
-    # whole corpus holds nothing.
-    if not scored and any_word_hits:
-        for name, haystack in haystacks.items():
-            if video and not name.startswith(video):
-                continue
-            hits = sum(1 for word in words if word in haystack)
-            if hits:
-                scored.append((hits, len(_display[name]), name))
 
     # Score descending, then shorter text, then name ascending. The last key
     # exists only so the same query always returns the same order — without it
@@ -259,8 +289,7 @@ def search(query: str,
     return {
         "results": rows,
         "phrase_matches": phrase_hits,
-        "all_word_matches": all_word_hits,
-        "any_word_matches": any_word_hits,
+        "all_word_matches": len(scored),
         "searched_frames": len(haystacks),
         "processing_time": round(time.time() - started, 4),
     }

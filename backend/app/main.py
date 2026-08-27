@@ -158,7 +158,6 @@ class OcrSearchResponse(SearchResponse):
     # paging through.
     phrase_matches:   int = 0
     all_word_matches: int = 0
-    any_word_matches: int = 0
     searched_frames:  int = 0
 
 
@@ -678,7 +677,7 @@ def ocr_search_endpoint(req: OcrSearchRequest):
         ))
 
     return OcrSearchResponse(
-        total_results=found["any_word_matches"],
+        total_results=found["all_word_matches"],
         returned_results=len(rows),
         results=rows,
         query_type="ocr" + ("" if req.strip_diacritics else ":with_marks"),
@@ -686,7 +685,6 @@ def ocr_search_endpoint(req: OcrSearchRequest):
         max_distance=max((r.distance for r in rows), default=0.0),
         phrase_matches=found["phrase_matches"],
         all_word_matches=found["all_word_matches"],
-        any_word_matches=found["any_word_matches"],
         searched_frames=found["searched_frames"],
     )
 

@@ -206,7 +206,6 @@ function App({
   const [ocrCounts, setOcrCounts] = useState<{
     phrase: number;
     allWords: number;
-    anyWord: number;
     searched: number;
   } | null>(null);
 
@@ -330,7 +329,6 @@ function App({
         setOcrCounts({
           phrase: res.phrase_matches,
           allWords: res.all_word_matches,
-          anyWord: res.any_word_matches,
           searched: res.searched_frames,
         });
         return;
