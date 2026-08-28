@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import asr_service
-
+from asr_api import runtime as asr_service
 
 def _reset_service(monkeypatch) :
     monkeypatch.setattr(asr_service, "_engine", None)
