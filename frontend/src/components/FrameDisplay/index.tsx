@@ -205,6 +205,11 @@ export default function FrameDisplay({
                       src={result.url}
                       alt={`Frame at ${timestamp[index]}`}
                       loading="lazy"
+                      // Keyframes are full 1280x720 JPEGs shown in a ~240px
+                      // tile, so each one costs a real decode. Async keeps
+                      // that off the main thread and stops the grid janking
+                      // while a screenful comes in.
+                      decoding="async"
                       className="w-full h-full rounded-[4px] object-cover"
                       // Dự phòng khi backend không trả has_image, hoặc ảnh biến
                       // mất sau lúc search.
