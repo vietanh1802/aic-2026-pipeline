@@ -182,17 +182,32 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
             </>
           )}
 
+          {/* Nhãn cũ ghi "bật — bắt cả lỗi dấu", và đó là lời quảng cáo sai.
+              Đo trên 300 cụm chữ có thật trong kho: gõ CÓ dấu thì bật hay tắt
+              ra y hệt ở 48% truy vấn, phần còn lại chỉ hơn 7%.
+              Công dụng thật nằm chỗ khác — gõ KHÔNG dấu:
+                  bật  →  300/300 tìm thấy
+                  tắt  →   22/300
+              Nên nhãn phải nói đúng điều đó. */}
           {isOcr && (
             <div className="flex flex-col items-start">
               <p className="font-bold">Bỏ dấu</p>
-              <label className="flex items-center gap-x-1 cursor-pointer p-2">
+              <label
+                className="flex items-center gap-x-1 cursor-pointer p-2"
+                title={
+                  "Bật: gõ 'quan an cho lon' vẫn ra 'Quán ăn Chợ Lớn'. " +
+                  "Tắt: phải gõ đúng dấu mới khớp."
+                }
+              >
                 <input
                   type="checkbox"
                   checked={ocrStripDiacritics}
                   onChange={(e) => setOcrStripDiacritics(e.target.checked)}
                 />
                 <span className="text-sm">
-                  {ocrStripDiacritics ? "bật — bắt cả lỗi dấu" : "tắt — khớp y hệt"}
+                  {ocrStripDiacritics
+                    ? "bật — gõ không dấu vẫn ra"
+                    : "tắt — phải gõ đúng dấu"}
                 </span>
               </label>
             </div>

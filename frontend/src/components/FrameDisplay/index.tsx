@@ -19,15 +19,28 @@ function OcrLine({ result }: { result: SearchResult }) {
   const text = (result as OcrSearchResult).ocr_text;
   if (!text) return null;
   const wholePhrase = (result as OcrSearchResult).exact_phrase;
+  const lines = text.split("\n").filter((l) => l.trim());
+  // Chữ dài thì thu nhỏ cỡ chữ: một slide bài giảng có thể ra hơn 1000 ký tự,
+  // và ở cỡ thường thì chỉ riêng nó đã cao gấp ba lần cái ảnh.
+  const dense = text.length > 260;
+
   return (
-    <span
-      className={`mt-0.5 line-clamp-3 whitespace-pre-wrap break-words leading-tight ${
+    <div
+      // KHÔNG dùng line-clamp nữa. Bản trước cắt ở 3 dòng, mà 3 dòng đầu của
+      // một khung tin tức thường chỉ là tên đài với dòng chữ chạy — đúng phần
+      // vô dụng nhất, còn phần đáng đọc thì bị giấu.
+      //
+      // Cũng không cho nó dài tuỳ ý: lưới dùng auto-fill nên một thẻ cao sẽ
+      // kéo cao cả hàng. Chặn chiều cao rồi cho cuộn RIÊNG trong khối này —
+      // thẻ vẫn đều nhau mà vẫn đọc được hết.
+      className={`mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words
+        leading-snug pr-1 ${dense ? "text-[10px]" : ""} ${
         wholePhrase ? "font-bold text-proto-body" : "text-proto-muted"
       }`}
-      title={text}
+      title={`${lines.length} dòng · ${text.length} ký tự`}
     >
       {text}
-    </span>
+    </div>
   );
 }
 

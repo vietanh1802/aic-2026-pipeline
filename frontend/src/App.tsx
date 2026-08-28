@@ -632,8 +632,18 @@ function App({
         </div>
       )}
 
+      {/* Tuyến OCR đọc CHỮ chứ không nhìn ảnh, nên thẻ phải rộng hơn: 240px
+          vừa đủ cho ảnh nhưng không đủ cho một đoạn chữ. 360px cho khoảng gấp
+          rưỡi số chữ trên mỗi dòng, mà vẫn còn 3-4 cột trên màn hình thường.
+          Tuyến ảnh giữ nguyên 240px — ở đó chữ chỉ là tên file với timestamp. */}
       {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
-        <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6">
+        <div
+          className={`max-w-[98%] mx-auto grid gap-6 ${
+            searchType === "ocr"
+              ? "grid-cols-[repeat(auto-fill,minmax(360px,1fr))]"
+              : "grid-cols-[repeat(auto-fill,minmax(240px,1fr))]"
+          }`}
+        >
           <FrameDisplay
             results={visibleResults}
             maxDistance={maxDistance}
@@ -703,7 +713,13 @@ function App({
                   🎯
                 </button>
               </div>
-              <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6">
+              <div
+                className={`max-w-[98%] mx-auto grid gap-6 ${
+                  searchType === "ocr"
+                    ? "grid-cols-[repeat(auto-fill,minmax(360px,1fr))]"
+                    : "grid-cols-[repeat(auto-fill,minmax(240px,1fr))]"
+                }`}
+              >
                 <FrameDisplay
                   results={items}
                   maxDistance={maxDistance}
