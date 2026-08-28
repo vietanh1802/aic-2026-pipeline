@@ -38,6 +38,7 @@ export default function KeyframeImg({
       alt={alt}
       title={title}
       loading="lazy"
+      decoding="async"
       onClick={onClick}
       onError={() => setBroken(true)}
       className={className}
