@@ -67,22 +67,18 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   // The OCR route can go deeper: it calls no model, so 2000 rows cost only a
   // few dozen extra milliseconds. On the visual route every row is a reranked
   // FAISS vector, where 500 is both plenty and the backend's ceiling.
-  // Capped at 100 on purpose, and the reason is the scoring rather than the
-  // rendering. A basket holds 100 rows and the deepest cut that scores is
-  // R@100, so asking for 500 cannot win a single point — it only fetches
-  // 345 keyframes at ~145 KB each, about 49 MB, and leaves the browser
-  // holding roughly a gigabyte of decoded image. Under a round clock that is
-  // a foot-gun sitting in a dropdown. Refine the query instead.
   const resultLimitOptions: DropdownOption[] = isOcr
     ? [
         { id: 0, label: "50", value: "50" },
         { id: 1, label: "100", value: "100" },
         { id: 2, label: "500", value: "500" },
+        { id: 3, label: "2000", value: "2000" },
       ]
     : [
         { id: 0, label: "10", value: "10" },
         { id: 1, label: "50", value: "50" },
         { id: 2, label: "100", value: "100" },
+        { id: 3, label: "500", value: "500" },
       ];
 
   const topMOptions: DropdownOption[] = [
