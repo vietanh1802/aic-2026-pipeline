@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   clearAnswers,
   getAnswers,
   previewExport,
   validateExport,
+  type AnswerRow,
   type ExportIssue,
 } from "../api/answers";
 import { API_BASE_URL, ApiRequestError } from "../api/base";
@@ -16,15 +17,14 @@ import {
   type RoundPack,
 } from "../api/board";
 import Button from "../components/Button";
+import FramePreview from "../components/FramePreview";
+import { startMsAt } from "../helpers/frameIdentity";
+import { taskBriefText } from "../helpers/taskBrief";
 import { videoUrlAt } from "../helpers/videoSource";
-import KeyframeFPS from "../mapping/fps_map.json";
 import { useAuthStore } from "../store/authStore";
 
 /**
  * Validate, look at one file, download the round.
- *
- * The Google Sheets path lives here too rather than inside the video popup:
- * exporting is a whole-round action, and the popup is about one frame.
  */
 export default function ExportPage() {
   const token = useAuthStore((state) => state.token);
@@ -43,15 +43,27 @@ export default function ExportPage() {
   // Which task's "Xoá sạch" is waiting for a second click.
   const [confirming, setConfirming] = useState<number | null>(null);
 
-  // The rank-1 answer being watched. Reviewing the file a query is about to
-  // submit is mostly reviewing its first row: R@1 is a fifth of the score.
-  const [review, setReview] = useState<{
-    taskCode: string;
-    videoId: string;
-    frame: number;
-    seconds: number;
-    src: string;
-  } | null>(null);
+  // The task open in the right-hand inspector, and its answers once loaded.
+  // Clicking a row in the left list sets this; "▶ Top-1" sets it too and also
+  // picks the rank-1 row, since reviewing a query is mostly reviewing its
+  // first row — R@1 is a fifth of the score.
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [answers, setAnswers] = useState<AnswerRow[] | null>(null);
+  const [answersLoading, setAnswersLoading] = useState(false);
+  // The row the player is parked on. Set by a click, never by hovering.
+  const [selectedAnswerId, setSelectedAnswerId] = useState<number | null>(
+    null
+  );
+  const [briefExpanded, setBriefExpanded] = useState(false);
+  // Pointing at a row previews its still; only a click moves the player.
+  // Sweeping the list to compare frames should not yank the video around.
+  const [hoveredAnswerId, setHoveredAnswerId] = useState<number | null>(null);
+
+  // The mounted player, so a row click on the same video can seek in place
+  // instead of the `src` change that a video swap needs.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [activeVideoId, setActiveVideoId] = useState("");
+  const [videoSrc, setVideoSrc] = useState("");
 
   // Which round is being exported. Null means the live one — resubmitting a
   // round that has been retired is a real errand, so the picker exists, but the
@@ -76,39 +88,71 @@ export default function ExportPage() {
   }, [user?.role]);
 
   const packId = board?.round?.id ?? null;
+  const selectedTask =
+    board?.tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedAnswer =
+    answers?.find((row) => row.id === selectedAnswerId) ?? null;
+  // Only what the pointer is on. Falling back to the clicked row would leave a
+  // still permanently parked over the player, which is what it is not for.
+  const hoveredAnswer =
+    answers?.find((row) => row.id === hoveredAnswerId) ?? null;
+
+  // A different video needs a new `src` — changing it is what makes the
+  // browser reload the file. The same video just needs the element's
+  // currentTime nudged, which never touches `src` and so never remounts.
+  useEffect(() => {
+    if (!selectedAnswer) {
+      return;
+    }
+    const seconds =
+      startMsAt(selectedAnswer.video_id, selectedAnswer.frames[0] ?? 0) /
+      1000;
+    if (selectedAnswer.video_id !== activeVideoId) {
+      setActiveVideoId(selectedAnswer.video_id);
+      setVideoSrc(videoUrlAt(selectedAnswer.video_id, seconds));
+      return;
+    }
+    const element = videoRef.current;
+    if (element) {
+      element.currentTime = seconds;
+    }
+  }, [selectedAnswer, activeVideoId]);
 
   const refreshBoard = async () => {
     setBoard(await getBoard(viewing ?? undefined));
   };
 
-  const reviewTop1 = async (task: BoardTask) => {
+  // Opens the inspector on one task. `focusTop1` also picks its rank-1 row,
+  // which is what the "▶ Top-1" button wants — the task and its first row in
+  // one click instead of two.
+  const selectTask = async (task: BoardTask, focusTop1 = false) => {
+    setSelectedTaskId(task.id);
+    setSelectedAnswerId(null);
+    setBriefExpanded(false);
+    setAnswersLoading(true);
+    setAnswers(null);
     try {
-      const top = (await getAnswers(task.id)).answers[0];
-      if (!top) {
-        setError(`Task ${task.code} chưa có dòng nào.`);
-        return;
-      }
-      const frame = top.frames[0] ?? 0;
-      const fps = (KeyframeFPS as Record<string, number | undefined>)[
-        top.video_id
-      ];
-      // No fps means no way to turn a frame number into a timestamp. Open at
-      // zero rather than at NaN, and let the frame number on screen say where
-      // to scrub to.
-      const seconds = fps && fps > 0 ? frame / fps : 0;
-      setPreview(null);
-      setReview({
-        taskCode: task.code,
-        videoId: top.video_id,
-        frame,
-        seconds,
-        src: videoUrlAt(top.video_id, seconds),
-      });
+      const result = await getAnswers(task.id);
+      setAnswers(result.answers);
       setError(null);
+      if (focusTop1) {
+        const top = result.answers[0];
+        if (top) {
+          setSelectedAnswerId(top.id);
+        } else {
+          setError(`Task ${task.code} chưa có dòng nào.`);
+        }
+      }
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : "Không xem được");
+      setError(
+        err instanceof ApiRequestError ? err.message : "Không tải được danh sách"
+      );
+    } finally {
+      setAnswersLoading(false);
     }
   };
+
+  const reviewTop1 = (task: BoardTask) => selectTask(task, true);
 
   const clear = async (taskId: number) => {
     setBusy(true);
@@ -116,7 +160,13 @@ export default function ExportPage() {
       const result = await clearAnswers(taskId);
       setConfirming(null);
       setPreview(null);
-      setReview(null);
+      // Only the task that was actually cleared loses its inspector state —
+      // clearing one query's rows should not blank out another one someone
+      // else has open.
+      if (selectedTaskId === taskId) {
+        setAnswers([]);
+        setSelectedAnswerId(null);
+      }
       await refreshBoard();
       // Counts moved, so the warnings from before this click are stale.
       setIssues(null);
@@ -171,8 +221,17 @@ export default function ExportPage() {
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `${board?.round?.label ?? "submission"}.zip`;
+      // Two things this used to get wrong, both of which end in the same
+      // symptom: the button works, no error shows, and no file arrives.
+      // Firefox ignores click() on an anchor that is not in the document, and
+      // revoking the object URL in the same tick can cancel the download
+      // before the browser has finished reading the blob out of it. Append,
+      // click, then revoke a turn of the event loop later.
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(anchor);
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : "Không tải được");
     } finally {
@@ -206,7 +265,10 @@ export default function ExportPage() {
                 setIssues(null);
                 setReady(null);
                 setPreview(null);
-                setReview(null);
+                // Task ids from the round left behind mean nothing here.
+                setSelectedTaskId(null);
+                setAnswers(null);
+                setSelectedAnswerId(null);
               }}
             >
               <option value="">Vòng đang dùng</option>
@@ -280,7 +342,12 @@ export default function ExportPage() {
             {board?.tasks.map((task) => (
               <div
                 key={task.id}
-                className="flex items-center gap-2 px-2 py-1.5 border-b border-proto-line last:border-b-0 text-xs flex-wrap"
+                onClick={() => void selectTask(task)}
+                className={`flex items-center gap-2 px-2 py-1.5 border-b border-proto-line last:border-b-0 text-xs flex-wrap cursor-pointer ${
+                  task.id === selectedTaskId
+                    ? "bg-proto-primary/10"
+                    : "hover:bg-proto-soft"
+                }`}
               >
                 <b className="font-mono text-proto-ink w-8">{task.code}</b>
                 <span className="text-[10px] font-bold uppercase text-proto-muted w-12">
@@ -291,14 +358,24 @@ export default function ExportPage() {
                 </span>
 
                 <span className="ml-auto flex gap-1 items-center">
-                  <Button size="xs" variant="outline" onClick={() => void look(task.id)}>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void look(task.id);
+                    }}
+                  >
                     Xem trước
                   </Button>
                   <Button
                     size="xs"
                     variant="outline"
                     disabled={task.answer_count === 0}
-                    onClick={() => void reviewTop1(task)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void reviewTop1(task);
+                    }}
                   >
                     ▶ Top-1
                   </Button>
@@ -310,14 +387,20 @@ export default function ExportPage() {
                       <button
                         type="button"
                         className="text-[11px] font-bold text-[#c64545] underline"
-                        onClick={() => void clear(task.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void clear(task.id);
+                        }}
                       >
                         Xoá {task.answer_count} dòng?
                       </button>
                       <button
                         type="button"
                         className="text-[11px] text-proto-muted underline"
-                        onClick={() => setConfirming(null)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setConfirming(null);
+                        }}
                       >
                         Huỷ
                       </button>
@@ -327,7 +410,10 @@ export default function ExportPage() {
                       size="xs"
                       variant="outline"
                       disabled={busy || task.answer_count === 0}
-                      onClick={() => setConfirming(task.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setConfirming(task.id);
+                      }}
                     >
                       Xoá sạch
                     </Button>
@@ -338,78 +424,199 @@ export default function ExportPage() {
           </div>
         </div>
 
-        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden">
-          <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-            {review ? `Top-1 · task ${review.taskCode}` : "Xem trước một file"}
-          </div>
-          <div className="p-3 max-h-[420px] overflow-y-auto">
-            {review && (
-              <div className="mb-3">
-                <div className="text-xs font-mono text-proto-ink mb-1 flex items-center gap-2">
-                  {review.videoId} · frame {review.frame}
-                  <button
-                    type="button"
-                    className="ml-auto text-[11px] text-proto-muted underline"
-                    onClick={() => setReview(null)}
-                  >
-                    Đóng
-                  </button>
+        {/* Bounded height so the grid rows below actually mean something —
+            row 1 (auto) never scrolls, row 2 (minmax(0,1fr)) absorbs the rest
+            of the height and is the only thing that scrolls. That keeps the
+            video on screen while stepping through the answer list, which is
+            the whole point of watching it while reviewing rows. */}
+        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden h-[660px] grid grid-rows-[auto_minmax(0,1fr)]">
+          <div>
+            <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+              {selectedTask
+                ? `Task ${selectedTask.code} · ${
+                    selectedTask.type === "qa" ? "Q&A" : selectedTask.type
+                  }`
+                : "Xem trước một file"}
+            </div>
+            <div className="p-3">
+              {selectedTask ? (
+                <div className="flex flex-col gap-3">
+                  {/* The brief, verbatim — never the search screen's TaskBrief,
+                      which is laid out for a page with a result grid, not a
+                      narrow side panel. */}
+                  <div>
+                    <p
+                      className={`text-[13px] text-proto-ink whitespace-pre-wrap ${
+                        briefExpanded ? "" : "line-clamp-3"
+                      }`}
+                    >
+                      {taskBriefText(selectedTask)}
+                    </p>
+                    {taskBriefText(selectedTask).length > 140 && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-proto-muted underline mt-0.5"
+                        onClick={() => setBriefExpanded((value) => !value)}
+                      >
+                        {briefExpanded ? "Thu gọn" : "Mở rộng"}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Video and still side by side — the still is the real
+                      keyframe and the video is the real position, so a mismatch
+                      between the two shows up at a glance.
+
+                      Fixed height, and NO wrapping. This row used to be
+                      flex-wrap with a 360x240 still, so on a panel narrower
+                      than ~590px the still dropped onto its own line, the
+                      top grid row grew to ~570px of the panel's 660, and the
+                      answer list underneath was squeezed to about two rows.
+                      Both children now size to this row instead of dictating
+                      it, so the list always keeps the rest. */}
+                  <div className="relative flex gap-3 items-stretch h-[220px]">
+                    <div className="flex-1 min-w-0 flex flex-col">
+                      {selectedAnswer ? (
+                        videoSrc ? (
+                          <video
+                            ref={videoRef}
+                            key={activeVideoId}
+                            src={videoSrc}
+                            controls
+                            autoPlay
+                            preload="metadata"
+                            className="rounded-[8px] flex-1 min-h-0 w-full object-contain bg-black"
+                            onLoadedMetadata={(e) => {
+                              if (selectedAnswer) {
+                                e.currentTarget.currentTime =
+                                  startMsAt(
+                                    selectedAnswer.video_id,
+                                    selectedAnswer.frames[0] ?? 0
+                                  ) / 1000;
+                              }
+                            }}
+                          />
+                        ) : (
+                          <p className="text-[11.5px] text-proto-muted">
+                            Chưa cấu hình kho video (VITE_VIDEO_BASE_URL).
+                          </p>
+                        )
+                      ) : (
+                        <div className="rounded-[8px] w-full flex-1 min-h-0 bg-proto-dark flex items-center justify-center">
+                          <span className="text-[11px] text-neutral-400 px-2 text-center">
+                            {answersLoading
+                              ? "Đang tải…"
+                              : "Bấm một dòng bên dưới để mở video. Trỏ chuột để xem nhanh ảnh frame."}
+                          </span>
+                        </div>
+                      )}
+                      {selectedAnswer && (
+                        <div className="text-xs font-mono text-proto-ink mt-1">
+                          {selectedAnswer.video_id} · frame{" "}
+                          {selectedAnswer.frames[0] ?? 0}
+                        </div>
+                      )}
+                    </div>
+                    {/* The still floats over the player instead of sitting
+                        beside it. As a sibling it was `h-full aspect-video` —
+                        200px tall by 355px wide — while the video only got
+                        whatever was left, so the image ended up larger than the
+                        thing it was meant to be checked against. It also only
+                        appears while the pointer is on a row: the video is what
+                        you keep, the still is what you glance at. */}
+                    {hoveredAnswer && (
+                      <div className="pointer-events-none absolute right-2 top-2 bottom-2 aspect-video overflow-hidden rounded-[6px] shadow-2xl ring-2 ring-white">
+                        <FramePreview
+                          videoId={hoveredAnswer.video_id}
+                          frameIdx={hoveredAnswer.frames[0] ?? 0}
+                          size="fill"
+                        />
+                        <span className="absolute bottom-0 inset-x-0 bg-black/70 text-white font-mono text-[10px] px-1 py-0.5 text-center">
+                          #{hoveredAnswer.rank} · frame{" "}
+                          {hoveredAnswer.frames[0] ?? 0}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                {review.src ? (
-                  <video
-                    key={review.src}
-                    src={review.src}
-                    controls
-                    autoPlay
-                    preload="metadata"
-                    className="rounded-[8px] w-full"
-                    onLoadedMetadata={(e) => {
-                      e.currentTarget.currentTime = review.seconds;
-                    }}
-                  />
-                ) : (
-                  <p className="text-[11.5px] text-proto-muted">
-                    Chưa cấu hình kho video (VITE_VIDEO_BASE_URL).
+              ) : (
+                <p className="text-[11.5px] text-proto-muted">
+                  Chọn một dòng ở danh sách bên trái để xem cả task, hoặc dùng{" "}
+                  <b>▶ Top-1</b> để mở nhanh dòng hạng 1.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* The answer list. KeyframeImg already sets loading="lazy", so a
+              hundred rows here does not fire a hundred requests. min-h-0 is
+              what lets a grid row shrink below its content's height instead
+              of stretching the grid to fit it — without it overflow-y-auto
+              on a grid row does nothing. */}
+          <div className="min-h-0 overflow-y-auto px-3 pb-3">
+            {selectedTask && (
+              <div className="border border-proto-line rounded-[8px] overflow-hidden divide-y divide-proto-line">
+                {answersLoading && (
+                  <p className="p-3 text-[11.5px] text-proto-muted">
+                    Đang tải danh sách…
                   </p>
                 )}
+                {!answersLoading && answers?.length === 0 && (
+                  <p className="p-3 text-[11.5px] text-proto-muted">
+                    Chưa có dòng nào.
+                  </p>
+                )}
+                {!answersLoading &&
+                  answers?.map((row) => (
+                    <div
+                      key={row.id}
+                      onClick={() => setSelectedAnswerId(row.id)}
+                      onMouseEnter={() => setHoveredAnswerId(row.id)}
+                      onMouseLeave={() =>
+                        setHoveredAnswerId((current) =>
+                          current === row.id ? null : current
+                        )
+                      }
+                      className={`flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer ${
+                        row.id === selectedAnswerId
+                          ? "bg-proto-primary/10"
+                          : "hover:bg-proto-soft"
+                      }`}
+                    >
+                      <FramePreview
+                        videoId={row.video_id}
+                        frameIdx={row.frames[0] ?? 0}
+                      />
+                      <b className="font-mono text-proto-ink w-7">
+                        #{row.rank}
+                      </b>
+                      <span className="font-mono text-proto-ink truncate">
+                        {row.video_id}
+                      </span>
+                      <span className="font-mono text-proto-muted ml-auto">
+                        frame {row.frames[0] ?? 0}
+                      </span>
+                    </div>
+                  ))}
               </div>
-            )}
-
-            {preview && (
-              <>
-                <div className="text-xs font-mono text-proto-ink mb-1">
-                  {preview.filename} · {preview.rows} dòng
-                </div>
-                <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-x-auto whitespace-pre">
-                  {preview.content.split("\n").slice(0, 12).join("\n")}
-                  {preview.content.split("\n").length > 12 ? "\n…" : ""}
-                </pre>
-              </>
-            )}
-
-            {!review && !preview && (
-              <p className="text-[11.5px] text-proto-muted">
-                Chọn <b>Xem trước</b> để đọc file, hoặc <b>▶ Top-1</b> để xem
-                nhanh video của dòng hạng 1.
-              </p>
             )}
           </div>
         </div>
       </div>
 
-      <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden mt-5">
-        <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-          Google Sheets
+      {/* CSV preview is a different job from reviewing frames — full width,
+          below the two-column area, not fighting the video for space. */}
+      {preview && (
+        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden mt-5 p-3">
+          <div className="text-xs font-mono text-proto-ink mb-1">
+            {preview.filename} · {preview.rows} dòng
+          </div>
+          <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-x-auto whitespace-pre">
+            {preview.content.split("\n").slice(0, 12).join("\n")}
+            {preview.content.split("\n").length > 12 ? "\n…" : ""}
+          </pre>
         </div>
-        <div className="p-4 text-sm text-proto-muted leading-relaxed">
-          Đường nộp qua Google Sheets vẫn giữ. Nó cần ba biến môi trường{" "}
-          <span className="font-mono text-xs">VITE_GOOGLE_CLIENT_ID</span>,{" "}
-          <span className="font-mono text-xs">VITE_GOOGLE_API_KEY</span>,{" "}
-          <span className="font-mono text-xs">VITE_DRIVE_FOLDER_ID</span>. Ba
-          giá trị cũ đã nằm trong git history nên phải coi là đã lộ và thu hồi ở
-          Google Cloud Console.
-        </div>
-      </div>
+      )}
     </div>
   );
 }

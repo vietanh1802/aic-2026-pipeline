@@ -43,6 +43,10 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     (state) => state.setQueryTranslated
   );
   const [isTranslated, setisTranslated] = useState<boolean>(false);
+  // Advanced controls (Show Top, Top-M, Rerank, Language, Translate, Search
+  // Type) collapse behind a toggle, closed by default — during a round the
+  // user just types and hits Enter, and rarely touches these controls.
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
   const handleTranslate = async () => {
     if (!queryText) return;
@@ -134,6 +138,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         />
       </div>
 
+      {showAdvanced && (
       <div className="w-full flex flex-row justify-between flex-wrap gap-y-3">
         <div className="flex flex-row gap-x-4 items-center font-baloo flex-wrap gap-y-2">
           <div className="items-center">
@@ -225,7 +230,6 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                 />
               </div>
               <div>
-                <p className="font-bold">Button</p>
                 <Button
                   className="h-full bg-gray-500 hover:bg-gray-700"
                   onClick={handleTranslate}
@@ -248,6 +252,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           </div>
         </div>
       </div>
+      )}
 
       {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
           text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}
@@ -269,6 +274,8 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         </p>
       )}
 
+      {/* Toggle lives on the same line as the query row — closed state
+          (default) is a single compact row: input + toggle + Search. */}
       <div className="w-full flex flex-row gap-x-3">
         <input
           value={queryText}
@@ -287,6 +294,13 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               : "Enter your query"
           }
         />
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((prev) => !prev)}
+          className="shrink-0 whitespace-nowrap rounded-[8px] border border-proto-line px-3 py-2 text-xs font-bold text-proto-muted hover:bg-proto-soft"
+        >
+          {showAdvanced ? "Ẩn tuỳ chọn" : "Tuỳ chọn"}
+        </button>
         <Button onClick={doSearch} disabled={disabled}>
           Search
         </Button>

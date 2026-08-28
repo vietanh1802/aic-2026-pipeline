@@ -65,3 +65,60 @@ export function frameRange(
   }
   return { start, end, frame: Math.floor((start + end) / 2) };
 }
+
+/**
+ * K guesses spread over a marked interval, best first.
+ *
+ * KIS describes a stretch of video, not an instant, and the score is R@k. So
+ * the useful thing to do with two marked edges is not to submit their midpoint
+ * once but to cover the interval — and to cover it in an order where the first
+ * row is the most defensible, because rank is what R@k reads.
+ *
+ * Bisection gives exactly that order: both edges, then the middle, then the
+ * middle of each half. Cutting at the end of a complete bisection level — 2, 3,
+ * 5, 9, 17 rows — gives the most even spread of that length. Intermediate
+ * lengths are close but not optimal: 7 rows over [0, 1000] leaves a 250-frame
+ * gap where a hand-placed 7 would leave 167. The trade buys one rule that
+ * returns something usable no matter where it stops. Doing it by hand — add
+ * the edges, add the middle, then subdivide, one row at a time — is what this
+ * replaces.
+ *
+ * Short intervals shrink rather than pad: [100, 102] with k = 5 is three rows,
+ * because there is no fourth frame in there to submit.
+ */
+export function spreadFrames(start: number, end: number, k: number): number[] {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || k <= 0) {
+    return [];
+  }
+
+  const low = Math.min(start, end);
+  const high = Math.max(start, end);
+
+  const frames: number[] = [];
+  const seen = new Set<number>();
+  const push = (frame: number) => {
+    if (frames.length >= k || seen.has(frame)) {
+      return;
+    }
+    seen.add(frame);
+    frames.push(frame);
+  };
+
+  push(low);
+  push(high);
+
+  // Breadth-first over the halves, so the whole interval is covered coarsely
+  // before any part of it is covered finely.
+  const queue: [number, number][] = [[low, high]];
+  while (queue.length > 0 && frames.length < k) {
+    const [from, to] = queue.shift() as [number, number];
+    if (to - from < 2) {
+      continue;
+    }
+    const middle = Math.floor((from + to) / 2);
+    push(middle);
+    queue.push([from, middle], [middle, to]);
+  }
+
+  return frames;
+}

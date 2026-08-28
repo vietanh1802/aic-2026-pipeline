@@ -13,6 +13,7 @@ import ImportPack from "./pages/ImportPack";
 import Login from "./pages/Login";
 import Rounds from "./pages/Rounds";
 import { useAuthStore } from "./store/authStore";
+import { usePopupStore } from "./store/popupStore";
 
 const HEARTBEAT_MS = 10000;
 
@@ -148,10 +149,13 @@ export default function Root() {
 
       {screen === "board" && (
         <Board
-          onOpenTask={(picked) => {
+          onOpenTask={(picked, options) => {
             setRoundChanged(null);
             setTask(picked);
             setScreen("search");
+            // Opening a teammate's task from the count is a request to see
+            // what is in it, not to start searching.
+            setBasketOpen(options?.openBasket === true);
           }}
         />
       )}
@@ -164,7 +168,11 @@ export default function Root() {
       {/* Kept mounted rather than unmounted, so switching to the board and back
           does not throw away the current search results. */}
       <div hidden={screen !== "search"}>
-        <App activeTask={task} onBasketChanged={() => void refreshCount()} />
+        <App
+          activeTask={task}
+          rowsPerQuery={rowsPerQuery}
+          onBasketChanged={() => void refreshCount()}
+        />
       </div>
 
       <AnswerBasket
@@ -174,6 +182,12 @@ export default function Root() {
         onClose={() => {
           setBasketOpen(false);
           void refreshCount();
+        }}
+        onOpenVideo={(videoId, frameIdx) => {
+          // The popup lives inside App, which Root hides on every other screen.
+          // Opening it from the basket has to bring the search screen with it.
+          setScreen("search");
+          usePopupStore.getState().open(videoId, frameIdx);
         }}
       />
     </>

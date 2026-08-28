@@ -9,6 +9,7 @@ import {
 } from "../api/board";
 import { ApiRequestError } from "../api/base";
 import Button from "../components/Button";
+import { taskBriefText } from "../helpers/taskBrief";
 import { useAuthStore } from "../store/authStore";
 
 const POLL_MS = 3000;
@@ -31,7 +32,7 @@ const TYPE_LABEL: Record<BoardTask["type"], string> = {
 export default function Board({
   onOpenTask,
 }: {
-  onOpenTask: (task: BoardTask) => void;
+  onOpenTask: (task: BoardTask, options?: { openBasket?: boolean }) => void;
 }) {
   const me = useAuthStore((state) => state.user);
   const [board, setBoard] = useState<BoardResponse | null>(null);
@@ -170,7 +171,7 @@ export default function Board({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-proto-body">
-                    <span className="line-clamp-2">{task.query_text}</span>
+                    <span className="line-clamp-2">{taskBriefText(task)}</span>
                     {task.viewers.length > 0 && (
                       <span className="text-[10.5px] text-[#9b6dd6] block mt-0.5">
                         đang xem: {task.viewers.map((v) => v.display_name).join(", ")}
@@ -187,10 +188,26 @@ export default function Board({
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono">
-                    <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
-                      {task.answer_count}
-                    </span>
-                    <span className="text-proto-muted">/{rowsPerQuery}</span>
+                    {task.owner ? (
+                      <button
+                        type="button"
+                        title={`Xem giỏ của ${task.owner.display_name}`}
+                        onClick={() => onOpenTask(task, { openBasket: true })}
+                        className="underline decoration-dotted underline-offset-2"
+                      >
+                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
+                          {task.answer_count}
+                        </span>
+                        <span className="text-proto-muted">/{rowsPerQuery}</span>
+                      </button>
+                    ) : (
+                      <>
+                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
+                          {task.answer_count}
+                        </span>
+                        <span className="text-proto-muted">/{rowsPerQuery}</span>
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     {!task.owner && (
