@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
 import GotoFrame from "./components/GotoFrame";
@@ -428,6 +428,44 @@ function App({
     [results, focusVideos]
   );
 
+  // Show Top can be 500 (2000 on the OCR route) and that is deliberate — the
+  // frame you want may rank 300th, and you cannot pick what you cannot see.
+  // What is NOT affordable is painting all of them at once: each keyframe is a
+  // full 1280x720 JPEG, ~145 KB on the wire and ~3.5 MB decoded, so 345 tiles
+  // is roughly 49 MB of download and a gigabyte of image memory. So the search
+  // keeps its reach and the grid pages: a screenful at a time, more as you get
+  // to the bottom.
+  const PAGE_SIZE = 100;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  // A new result set, or a change of filter, starts the window over.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [shownResults]);
+
+  const visibleResults = useMemo(
+    () => shownResults.slice(0, visibleCount),
+    [shownResults, visibleCount]
+  );
+  const hasMore = visibleCount < shownResults.length;
+
+  // Grow when the sentinel scrolls into view. The button below it does the same
+  // thing on click, so a browser that never fires this is still fully usable.
+  useEffect(() => {
+    const node = moreRef.current;
+    if (!node || !hasMore) {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisibleCount((count) => count + PAGE_SIZE);
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, visibleCount]);
+
   // Nhãn E1…EN là chính các đoạn người dùng gõ, tách đúng luật của
   // preprocess.py:_split_query_text.
   const queryParts = splitQueryParts(queryText);
@@ -437,9 +475,9 @@ function App({
   >({});
   useEffect(() => {
     if (sortFrameBy == "video_id" && shownResults) {
-      setgroupedResult(formatResultByVideoID(shownResults));
+      setgroupedResult(formatResultByVideoID(visibleResults));
     }
-  }, [sortFrameBy, shownResults]);
+  }, [sortFrameBy, visibleResults]);
 
   return (
     <div className="relative min-h-screen bg-proto-canvas p-2">
@@ -595,9 +633,9 @@ function App({
       )}
 
       {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
-        <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6 mb-[280px]">
+        <div className="max-w-[98%] mx-auto grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6">
           <FrameDisplay
-            results={shownResults}
+            results={visibleResults}
             maxDistance={maxDistance}
             isLoading={isLoading}
             onUseAsAnchor={handleUseAsAnchor}
@@ -617,6 +655,26 @@ function App({
           />
         </div>
       )}
+
+      {/* Paging sentinel. Scrolling here loads the next page; the button does
+          the same on click, so this still works if IntersectionObserver never
+          fires. Both views read `visibleResults`, so the grouped list is
+          bounded too. */}
+      {hasQueried && !isLoading && hasMore && (
+        <div
+          ref={moreRef}
+          className="max-w-[98%] mx-auto mt-6 flex items-center justify-center"
+        >
+          <button
+            type="button"
+            onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+            className="text-[12.5px] px-4 py-2 rounded-[8px] border border-proto-line bg-white text-proto-body"
+          >
+            Xem thêm — đang hiện {visibleResults.length}/{shownResults.length}
+          </button>
+        </div>
+      )}
+      <div className="mb-[280px]" />
 
       {(isLoading || (hasQueried && sortFrameBy == "video_id")) && (
         <div className="mb-[280px]">
