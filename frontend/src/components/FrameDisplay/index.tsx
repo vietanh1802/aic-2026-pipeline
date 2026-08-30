@@ -1,7 +1,34 @@
-import type { SearchResult } from "../../types/api";
+import type { OcrSearchResult, SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
+
+/**
+ * The OCR text read off this frame — only present on OCR-route results.
+ *
+ * Visual-route results carry no `ocr_text`, so this renders nothing and every
+ * existing <FrameDisplay/> call site is unaffected.
+ *
+ * Printed onto the card rather than hidden in a tooltip: reading the line is
+ * what tells you instantly whether this is the frame you want, without zooming
+ * into each image. That is precisely why the OCR route beats the visual one
+ * when the screen carries text.
+ */
+function OcrLine({ result }: { result: SearchResult }) {
+  const text = (result as OcrSearchResult).ocr_text;
+  if (!text) return null;
+  const wholePhrase = (result as OcrSearchResult).exact_phrase;
+  return (
+    <span
+      className={`mt-0.5 line-clamp-3 whitespace-pre-wrap break-words leading-tight ${
+        wholePhrase ? "font-bold text-proto-body" : "text-proto-muted"
+      }`}
+      title={text}
+    >
+      {text}
+    </span>
+  );
+}
 
 type FrameDisplayProps2 = {
   results: SearchResult[];
@@ -190,6 +217,7 @@ export default function FrameDisplay({
                       {result.distance.toFixed(1)}%
                     </span>
                   </span>
+                  <OcrLine result={result} />
                 </div>
               </div>
             );

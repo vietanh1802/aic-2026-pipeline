@@ -19,6 +19,12 @@ import { useAuthStore } from "../../store/authStore";
 // under time pressure, so the lines get drawn.
 const CUTS = [1, 5, 20, 50, 100];
 
+// The range AutofillRequest.step accepts on the server (ge=1, le=2000). The UI
+// must not offer a value the API will reject.
+const STEP_MIN = 1;
+const STEP_MAX = 2000;
+const inStepRange = (value: number) => value >= STEP_MIN && value <= STEP_MAX;
+
 const ORIGIN_STRIPE: Record<string, string> = {
   mine: "border-l-proto-teal",
   mate: "border-l-[#9b6dd6]",
@@ -41,6 +47,9 @@ export default function AnswerBasket({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(25);
+  // What is in the box, which may briefly be empty or half-typed. `step` only
+  // ever holds a value the server would accept.
+  const [stepText, setStepText] = useState("25");
 
   const reload = useCallback(async () => {
     if (!task) return;
@@ -59,7 +68,9 @@ export default function AnswerBasket({
   // TRAKE is graded inside a window the rules put at "usually under 10 frames",
   // so a one-second step would jump clean over it.
   useEffect(() => {
-    setStep(task?.type === "trake" ? 2 : 25);
+    const next = task?.type === "trake" ? 2 : 25;
+    setStep(next);
+    setStepText(String(next));
   }, [task?.type]);
 
   if (!open || !task) {
@@ -119,19 +130,35 @@ export default function AnswerBasket({
             <span className="font-mono text-xs text-proto-ink">
               {anchor ? `${anchor.video_id} · ${anchor.frames.join(", ")}` : "—"}
             </span>
+            {/* Typed, not dragged. The step is a frame count someone has in
+                mind — 2 for a TRAKE window, 25 for a second at 25 fps — and a
+                track makes you hunt for a number you already knew. Typing also
+                reaches the whole range the API accepts (1-2000); the track
+                stopped at 120 because that was as far as dragging stayed
+                usable. */}
             <label className="flex items-center gap-2 ml-auto">
               <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
                 Bước
               </span>
               <input
-                type="range"
-                min={1}
-                max={120}
-                value={step}
-                onChange={(e) => setStep(Number(e.target.value))}
-                className="accent-proto-primary"
+                type="number"
+                min={STEP_MIN}
+                max={STEP_MAX}
+                value={stepText}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  setStepText(raw);
+                  const parsed = Number(raw);
+                  // Commit only a usable value, so clearing the field to retype
+                  // does not snap it to 1 under the cursor.
+                  if (raw !== "" && Number.isInteger(parsed) && inStepRange(parsed)) {
+                    setStep(parsed);
+                  }
+                }}
+                onBlur={() => setStepText(String(step))}
+                className="w-16 px-2 py-0.5 rounded-[6px] border border-proto-line bg-white font-mono font-bold text-sm text-right text-proto-ink"
               />
-              <span className="font-mono font-bold text-sm w-8 text-right">{step}</span>
+              <span className="text-[10px] text-proto-muted">frame</span>
             </label>
           </div>
           <div className="flex items-center gap-3 mt-2 flex-wrap">
@@ -176,7 +203,7 @@ export default function AnswerBasket({
         <div className="flex-1 overflow-y-auto px-5 py-3">
           {rows.length === 0 && (
             <p className="text-sm text-proto-muted">
-              Chưa có dòng nào. Bấm <b>A</b> trên một kết quả tìm kiếm để thêm.
+              Chưa có dòng nào. Bấm <b>+</b> trên một kết quả tìm kiếm để thêm.
             </p>
           )}
           {rows.map((row, index) => (

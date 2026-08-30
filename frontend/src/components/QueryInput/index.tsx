@@ -35,6 +35,12 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const useRerank = useQueryStore((state) => state.useRerank);
   const setUseRerank = useQueryStore((state) => state.setUseRerank);
 
+  const ocrStripDiacritics = useQueryStore((state) => state.ocrStripDiacritics);
+  const setOcrStripDiacritics = useQueryStore(
+    (state) => state.setOcrStripDiacritics
+  );
+  const isOcr = searchType === "ocr";
+
   const translateLang = useQueryStore((state) => state.translateLang);
   const setTranslateLang = useQueryStore((state) => state.setTranslateLang);
   const queryTranslated = useQueryStore((state) => state.queryTranslated);
@@ -59,20 +65,28 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     setisTranslated(true);
   };
 
-  const resultLimitOptions: DropdownOption[] =
-    searchType === "multimodal"
-      ? [
-          { id: 0, label: "10", value: "10" },
-          { id: 1, label: "50", value: "50" },
-          { id: 2, label: "100", value: "100" },
-          { id: 3, label: "200", value: "200" },
-        ]
-      : [
-          { id: 0, label: "10", value: "10" },
-          { id: 1, label: "50", value: "50" },
-          { id: 2, label: "100", value: "100" },
-          { id: 3, label: "500", value: "500" },
-        ];
+  // OCR can go deeper because it does not run a visual model. Multimodal is
+  // video-level and its backend limit is 500, but 200 keeps the UI practical.
+  const resultLimitOptions: DropdownOption[] = isOcr
+    ? [
+        { id: 0, label: "50", value: "50" },
+        { id: 1, label: "100", value: "100" },
+        { id: 2, label: "500", value: "500" },
+        { id: 3, label: "2000", value: "2000" },
+      ]
+    : searchType === "multimodal"
+    ? [
+        { id: 0, label: "10", value: "10" },
+        { id: 1, label: "50", value: "50" },
+        { id: 2, label: "100", value: "100" },
+        { id: 3, label: "200", value: "200" },
+      ]
+    : [
+        { id: 0, label: "10", value: "10" },
+        { id: 1, label: "50", value: "50" },
+        { id: 2, label: "100", value: "100" },
+        { id: 3, label: "500", value: "500" },
+      ];
 
   const topMOptions: DropdownOption[] = [
     { id: 0, label: "20", value: "20" },
@@ -96,6 +110,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     { id: 2, label: "Visual + Speech", value: "multimodal" as SearchType },
     { id: 3, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
     { id: 4, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
+    { id: 5, label: "OCR — chữ trên màn hình", value: "ocr" as SearchType },
   ];
 
   const modelOptions: DropdownOption[] = [
@@ -139,27 +154,51 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
             />
           </div>
 
-          <div className="items-center">
-            <p className="font-bold">Top-M mỗi model</p>
-            <Dropdown
-              options={topMOptions}
-              value={String(topM)}
-              onChange={(opt) => setTopM(Number(opt.value))}
-              dropDownWidth={90}
-              dropDirection="up"
-            />
-          </div>
+          {/* Top-M and Rerank are Alg.3/Alg.2 parameters. The OCR route calls
+              no model, so both are meaningless there - hidden rather than
+              left sitting on screen doing nothing. */}
+          {!isOcr && (
+            <>
+              <div className="items-center">
+                <p className="font-bold">Top-M mỗi model</p>
+                <Dropdown
+                  options={topMOptions}
+                  value={String(topM)}
+                  onChange={(opt) => setTopM(Number(opt.value))}
+                  dropDownWidth={90}
+                  dropDirection="up"
+                />
+              </div>
 
-          {searchType !== "multimodal" && (
+              {searchType !== "multimodal" && (
+                <div className="flex flex-col items-start">
+                  <p className="font-bold">Rerank (Alg.2)</p>
+                  <label className="flex items-center gap-x-1 cursor-pointer p-2">
+                    <input
+                      type="checkbox"
+                      checked={useRerank}
+                      onChange={(e) => setUseRerank(e.target.checked)}
+                    />
+                    <span className="text-sm">bật</span>
+                  </label>
+                </div>
+              )}
+
+            </>
+          )}
+
+          {isOcr && (
             <div className="flex flex-col items-start">
-              <p className="font-bold">Rerank (Alg.2)</p>
+              <p className="font-bold">Bỏ dấu</p>
               <label className="flex items-center gap-x-1 cursor-pointer p-2">
                 <input
                   type="checkbox"
-                  checked={useRerank}
-                  onChange={(e) => setUseRerank(e.target.checked)}
+                  checked={ocrStripDiacritics}
+                  onChange={(e) => setOcrStripDiacritics(e.target.checked)}
                 />
-                <span className="text-sm">bật</span>
+                <span className="text-sm">
+                  {ocrStripDiacritics ? "bật — bắt cả lỗi dấu" : "tắt — khớp y hệt"}
+                </span>
               </label>
             </div>
           )}
@@ -178,27 +217,34 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           )}
         </div>
         <div className="flex flex-row items-center gap-x-3">
-          <div>
-            <p className="font-bold">Language</p>
-            <Dropdown
-              options={transLangOptions}
-              value={translateLang}
-              onChange={(opt) =>
-                setTranslateLang(opt.value as TranslateLanguage)
-              }
-              dropDownWidth={100}
-              dropDirection="up"
-            />
-          </div>
-          <div>
-            <p className="font-bold">Button</p>
-            <Button
-              className="h-full bg-gray-500 hover:bg-gray-700"
-              onClick={handleTranslate}
-            >
-              Translate
-            </Button>
-          </div>
+          {/* Translation exists for BEiT3/CLIP, which only understand English.
+              Text on screen is native Vietnamese - translating the query into
+              English would stop it matching the corpus at all. */}
+          {!isOcr && (
+            <>
+              <div>
+                <p className="font-bold">Language</p>
+                <Dropdown
+                  options={transLangOptions}
+                  value={translateLang}
+                  onChange={(opt) =>
+                    setTranslateLang(opt.value as TranslateLanguage)
+                  }
+                  dropDownWidth={100}
+                  dropDirection="up"
+                />
+              </div>
+              <div>
+                <p className="font-bold">Button</p>
+                <Button
+                  className="h-full bg-gray-500 hover:bg-gray-700"
+                  onClick={handleTranslate}
+                >
+                  Translate
+                </Button>
+              </div>
+            </>
+          )}
 
           <div className="items-center font-baloo">
             <p className="font-bold">Search Type</p>
@@ -249,16 +295,31 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         </p>
       )}
 
+      {isOcr && (
+        <p className="text-xs text-proto-muted -mt-2">
+          Gõ ĐÚNG cụm chữ nhìn thấy trên hình — biển hiệu, tên người, dòng chữ
+          chạy, con số. Đừng mô tả cảnh. Gõ càng đặc trưng càng tốt:{" "}
+          <span className="font-bold">Quán ăn Chợ Lớn</span> tốt hơn{" "}
+          <span className="font-bold">quán ăn</span>. Chỉ 180 000/360 531
+          keyframe có chữ, phần còn lại tuyến này không thấy.
+        </p>
+      )}
+
       <div className="w-full flex flex-row gap-x-3">
         <input
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
           className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !disabled) doSearch();
+          }}
           placeholder={
             searchType === "temporal"
               ? "vd: người bước lên sân khấu. khán giả vỗ tay"
               : searchType === "trake"
               ? "vd: cắt nấm. cắt đậu hũ. bật bếp"
+              : isOcr
+              ? "vd: Quán ăn Chợ Lớn · Dầu Diesel · Trường Quốc tế Á Châu"
               : "Enter your query"
           }
         />

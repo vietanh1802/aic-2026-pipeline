@@ -29,6 +29,8 @@ export interface BoardRound {
   id: number;
   label: string;
   source_filename: string;
+  /** False when looking at a retired round rather than the live one. */
+  active: boolean;
   deadline_at: string | null;
   server_time: string;
   rows_per_query: number;
@@ -40,8 +42,9 @@ export interface BoardResponse {
   me: Person | null;
 }
 
-export function getBoard(): Promise<BoardResponse> {
-  return apiFetch<BoardResponse>("/api/board");
+export function getBoard(packId?: number): Promise<BoardResponse> {
+  const query = packId === undefined ? "" : `?pack_id=${packId}`;
+  return apiFetch<BoardResponse>(`/api/board${query}`);
 }
 
 export function claimTask(taskId: number): Promise<{ task: BoardTask }> {
@@ -110,9 +113,92 @@ export function commitPack(payload: {
   filename_pattern: string;
   source_filename: string;
   edits: { filename: string; question_text: string | null }[];
-}): Promise<{ pack_id: number; tasks_created: number; skipped: number }> {
+}): Promise<{
+  pack_id: number;
+  round_label: string;
+  tasks_created: number;
+  skipped: number;
+  /** Always false — a new round goes live only from the rounds screen. */
+  active: boolean;
+}> {
   return apiFetch("/api/admin/packs/commit", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+// ── Rounds (admin) ───────────────────────────────────────────────────────────
+//
+// Importing creates a round; it no longer decides which one the team works in.
+// That is what these are for.
+
+export interface RoundPack {
+  id: number;
+  label: string;
+  source_filename: string;
+  imported_at: string;
+  imported_by: Person | null;
+  deadline_at: string | null;
+  active: boolean;
+  /** Non-null means soft-deleted: hidden everywhere, restorable, nothing lost. */
+  deleted_at: string | null;
+  task_count: number;
+  answer_count: number;
+}
+
+export function listPacks(): Promise<{ packs: RoundPack[] }> {
+  return apiFetch<{ packs: RoundPack[] }>("/api/admin/packs");
+}
+
+export function activatePack(packId: number): Promise<{ pack: RoundPack }> {
+  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}/activate`, {
+    method: "POST",
+  });
+}
+
+export function patchPack(
+  packId: number,
+  // An empty deadline_at clears the countdown; omitting it leaves it alone.
+  payload: { round_label?: string; deadline_at?: string }
+): Promise<{ pack: RoundPack }> {
+  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deletePack(packId: number): Promise<{ pack: RoundPack }> {
+  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}`, {
+    method: "DELETE",
+  });
+}
+
+export function restorePack(packId: number): Promise<{ pack: RoundPack }> {
+  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}/restore`, {
+    method: "POST",
+  });
+}
+
+// ── Audit ────────────────────────────────────────────────────────────────────
+
+export interface AuditEntry {
+  id: number;
+  at: string;
+  action: string;
+  target: string;
+  summary: string;
+  by: { id: number; username: string; display_name: string };
+  /** Rows this entry can put back. 0 means nothing to restore. */
+  restorable: number;
+  restored_at: string | null;
+}
+
+export function getAudit(limit = 100): Promise<{ entries: AuditEntry[] }> {
+  return apiFetch<{ entries: AuditEntry[] }>(`/api/admin/audit?limit=${limit}`);
+}
+
+export function restoreFromAudit(
+  entryId: number
+): Promise<{ restored: number; skipped: number }> {
+  return apiFetch(`/api/admin/audit/${entryId}/restore`, { method: "POST" });
 }

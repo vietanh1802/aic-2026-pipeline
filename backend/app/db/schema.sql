@@ -75,3 +75,22 @@ CREATE TABLE IF NOT EXISTS settings (
   value  TEXT NOT NULL
 );
 
+-- Who did what. The round that "disappeared" was never deleted — it was
+-- deactivated by the next import, and nothing recorded that, which is exactly
+-- why nobody could answer "ai đã bấm gì". Every state change and every deletion
+-- writes a row here.
+--
+-- `detail` carries the deleted rows themselves for the destructive actions, so
+-- an admin can put them back. A hundred answers is a few KB of JSON.
+-- `restored_at` is what stops one entry being restored twice.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id           INTEGER PRIMARY KEY,
+  at           TEXT NOT NULL,
+  user_id      INTEGER NOT NULL REFERENCES users(id),
+  action       TEXT NOT NULL,          -- 'pack.import' | 'pack.activate' | 'answers.clear' | ...
+  target       TEXT NOT NULL,          -- 'pack:12' | 'task:47'
+  summary      TEXT NOT NULL,          -- one line, already in the admin's language
+  detail       TEXT,                   -- JSON payload; restorable rows live here
+  restored_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC, id DESC);

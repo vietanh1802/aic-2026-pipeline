@@ -36,6 +36,15 @@ services:
     environment:
       AIC_INDEX_DIR: /opt/aic/indexes
       AIC_IMAGES_DIR: /opt/aic/static/images
+      # ocr_clean.json + ocr_clean_nodau.json (55 MB) ride the same road as the
+      # FAISS indexes: up to s3://aic2026-artifacts/indexes/, then
+      # ssm-sync-indexes.sh pulls them onto /opt/aic/indexes on the host.
+      #
+      # Never leave this at its default: backend/app/indexes/ is in .gitignore,
+      # so the checkout CI builds the image from is always EMPTY. The image
+      # would ship without the files and /ocr-search would 503 while every
+      # other check stayed green.
+      AIC_OCR_DIR: ${AIC_OCR_DIR:-/opt/aic/indexes}
       # The collaboration database. Bind-mounted to the host beside the
       # indexes and images, not left in the container's writable layer: every
       # deploy runs `compose up --force-recreate`, which would otherwise take
