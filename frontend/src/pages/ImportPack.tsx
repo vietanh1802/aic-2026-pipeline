@@ -9,6 +9,7 @@ import {
 } from "../api/board";
 import { ApiRequestError } from "../api/base";
 import Button from "../components/Button";
+import RoundList from "../components/RoundList";
 
 /**
  * Drop the archive, look at what came out, commit.
@@ -23,11 +24,10 @@ import Button from "../components/Button";
  * competed in off every board at once. Going live is a separate decision, made
  * on the rounds screen in front of the numbers it costs.
  */
-export default function ImportPack({
-  onImported,
-}: {
-  onImported: () => void;
-}) {
+export default function ImportPack() {
+  // Nhập xong thì tăng số này để danh sách vòng bên dưới tải lại — vòng vừa
+  // tạo phải hiện ra ngay, không phải bấm F5 mới thấy.
+  const [roundsToken, setRoundsToken] = useState(0);
   const [pattern, setPattern] = useState(DEFAULT_PATTERN);
   const [label, setLabel] = useState("Vòng 1");
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -75,6 +75,7 @@ export default function ImportPack({
           " — chưa kích hoạt."
       );
       setPreview(null);
+      setRoundsToken((value) => value + 1);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : "Không lưu được");
     } finally {
@@ -143,8 +144,10 @@ export default function ImportPack({
       {done && (
         <div className="flex items-center gap-3 flex-wrap mt-4 px-4 py-3 rounded-[10px] border border-[#5db872] bg-[#5db872]/10">
           <span className="text-sm text-[#3d7a4d]">{done}</span>
-          <span className="ml-auto">
-            <Button onClick={onImported}>Sang màn Vòng để kích hoạt</Button>
+          {/* Nút "Sang màn Vòng" đã bỏ — bảng vòng giờ nằm ngay bên
+              dưới, không còn màn nào để sang. */}
+          <span className="ml-auto text-[12.5px] text-proto-muted">
+            Kích hoạt ở bảng bên dưới.
           </span>
         </div>
       )}
@@ -201,6 +204,13 @@ export default function ImportPack({
           </div>
         </>
       )}
+
+      {/* Danh sách vòng, gộp từ màn "Vòng" cũ. Hai việc luôn đi liền nhau:
+          nhập gói xong thì việc kế tiếp là kích hoạt nó. Tách hai màn buộc
+          người dùng chuyển tab mới thấy kết quả của lần nhập vừa rồi. */}
+      <div className="mt-8 pt-6 border-t border-proto-line">
+        <RoundList reloadToken={roundsToken} />
+      </div>
     </div>
   );
 }

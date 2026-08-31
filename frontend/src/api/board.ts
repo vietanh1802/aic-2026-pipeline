@@ -16,7 +16,17 @@ export interface BoardTask {
   question_text: string | null;
   n_events: number | null;
   event_labels: string[];
+  /**
+   * Ai TỪNG giành câu này thời còn Nhận/Nhả. Backend vẫn trả về vì cột trong
+   * CSDL còn, nhưng không ai ghi vào nữa. Đừng dùng để quyết định quyền sửa —
+   * giờ ai cũng sửa được, mỗi người một danh sách riêng.
+   */
   owner: Person | null;
+  /** Ai đã có đáp án cho câu này, kèm số dòng. Nhiều dòng nhất đứng trước. */
+  contributors: Contributor[];
+  /** Bài của ai được chọn để nộp. null = chưa chọn. */
+  chosen_author_id: number | null;
+  /** Tổng số dòng của MỌI người, không phải của riêng ai. */
   answer_count: number;
   verified_count: number;
   updated_at: string | null;
@@ -47,17 +57,50 @@ export function getBoard(packId?: number): Promise<BoardResponse> {
   return apiFetch<BoardResponse>(`/api/board${query}`);
 }
 
-export function claimTask(taskId: number): Promise<{ task: BoardTask }> {
-  return apiFetch<{ task: BoardTask }>(`/api/tasks/${taskId}/claim`, {
+export interface Contributor {
+  id: number;
+  username: string;
+  display_name: string;
+  count: number;
+}
+
+/**
+ * Chọn bài của ai làm bài nộp cho câu này. null = bỏ chọn.
+ *
+ * Ai cũng gọi được, không riêng admin: cả nhóm ngồi cùng lúc, bắt chờ một
+ * người bấm là dựng lại đúng nút cổ chai mà việc bỏ Nhận/Nhả vừa gỡ.
+ */
+export function setChosenAuthor(
+  taskId: number,
+  authorId: number | null
+): Promise<{ chosen_author_id: number | null }> {
+  return apiFetch(`/api/tasks/${taskId}/chosen-author`, {
     method: "POST",
+    body: JSON.stringify({ author_id: authorId }),
   });
 }
 
-export function releaseTask(taskId: number): Promise<{ task: BoardTask }> {
-  return apiFetch<{ task: BoardTask }>(`/api/tasks/${taskId}/release`, {
-    method: "POST",
-  });
+/** Mọi danh sách của mọi người cho một câu — màn Export bày ra để chọn. */
+export function answersByAuthor(taskId: number): Promise<{
+  groups: { author: Person; count: number; answers: AnswerRowLite[] }[];
+  chosen_author_id: number | null;
+}> {
+  return apiFetch(`/api/tasks/${taskId}/answers/by-author`);
 }
+
+export interface AnswerRowLite {
+  id: number;
+  rank: number;
+  video_id: string;
+  frames: number[];
+  /** Đáp án chữ. Chỉ câu Q&A mới có, và đó chính là thứ được chấm. */
+  answer_text: string | null;
+  /** Cần cho patchAnswer: sửa mà gửi sai version thì backend trả 409. */
+  version: number;
+}
+
+// claimTask/releaseTask đã bỏ cùng endpoint /claim và /release ở backend.
+// Không để lại hàm bọc: giữ chúng chỉ khiến người sau gọi vào một URL đã 404.
 
 export function heartbeat(taskId: number | null): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>("/api/presence", {

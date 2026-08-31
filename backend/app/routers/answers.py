@@ -28,6 +28,7 @@ from app.routers._shared import (
     after_sort_key,
     answer_payload,
     answers,
+    answers_by_author,
     before_sort_key,
     load_task,
     next_sort_key,
@@ -36,6 +37,12 @@ from app.routers._shared import (
 )
 
 router = APIRouter(prefix="/api", tags=["answers"])
+
+
+class ChosenAuthorRequest(BaseModel):
+    """Chọn bài của ai làm bài nộp cho câu này. None = bỏ chọn."""
+
+    author_id: int | None = None
 
 
 class AnswerCreateRequest(BaseModel):
@@ -82,11 +89,72 @@ def _row_with_rank(conn: sqlite3.Connection, answer_id: int) -> sqlite3.Row:
 @router.get("/tasks/{task_id}/answers")
 def list_answers(
     task_id: int,
+    user: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    author_id: int | None = None,
+) -> dict[str, Any]:
+    """Danh sách của MỘT người. Mặc định là của chính người đang đăng nhập.
+
+    author_id truyền vào để xem bài của người khác — màn Export cần nó. Xem
+    được nhưng KHÔNG sửa được: mọi endpoint ghi ở dưới đều khoá cứng vào
+    user["id"], không nhận author_id từ ngoài.
+    """
+    load_task(conn, task_id)
+    who = author_id if author_id is not None else user["id"]
+    return {"answers": answers(conn, task_id, who), "author_id": who}
+
+
+@router.get("/tasks/{task_id}/answers/by-author")
+def list_answers_by_author(
+    task_id: int,
     _: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
-    load_task(conn, task_id)
-    return {"answers": answers(conn, task_id)}
+    """Mọi danh sách của mọi người cho câu này, mỗi người một khối.
+
+    Đây là thứ màn Export bày ra để bạn so 5 bài rồi chọn một.
+    """
+    task = load_task(conn, task_id)
+    return {
+        "groups": answers_by_author(conn, task_id),
+        "chosen_author_id": task["chosen_author_id"],
+    }
+
+
+@router.post("/tasks/{task_id}/chosen-author")
+def set_chosen_author(
+    task_id: int,
+    payload: ChosenAuthorRequest,
+    user: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """Chọn danh sách của ai làm bài nộp cho câu này.
+
+    Ai cũng chọn được, không chỉ admin: nhóm 5 người ngồi cùng lúc, bắt chờ
+    một người bấm là dựng lại đúng cái nút cổ chai mà việc bỏ Nhận/Nhả vừa gỡ.
+    Mọi lần đổi đều vào audit log nên vẫn lần lại được ai chọn gì.
+    """
+    task = load_task(conn, task_id)
+    if payload.author_id is not None:
+        has = conn.execute(
+            "SELECT 1 FROM answers WHERE task_id = ? AND author_id = ? LIMIT 1",
+            (task_id, payload.author_id),
+        ).fetchone()
+        if has is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Người đó chưa có đáp án nào cho câu này.",
+            )
+    conn.execute(
+        "UPDATE tasks SET chosen_author_id = ?, version = version + 1 WHERE id = ?",
+        (payload.author_id, task_id),
+    )
+    audit.record(
+        conn, user["id"], audit.TASK_CHOOSE_AUTHOR, f"task:{task_id}",
+        f"Chọn bài của user {payload.author_id} cho câu {task['code']}",
+        {"chosen_author_id": payload.author_id},
+    )
+    return {"chosen_author_id": payload.author_id}
 
 
 @router.post("/tasks/{task_id}/answers", status_code=201)
@@ -97,20 +165,27 @@ def create_answer(
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
     load_task(conn, task_id)
+    # Khoá cứng vào người đang đăng nhập. Không nhận author_id từ payload — cho
+    # nhận thì một người ghi được vào danh sách của người khác, đúng thứ vừa bỏ đi.
+    author = user["id"]
     if isinstance(payload.position, dict) and "after_id" in payload.position:
-        sort_key = after_sort_key(conn, task_id, int(payload.position["after_id"]))
+        sort_key = after_sort_key(
+            conn, task_id, int(payload.position["after_id"]), author
+        )
     elif payload.position == "top":
-        sort_key = top_sort_key(conn, task_id)
+        sort_key = top_sort_key(conn, task_id, author)
     else:
-        sort_key = next_sort_key(conn, task_id)
+        sort_key = next_sort_key(conn, task_id, author)
 
     now = utcnow_iso()
     cursor = conn.execute(
         "INSERT INTO answers "
-        "(task_id, sort_key, video_id, frames, answer_text, origin, created_by, "
-        " updated_by, updated_at, version) VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, 1)",
+        "(task_id, author_id, sort_key, video_id, frames, answer_text, origin, "
+        " created_by, updated_by, updated_at, version) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, 1)",
         (
             task_id,
+            author,
             sort_key,
             payload.video_id,
             json.dumps(payload.frames),
@@ -130,7 +205,15 @@ def patch_answer(
     user: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ):
-    row = conn.execute("SELECT * FROM answers WHERE id = ?", (answer_id,)).fetchone()
+    # author_id trong WHERE, giống delete_answer và reorder_answer. Thiếu nó ở
+    # đây là lỗ tôi bỏ sót khi tách danh sách theo người: gửi id dòng của người
+    # khác lên là sửa được đáp án chữ của họ, mà đúng ô đó mới là thứ được chấm
+    # ở câu Q&A. Lọc ngay lúc đọc để "không phải của bạn" trả 404 chứ không rơi
+    # xuống nhánh 409 bên dưới — 409 nói "người khác vừa sửa", một câu sai.
+    row = conn.execute(
+        "SELECT * FROM answers WHERE id = ? AND author_id = ?",
+        (answer_id, user["id"]),
+    ).fetchone()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No such answer"
@@ -175,7 +258,12 @@ def delete_answer(
     # Read the row before destroying it: the audit entry carries it, so a
     # misclick is recoverable rather than only explainable.
     snapshot = audit.snapshot_answers(conn, "id = ?", (answer_id,))
-    cursor = conn.execute("DELETE FROM answers WHERE id = ?", (answer_id,))
+    # author_id trong WHERE: không có nó thì gửi id dòng của người khác lên là
+    # xoá được bài của họ.
+    cursor = conn.execute(
+        "DELETE FROM answers WHERE id = ? AND author_id = ?",
+        (answer_id, user["id"]),
+    )
     if cursor.rowcount != 1:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No such answer"
@@ -212,8 +300,13 @@ def clear_answers(
     audit entry on the way out and an admin can put them back.
     """
     task = load_task(conn, task_id)
-    snapshot = audit.snapshot_answers(conn, "task_id = ?", (task_id,))
-    removed = conn.execute("DELETE FROM answers WHERE task_id = ?", (task_id,)).rowcount
+    snapshot = audit.snapshot_answers(
+        conn, "task_id = ? AND author_id = ?", (task_id, user["id"])
+    )
+    removed = conn.execute(
+        "DELETE FROM answers WHERE task_id = ? AND author_id = ?",
+        (task_id, user["id"]),
+    ).rowcount
     if removed:
         audit.record(
             conn,
@@ -230,22 +323,36 @@ def clear_answers(
 def reorder_answer(
     task_id: int,
     payload: ReorderRequest,
-    _: Annotated[sqlite3.Row, Depends(active_user)],
+    # Trước đây là `_` vì không ai cần biết người gọi là ai. Giờ cần: mỗi người
+    # một danh sách, nên phải biết đang sắp lại danh sách của ai.
+    user: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
     load_task(conn, task_id)
+    author = user["id"]
     if payload.before_id is not None:
-        sort_key = before_sort_key(conn, task_id, payload.before_id)
+        sort_key = before_sort_key(conn, task_id, payload.before_id, author)
     elif payload.after_id is not None:
-        sort_key = after_sort_key(conn, task_id, payload.after_id)
+        sort_key = after_sort_key(conn, task_id, payload.after_id, author)
     else:
-        sort_key = top_sort_key(conn, task_id)
-    conn.execute(
+        sort_key = top_sort_key(conn, task_id, author)
+    # author_id trong WHERE: không có nó thì gửi id của dòng người khác lên là
+    # xáo được thứ tự bài của họ.
+    cursor = conn.execute(
         "UPDATE answers SET sort_key = ?, updated_at = ?, version = version + 1 "
-        "WHERE id = ? AND task_id = ?",
-        (sort_key, utcnow_iso(), payload.answer_id, task_id),
+        "WHERE id = ? AND task_id = ? AND author_id = ?",
+        (sort_key, utcnow_iso(), payload.answer_id, task_id, author),
     )
-    return {"answers": answers(conn, task_id)}
+    # Không khớp dòng nào thì nói ra, đừng trả 200. Trước đây gửi id dòng của
+    # người khác lên sẽ được đáp "xong" kèm danh sách của chính mình — không hư
+    # hại gì, nhưng là một câu trả lời sai, và giống hệt delete_answer ở trên
+    # thì dễ đoán hơn.
+    if cursor.rowcount != 1:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không có dòng này trong danh sách của bạn",
+        )
+    return {"answers": answers(conn, task_id, author)}
 
 
 @router.post("/tasks/{task_id}/answers/autofill")
@@ -259,11 +366,18 @@ def autofill_answers(
     target = min(payload.limit, rows_per_query(conn))
 
     if payload.mode in ("replace_auto", "clear"):
+        # author_id phải có Ở CẢ HAI câu. Thiếu nó ở câu chụp ảnh, nhật ký sẽ
+        # ghi luôn các dòng auto của người khác — những dòng KHÔNG hề bị xoá —
+        # và bấm hoàn tác sẽ chèn lại chúng lần nữa, nhân đôi bài của họ.
         snapshot = audit.snapshot_answers(
-            conn, "task_id = ? AND origin = 'auto'", (task_id,)
+            conn,
+            "task_id = ? AND author_id = ? AND origin = 'auto'",
+            (task_id, user["id"]),
         )
         removed = conn.execute(
-            "DELETE FROM answers WHERE task_id = ? AND origin = 'auto'", (task_id,)
+            "DELETE FROM answers WHERE task_id = ? AND author_id = ? "
+            "AND origin = 'auto'",
+            (task_id, user["id"]),
         ).rowcount
         if removed:
             audit.record(
@@ -276,12 +390,16 @@ def autofill_answers(
             )
         if payload.mode == "clear":
             total = conn.execute(
-                "SELECT COUNT(*) AS n FROM answers WHERE task_id = ?", (task_id,)
+                "SELECT COUNT(*) AS n FROM answers WHERE task_id = ? "
+                "AND author_id = ?",
+                (task_id, user["id"]),
             ).fetchone()["n"]
             return {"added": 0, "removed": removed, "total": total}
 
     rows = conn.execute(
-        "SELECT * FROM answers WHERE task_id = ? ORDER BY sort_key, id", (task_id,)
+        "SELECT * FROM answers WHERE task_id = ? AND author_id = ? "
+        "ORDER BY sort_key, id",
+        (task_id, user["id"]),
     ).fetchall()
     if not rows:
         raise HTTPException(
@@ -327,12 +445,17 @@ def autofill_answers(
             continue
         taken.add(key)
         conn.execute(
-            "INSERT INTO answers (task_id, sort_key, video_id, frames, answer_text, "
-            "origin, created_by, updated_by, updated_at, version) "
-            "VALUES (?, ?, ?, ?, ?, 'auto', ?, NULL, ?, 1)",
+            # 11 cột, 11 giá trị. Thêm author_id vào danh sách cột mà quên thêm
+            # ô ở VALUES là lỗi tôi vừa mắc: SQLite đếm 10 giá trị cho 11 cột và
+            # ném lỗi, còn nếu số có khớp thì 'auto' sẽ lặng lẽ rơi vào
+            # answer_text — hỏng mà không báo gì.
+            "INSERT INTO answers (task_id, author_id, sort_key, video_id, frames, "
+            "answer_text, origin, created_by, updated_by, updated_at, version) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'auto', ?, NULL, ?, 1)",
             (
                 task_id,
-                next_sort_key(conn, task_id),
+                user["id"],
+                next_sort_key(conn, task_id, user["id"]),
                 video_id,
                 json.dumps(frames),
                 answer_text,
@@ -343,6 +466,7 @@ def autofill_answers(
         added += 1
 
     total = conn.execute(
-        "SELECT COUNT(*) AS n FROM answers WHERE task_id = ?", (task_id,)
+        "SELECT COUNT(*) AS n FROM answers WHERE task_id = ? AND author_id = ?",
+        (task_id, user["id"]),
     ).fetchone()["n"]
     return {"added": added, "total": total}

@@ -40,8 +40,9 @@ def _pack(conn):
 
 def _add(conn, task_id, frame, origin="manual"):
     conn.execute(
-        "INSERT INTO answers (task_id, sort_key, video_id, frames, origin, "
-        "created_by, updated_at, version) VALUES (?,?, 'L26_V071', ?, ?, 1, ?, 1)",
+        "INSERT INTO answers (task_id, author_id, sort_key, video_id, frames, "
+        "origin, created_by, updated_at, version) "
+        "VALUES (?, 1, ?, 'L26_V071', ?, ?, 1, ?, 1)",
         (task_id, float(frame), json.dumps([frame]), origin, utcnow_iso()),
     )
 

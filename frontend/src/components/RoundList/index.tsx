@@ -3,35 +3,42 @@ import { useCallback, useEffect, useState } from "react";
 import {
   activatePack,
   deletePack,
-  getAudit,
   listPacks,
   patchPack,
-  restoreFromAudit,
   restorePack,
-  type AuditEntry,
   type RoundPack,
-} from "../api/board";
-import { ApiRequestError } from "../api/base";
-import Button from "../components/Button";
+} from "../../api/board";
+import { ApiRequestError } from "../../api/base";
+import Button from "../Button";
 
 /**
- * Which round the team is working in, and who changed what.
+ * Các vòng đã nhập, và vòng nào đang được dùng.
  *
- * Importing used to decide this by itself and say nothing, so a second import
- * took the live round off every board at once — the "mất toàn bộ task" nobody
- * could explain. Nothing was ever deleted; it was deactivated. Switching rounds
- * is a decision now, made here, in front of the numbers it costs.
+ * Trước đây là màn "Vòng" riêng. Gộp xuống dưới màn Import vì hai việc luôn đi
+ * liền nhau: nhập gói xong thì việc kế tiếp là kích hoạt nó, mà trước đó phải
+ * chuyển tab mới thấy kết quả của lần nhập vừa rồi.
+ *
+ * Nhập gói KHÔNG tự đổi vòng đang thi. Ngày trước nó tự đổi và không nói gì,
+ * nên lần nhập thứ hai gạt vòng đang thi khỏi mọi màn hình — đúng vụ "mất toàn
+ * bộ task" không ai giải thích được. Chẳng có gì bị xoá cả, chỉ bị ngừng kích
+ * hoạt. Giờ đổi vòng là một quyết định, bấm ở đây, trước mặt những con số nó
+ * đánh đổi.
+ *
+ * @param reloadToken đổi giá trị để buộc tải lại — màn Import tăng nó sau mỗi
+ *   lần nhập xong, để vòng mới hiện ra ngay bên dưới.
  */
-export default function Rounds() {
-  const [tab, setTab] = useState<"rounds" | "log">("rounds");
+export default function RoundList({
+  reloadToken = 0,
+}: {
+  reloadToken?: number;
+}) {
   const [packs, setPacks] = useState<RoundPack[] | null>(null);
-  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Which row is one click from doing something irreversible-looking. Two
-  // clicks rather than window.confirm, matching the export screen.
+  // Hàng nào đang cách một cú bấm nữa là làm chuyện khó lùi. Hai bước thay cho
+  // window.confirm, giống màn Export.
   const [confirming, setConfirming] = useState<
     { kind: "activate" | "delete"; id: number } | null
   >(null);
@@ -41,12 +48,7 @@ export default function Rounds() {
 
   const reload = useCallback(async () => {
     try {
-      const [packsResult, auditResult] = await Promise.all([
-        listPacks(),
-        getAudit(100),
-      ]);
-      setPacks(packsResult.packs);
-      setEntries(auditResult.entries);
+      setPacks((await listPacks()).packs);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : "Không tải được");
@@ -55,7 +57,7 @@ export default function Rounds() {
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, reloadToken]);
 
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true);
@@ -77,78 +79,54 @@ export default function Rounds() {
   const live = packs?.find((pack) => pack.active) ?? null;
 
   return (
-    <div className="max-w-[1200px] mx-auto p-6 font-baloo">
-      <h2 className="text-2xl text-proto-ink mb-1">Vòng thi</h2>
-      <p className="text-sm text-proto-muted mb-5">
+    <div className="font-baloo">
+      <h3 className="text-lg text-proto-ink mb-1">
+        Các vòng đã nhập{packs ? ` (${packs.length})` : ""}
+      </h3>
+      <p className="text-sm text-proto-muted mb-3">
         Nhập gói chỉ tạo vòng mới, không đụng vào vòng đang thi. Chọn vòng nào
         được dùng ở đây.
       </p>
 
-      <div className="flex gap-1 mb-4">
-        {(
-          [
-            ["rounds", `Vòng${packs ? ` (${packs.length})` : ""}`],
-            ["log", "Nhật ký"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={`text-[12.5px] px-3 py-1 rounded-[7px] border ${
-              tab === id
-                ? "bg-proto-cream-strong border-proto-cream-strong text-proto-ink font-semibold"
-                : "border-proto-line text-proto-muted"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {error && <p className="text-[#c64545] text-sm mb-2">{error}</p>}
       {note && <p className="text-[#3d7a4d] text-sm mb-2">{note}</p>}
 
-      {tab === "rounds" ? (
-        <div className="border border-proto-line rounded-[10px] overflow-hidden bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-proto-soft text-[10px] uppercase tracking-wide text-proto-muted">
-                <th className="text-left px-3 py-2">Vòng</th>
-                <th className="text-left px-3 py-2 w-40">Nhập lúc</th>
-                <th className="text-right px-3 py-2 w-16">Task</th>
-                <th className="text-right px-3 py-2 w-20">Đáp án</th>
-                <th className="text-left px-3 py-2 w-28">Trạng thái</th>
-                <th className="px-3 py-2 w-[300px]"></th>
+      <div className="border border-proto-line rounded-[10px] overflow-hidden bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-proto-soft text-[10px] uppercase tracking-wide text-proto-muted">
+              <th className="text-left px-3 py-2">Vòng</th>
+              <th className="text-left px-3 py-2 w-40">Nhập lúc</th>
+              <th className="text-right px-3 py-2 w-16">Task</th>
+              <th className="text-right px-3 py-2 w-20">Đáp án</th>
+              <th className="text-left px-3 py-2 w-28">Trạng thái</th>
+              <th className="px-3 py-2 w-[300px]"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {packs?.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-proto-muted">
+                  Chưa nhập gói nào. Thả file zip ở khung phía trên.
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {packs?.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-proto-muted">
-                    Chưa nhập gói nào. Vào tab Import để thả file zip.
-                  </td>
-                </tr>
-              )}
-              {packs?.map((pack) => (
-                <Row
-                  key={pack.id}
-                  pack={pack}
-                  live={live}
-                  busy={busy}
-                  confirming={confirming}
-                  renaming={renaming}
-                  onConfirm={setConfirming}
-                  onRename={setRenaming}
-                  onAct={act}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <Log entries={entries} busy={busy} onAct={act} />
-      )}
+            )}
+            {packs?.map((pack) => (
+              <Row
+                key={pack.id}
+                pack={pack}
+                live={live}
+                busy={busy}
+                confirming={confirming}
+                renaming={renaming}
+                onConfirm={setConfirming}
+                onRename={setRenaming}
+                onAct={act}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -211,7 +189,9 @@ function Row({
         )}
       </td>
       <td className="px-3 py-2 text-proto-muted text-[12px]">
-        <span className="font-mono">{pack.imported_at.replace("T", " ").replace("Z", "")}</span>
+        <span className="font-mono">
+          {pack.imported_at.replace("T", " ").replace("Z", "")}
+        </span>
         <span className="block">{pack.imported_by?.display_name ?? "—"}</span>
       </td>
       <td className="px-3 py-2 text-right font-mono tabular-nums">
@@ -263,8 +243,8 @@ function Row({
             <span className="text-[11.5px] text-proto-body text-right">
               {live && live.id !== pack.id ? (
                 <>
-                  <b>{live.label}</b> ({live.task_count} task, {live.answer_count}{" "}
-                  đáp án) sẽ ngừng hiển thị.
+                  <b>{live.label}</b> ({live.task_count} task,{" "}
+                  {live.answer_count} đáp án) sẽ ngừng hiển thị.
                 </>
               ) : (
                 "Vòng này sẽ thành vòng đang dùng."
@@ -351,8 +331,8 @@ function Row({
                 <Button
                   size="xs"
                   variant="outline"
-                  // Deleting the round in play would empty every board at once —
-                  // the exact failure this screen exists to end. Switch first.
+                  // Xoá vòng đang thi sẽ làm trống mọi bảng cùng lúc — đúng sự
+                  // cố mà màn này sinh ra để chấm dứt. Đổi vòng trước đã.
                   disabled={busy || pack.active}
                   title={
                     pack.active
@@ -369,65 +349,5 @@ function Row({
         )}
       </td>
     </tr>
-  );
-}
-
-function Log({
-  entries,
-  busy,
-  onAct,
-}: {
-  entries: AuditEntry[] | null;
-  busy: boolean;
-  onAct: (fn: () => Promise<unknown>, done?: string) => Promise<void>;
-}) {
-  if (entries === null) {
-    return <p className="text-sm text-proto-muted">Đang tải…</p>;
-  }
-  if (entries.length === 0) {
-    return (
-      <p className="text-sm text-proto-muted">
-        Chưa có gì được ghi lại. Mọi lần nhập, kích hoạt và xoá từ nay sẽ nằm ở
-        đây.
-      </p>
-    );
-  }
-
-  return (
-    <div className="border border-proto-line rounded-[10px] overflow-hidden bg-white">
-      {entries.map((entry) => (
-        <div
-          key={entry.id}
-          className="flex items-center gap-3 flex-wrap px-3 py-2 border-b border-proto-line last:border-b-0 text-[13px]"
-        >
-          <span className="font-mono text-[11.5px] text-proto-muted w-[150px] shrink-0">
-            {entry.at.replace("T", " ").replace("Z", "")}
-          </span>
-          <span className="text-proto-ink w-[110px] shrink-0 truncate">
-            {entry.by.display_name}
-          </span>
-          <span className="text-proto-body flex-1 min-w-[220px]">
-            {entry.summary}
-          </span>
-          {entry.restored_at ? (
-            <span className="text-[11px] text-[#3d7a4d]">đã khôi phục</span>
-          ) : entry.restorable > 0 ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={busy}
-              onClick={() =>
-                void onAct(async () => {
-                  const result = await restoreFromAudit(entry.id);
-                  return result;
-                }, `Đã khôi phục ${entry.restorable} dòng.`)
-              }
-            >
-              Khôi phục {entry.restorable} dòng
-            </Button>
-          ) : null}
-        </div>
-      ))}
-    </div>
   );
 }

@@ -144,3 +144,20 @@ notebooks/thanhbangcao/INDEX.json
 # hơn là không có gì, vì người sau sẽ tin bản trong git.
 bucket-policy-backup/
 deploy/p6/iam-operator-policy.json
+
+# ===== RAM++ tagging (109 MB tổng) =====
+# ramplus_all.json 52 MB — 360.531 ảnh, mỗi ảnh một danh sách nhãn
+# ramplus/         57 MB — các .jsonl rời từ Colab, nguồn để gộp lại
+# ramplus_vocab.json      — 3.366 nhãn kèm số lần xuất hiện, sinh từ file trên
+#
+# GitHub chặn file trên 100 MB và cảnh báo từ 50 MB. Đây là kết quả chạy mô
+# hình, dựng lại được bằng notebook 85/86 — không phải nguồn của repo.
+data_raw/ramplus_all.json
+data_raw/ramplus/
+data_raw/ramplus_vocab.json
+
+# Kết quả A/B test 4 cấu hình OCR cho L25_V001 (notebook 87).
+data_raw/L25_V001_configs.json
+
+# Paper Vintern-1B. Tải lại từ arxiv.org/abs/2408.12480 khi cần.
+docs/2408.12480v2.pdf

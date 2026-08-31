@@ -14,15 +14,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.auth.deps import active_user
 from app.db.connection import get_db, utcnow_iso
 from app.routers._shared import (
     active_pack,
-    load_task,
     rows_per_query,
     task_payload,
     user_out,
@@ -76,46 +74,18 @@ def board(
     }
 
 
-@router.post("/tasks/{task_id}/claim")
-def claim_task(
-    task_id: int,
-    user: Annotated[sqlite3.Row, Depends(active_user)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
-):
-    cursor = conn.execute(
-        "UPDATE tasks SET owner_id = ?, claimed_at = ?, version = version + 1 "
-        "WHERE id = ? AND owner_id IS NULL",
-        (user["id"], utcnow_iso(), task_id),
-    )
-    if cursor.rowcount != 1:
-        current = task_payload(conn, task_id)
-        # Claiming a task you already hold is not a conflict, it is a no-op.
-        if current["owner"] and current["owner"]["id"] == user["id"]:
-            return {"task": current}
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": "Already claimed", "owner": current["owner"]},
-        )
-    return {"task": task_payload(conn, task_id)}
-
-
-@router.post("/tasks/{task_id}/release")
-def release_task(
-    task_id: int,
-    user: Annotated[sqlite3.Row, Depends(active_user)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
-) -> dict[str, Any]:
-    task = load_task(conn, task_id)
-    if user["role"] != "admin" and task["owner_id"] != user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not your task"
-        )
-    conn.execute(
-        "UPDATE tasks SET owner_id = NULL, claimed_at = NULL, version = version + 1 "
-        "WHERE id = ?",
-        (task_id,),
-    )
-    return {"task": task_payload(conn, task_id)}
+# ── Nhận / Nhả đã bỏ ───────────────────────────────────────────────────────
+# POST /tasks/{id}/claim và /release từng là cách giành quyền sửa một câu: một
+# người giữ, những người khác chỉ đọc. Cách đó buộc cả nhóm chờ nhau, và ai vào
+# sau thì sửa đè lên danh sách của người trước.
+#
+# Giờ mỗi người có danh sách riêng cho mỗi câu (answers.author_id), nên không
+# còn gì để giành. Thứ thay thế là `contributors` trong task_payload: không phải
+# "ai đang giữ câu này" mà "câu này đã có ai làm, được bao nhiêu dòng".
+#
+# Cột tasks.owner_id và claimed_at vẫn còn trong CSDL và vẫn được trả ra dưới
+# tên `owner`, nhưng KHÔNG ai ghi vào chúng nữa. Giữ lại vì đó là bằng chứng ai
+# từng giành câu nào, và xoá cột trong SQLite là dựng lại cả bảng.
 
 
 @router.post("/presence")

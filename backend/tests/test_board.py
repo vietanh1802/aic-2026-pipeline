@@ -59,8 +59,9 @@ def test_task_payload_counts_answers_and_shows_the_owner(conn):
     _claim(conn, task_id, 1)
     for frame in (100, 200):
         conn.execute(
-            "INSERT INTO answers (task_id, sort_key, video_id, frames, origin, "
-            "created_by, updated_at, version) VALUES (?, ?, 'L21_V015', ?, 'manual', 1, ?, 1)",
+            "INSERT INTO answers (task_id, author_id, sort_key, video_id, frames, "
+            "origin, created_by, updated_at, version) "
+            "VALUES (?, 1, ?, 'L21_V015', ?, 'manual', 1, ?, 1)",
             (task_id, float(frame), f"[{frame}]", utcnow_iso()),
         )
     payload = task_payload(conn, task_id)

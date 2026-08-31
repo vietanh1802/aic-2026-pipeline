@@ -122,15 +122,26 @@ def commit_pack(
         # Going live is now its own deliberate action: POST
         # /api/admin/packs/{id}/activate, from the rounds screen, after seeing
         # what is being swapped out.
+        # Số vòng lấy từ chính tên file trong zip, không hỏi người nhập.
+        #
+        # `phase` vẫn được trình đọc tách ra từ trước, nhưng không có chỗ cất
+        # nên export viết cứng "p1" — một gói vòng 2 xuất ra vẫn mang tên vòng
+        # 1 và làm hỏng bài nộp. Lấy giá trị phổ biến nhất trong các file khớp:
+        # 25 file cùng một vòng, nên bất đồng chỉ xảy ra khi trong zip lẫn file
+        # của vòng khác, và lúc đó số đông là đáp án đúng.
+        phases = [t.phase for t in matched if t.phase]
+        phase = max(set(phases), key=phases.count) if phases else None
+
         cursor = conn.execute(
             "INSERT INTO packs (round_label, source_filename, filename_pattern, "
-            "imported_by, imported_at, active) VALUES (?, ?, ?, ?, ?, 0)",
+            "imported_by, imported_at, active, phase) VALUES (?, ?, ?, ?, ?, 0, ?)",
             (
                 payload.round_label,
                 payload.source_filename,
                 payload.filename_pattern,
                 user["id"],
                 now,
+                phase,
             ),
         )
         pack_id = cursor.lastrowid

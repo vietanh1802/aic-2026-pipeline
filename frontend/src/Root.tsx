@@ -8,10 +8,10 @@ import AnswerBasket from "./components/AnswerBasket";
 import AppNav, { type Screen } from "./components/AppNav";
 import Board from "./pages/Board";
 import ChangePassword from "./pages/ChangePassword";
+import EvaluationPage from "./pages/Evaluation";
 import ExportPage from "./pages/Export";
 import ImportPack from "./pages/ImportPack";
 import Login from "./pages/Login";
-import Rounds from "./pages/Rounds";
 import { useAuthStore } from "./store/authStore";
 import { usePopupStore } from "./store/popupStore";
 
@@ -159,10 +159,8 @@ export default function Root() {
           }}
         />
       )}
-      {screen === "import" && (
-        <ImportPack onImported={() => setScreen("rounds")} />
-      )}
-      {screen === "rounds" && <Rounds />}
+      {screen === "evaluation" && <EvaluationPage />}
+      {screen === "import" && <ImportPack />}
       {screen === "export" && <ExportPage />}
 
       {/* Kept mounted rather than unmounted, so switching to the board and back

@@ -30,6 +30,14 @@ ANSWER_DELETE = "answer.delete"
 ANSWERS_CLEAR = "answers.clear"
 ANSWERS_AUTOFILL_CLEAR = "answers.autofill_clear"
 ANSWERS_RESTORE = "answers.restore"
+# Chọn bài của ai làm bài nộp cho một câu. KHÔNG nằm trong RESTORABLE: nó không
+# xoá gì, chỉ đổi một con trỏ, và "khôi phục" nó nghĩa là chọn lại người cũ —
+# việc đó bấm một cái là xong, không cần cơ chế khôi phục.
+TASK_CHOOSE_AUTHOR = "task.choose_author"
+# Đổi số vòng trong tên file nộp (query-p2-15-qa.csv). Một cú bấm đổi tên cả 25
+# file của gói, và đặt sai thì bài bị chấm hỏng mà không có dấu hiệu gì trên
+# giao diện — nên phải biết ai đổi, đổi lúc nào, từ giá trị nào.
+PACK_SET_PHASE = "pack.set_phase"
 
 # Which actions put answer rows in `detail`, and so can be undone.
 RESTORABLE = (ANSWER_DELETE, ANSWERS_CLEAR, ANSWERS_AUTOFILL_CLEAR)
@@ -68,6 +76,10 @@ def snapshot_answers(conn: sqlite3.Connection, where: str, params: tuple) -> lis
     return [
         {
             "task_id": row["task_id"],
+            # Phải giữ author_id, không suy ra từ created_by lúc khôi phục:
+            # dòng do admin tạo hộ có created_by khác author_id, đoán lại sẽ
+            # chuyển bài của người này sang tên người khác.
+            "author_id": row["author_id"],
             "sort_key": row["sort_key"],
             "video_id": row["video_id"],
             "frames": row["frames"],
@@ -167,11 +179,16 @@ def restore_answers(
                 skipped += 1
                 continue
             conn.execute(
-                "INSERT INTO answers (task_id, sort_key, video_id, frames, answer_text, "
-                "origin, created_by, updated_by, updated_at, version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                "INSERT INTO answers (task_id, author_id, sort_key, video_id, "
+                "frames, answer_text, origin, created_by, updated_by, "
+                "updated_at, version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                 (
                     answer["task_id"],
+                    # Bản ghi cũ (xoá trước khi có nhiều người dùng) không có
+                    # khoá này; rơi về created_by là đúng vì hồi đó mỗi câu chỉ
+                    # một người làm.
+                    answer.get("author_id") or answer["created_by"],
                     answer["sort_key"],
                     answer["video_id"],
                     answer["frames"],

@@ -54,8 +54,12 @@ export function deleteAnswer(answerId: number): Promise<{ ok: boolean }> {
  * Empties one task's basket, manual pins included.
  *
  * Not the same as autofill's `clear`, which spares the manual rows so the
- * spread can be redone with a different step. This is the export screen's
- * "start this query over".
+ * spread can be redone with a different step.
+ *
+ * KHÔNG màn nào gọi hàm này nữa. Nút "Xoá sạch" trên Export đã bỏ: từ khi mỗi
+ * người một danh sách, nó xoá trắng công của một người trong một cú bấm. Giữ
+ * hàm lại vì endpoint vẫn còn và đây vẫn là cách đúng để gọi nó — nhưng nếu
+ * bạn định nối lại vào một nút nào đó, hãy đọc lại lý do nó bị gỡ trước.
  */
 export function clearAnswers(
   taskId: number
@@ -91,6 +95,15 @@ export function autofillAnswers(
 
 // ── Export ───────────────────────────────────────────────────────────────────
 
+/**
+ * KHÔNG màn nào gọi hàm này nữa.
+ *
+ * Nút "Kiểm tra" trên màn Export đã bỏ: với một gói vừa nhập nó đổ ra đúng 30
+ * dòng "chưa ai làm — sẽ nộp file rỗng", nhiều tới mức che mất cảnh báo thật.
+ * Endpoint /api/export/validate vẫn còn và vẫn báo được những thứ đáng giá —
+ * thiếu dòng, đáp án bỏ trống, dấu phẩy trong đáp án, dòng trùng, TRAKE thiếu
+ * mốc. Nếu nối lại, hãy lọc bớt mức "info" trước.
+ */
 export interface ExportIssue {
   task_code: string;
   severity: "warning" | "info";
@@ -114,4 +127,32 @@ export function previewExport(taskId: number): Promise<{
 
 export function exportZipUrl(packId: number): string {
   return `/api/export/zip?pack_id=${packId}`;
+}
+
+/**
+ * Số vòng trong TÊN FILE của ban tổ chức — "p1", "p2", "p3".
+ *
+ * Không phải nhãn hiển thị: nó đi thẳng vào tên mọi file trong gói nộp
+ * (`query-p2-15-qa.csv`). Đặt sai thì bài bị chấm hỏng mà giao diện không có
+ * dấu hiệu gì, nên `sample_filename` luôn đi kèm để nhìn thấy hậu quả.
+ */
+export interface ExportPhase {
+  phase: string;
+  /** True khi phải đoán vì gói nhập trước đây không lưu số vòng. */
+  guessed: boolean;
+  sample_filename: string | null;
+}
+
+export function getExportPhase(packId: number): Promise<ExportPhase> {
+  return apiFetch(`/api/export/phase?pack_id=${packId}`);
+}
+
+export function setExportPhase(
+  packId: number,
+  phase: string
+): Promise<ExportPhase> {
+  return apiFetch(`/api/export/phase?pack_id=${packId}`, {
+    method: "POST",
+    body: JSON.stringify({ phase }),
+  });
 }

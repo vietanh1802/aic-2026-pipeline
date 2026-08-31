@@ -1,69 +1,59 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
-  clearAnswers,
-  getAnswers,
+  getExportPhase,
   previewExport,
-  validateExport,
-  type AnswerRow,
-  type ExportIssue,
+  setExportPhase,
+  type ExportPhase,
 } from "../api/answers";
 import { API_BASE_URL, ApiRequestError } from "../api/base";
 import {
   getBoard,
   listPacks,
   type BoardResponse,
-  type BoardTask,
   type RoundPack,
 } from "../api/board";
 import Button from "../components/Button";
-import FramePreview from "../components/FramePreview";
-import { startMsAt } from "../helpers/frameIdentity";
-import { taskBriefText } from "../helpers/taskBrief";
-import { videoUrlAt } from "../helpers/videoSource";
 import { useAuthStore } from "../store/authStore";
 
 /**
- * Validate, look at one file, download the round.
+ * Đặt số vòng, xem trước một file, tải cả vòng về.
+ *
+ * Chỉ có thế. Bốn thứ từng nằm ở đây đã đi chỗ khác hoặc bị bỏ:
+ *
+ * - Khung video và danh sách dòng: chuyển sang màn Evaluation. Ở đây nó còn
+ *   sai nữa là khác — nó gọi getAnswers(task) nên bày bài của CHÍNH NGƯỜI ĐANG
+ *   XEM, trong khi file nộp lấy bài của người được chọn. Hai danh sách khác
+ *   nhau đặt dưới cái tiêu đề "xem trước file nộp".
+ * - Ô chọn bài của ai để nộp: cũng sang Evaluation, vì đó là quyết định đưa ra
+ *   khi đang đọ 5 cột bài, không phải khi đang nhìn một dòng trong bảng. Dưới
+ *   đây chỉ hiện KẾT QUẢ của lựa chọn đó, không sửa được.
+ * - Nút "Xoá sạch": bỏ hẳn. Từ khi mỗi người một danh sách, một cú bấm nhầm
+ *   xoá trắng công của một người mà không hoàn tác được từ giao diện. Muốn bỏ
+ *   dòng nào thì xoá từng dòng trên cột của mình ở Evaluation.
+ * - Nút "Kiểm tra" và bảng cảnh báo: bỏ theo yêu cầu. Trên một gói vừa nhập
+ *   nó đổ ra đúng 30 dòng "chưa ai làm — sẽ nộp file rỗng", nhiều tới mức che
+ *   mất những cảnh báo thật. Endpoint /api/export/validate vẫn còn ở backend
+ *   nhưng không màn nào gọi nữa.
  */
 export default function ExportPage() {
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
   const [board, setBoard] = useState<BoardResponse | null>(null);
-  const [issues, setIssues] = useState<ExportIssue[] | null>(null);
-  const [ready, setReady] = useState<boolean | null>(null);
   const [preview, setPreview] = useState<{
     filename: string;
     rows: number;
     content: string;
   } | null>(null);
+  const [previewTaskId, setPreviewTaskId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Which task's "Xoá sạch" is waiting for a second click.
-  const [confirming, setConfirming] = useState<number | null>(null);
-
-  // The task open in the right-hand inspector, and its answers once loaded.
-  // Clicking a row in the left list sets this; "▶ Top-1" sets it too and also
-  // picks the rank-1 row, since reviewing a query is mostly reviewing its
-  // first row — R@1 is a fifth of the score.
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  const [answers, setAnswers] = useState<AnswerRow[] | null>(null);
-  const [answersLoading, setAnswersLoading] = useState(false);
-  // The row the player is parked on. Set by a click, never by hovering.
-  const [selectedAnswerId, setSelectedAnswerId] = useState<number | null>(
-    null
-  );
-  const [briefExpanded, setBriefExpanded] = useState(false);
-  // Pointing at a row previews its still; only a click moves the player.
-  // Sweeping the list to compare frames should not yank the video around.
-  const [hoveredAnswerId, setHoveredAnswerId] = useState<number | null>(null);
-
-  // The mounted player, so a row click on the same video can seek in place
-  // instead of the `src` change that a video swap needs.
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [activeVideoId, setActiveVideoId] = useState("");
-  const [videoSrc, setVideoSrc] = useState("");
+  // Số vòng trong tên file nộp, và cái đang gõ trong ô. Tách ra vì `phaseText`
+  // được phép ở trạng thái dở dang ("" trong lúc xoá để gõ lại), còn `phase`
+  // chỉ giữ giá trị máy chủ đã nhận.
+  const [phase, setPhase] = useState<ExportPhase | null>(null);
+  const [phaseText, setPhaseText] = useState("");
 
   // Which round is being exported. Null means the live one — resubmitting a
   // round that has been retired is a real errand, so the picker exists, but the
@@ -88,107 +78,32 @@ export default function ExportPage() {
   }, [user?.role]);
 
   const packId = board?.round?.id ?? null;
-  const selectedTask =
-    board?.tasks.find((task) => task.id === selectedTaskId) ?? null;
-  const selectedAnswer =
-    answers?.find((row) => row.id === selectedAnswerId) ?? null;
-  // Only what the pointer is on. Falling back to the clicked row would leave a
-  // still permanently parked over the player, which is what it is not for.
-  const hoveredAnswer =
-    answers?.find((row) => row.id === hoveredAnswerId) ?? null;
 
-  // A different video needs a new `src` — changing it is what makes the
-  // browser reload the file. The same video just needs the element's
-  // currentTime nudged, which never touches `src` and so never remounts.
   useEffect(() => {
-    if (!selectedAnswer) {
+    if (packId === null) {
       return;
     }
-    const seconds =
-      startMsAt(selectedAnswer.video_id, selectedAnswer.frames[0] ?? 0) /
-      1000;
-    if (selectedAnswer.video_id !== activeVideoId) {
-      setActiveVideoId(selectedAnswer.video_id);
-      setVideoSrc(videoUrlAt(selectedAnswer.video_id, seconds));
-      return;
-    }
-    const element = videoRef.current;
-    if (element) {
-      element.currentTime = seconds;
-    }
-  }, [selectedAnswer, activeVideoId]);
+    void getExportPhase(packId)
+      .then((result) => {
+        setPhase(result);
+        setPhaseText(result.phase);
+      })
+      .catch(() => undefined);
+  }, [packId]);
 
-  const refreshBoard = async () => {
-    setBoard(await getBoard(viewing ?? undefined));
-  };
-
-  // Opens the inspector on one task. `focusTop1` also picks its rank-1 row,
-  // which is what the "▶ Top-1" button wants — the task and its first row in
-  // one click instead of two.
-  const selectTask = async (task: BoardTask, focusTop1 = false) => {
-    setSelectedTaskId(task.id);
-    setSelectedAnswerId(null);
-    setBriefExpanded(false);
-    setAnswersLoading(true);
-    setAnswers(null);
-    try {
-      const result = await getAnswers(task.id);
-      setAnswers(result.answers);
-      setError(null);
-      if (focusTop1) {
-        const top = result.answers[0];
-        if (top) {
-          setSelectedAnswerId(top.id);
-        } else {
-          setError(`Task ${task.code} chưa có dòng nào.`);
-        }
-      }
-    } catch (err) {
-      setError(
-        err instanceof ApiRequestError ? err.message : "Không tải được danh sách"
-      );
-    } finally {
-      setAnswersLoading(false);
-    }
-  };
-
-  const reviewTop1 = (task: BoardTask) => selectTask(task, true);
-
-  const clear = async (taskId: number) => {
+  const savePhase = async (value: string) => {
+    if (packId === null) return;
     setBusy(true);
     try {
-      const result = await clearAnswers(taskId);
-      setConfirming(null);
+      const result = await setExportPhase(packId, value);
+      setPhase(result);
+      setPhaseText(result.phase);
+      // Tên file vừa đổi, nên bản xem trước đang hiện là tên cũ.
       setPreview(null);
-      // Only the task that was actually cleared loses its inspector state —
-      // clearing one query's rows should not blank out another one someone
-      // else has open.
-      if (selectedTaskId === taskId) {
-        setAnswers([]);
-        setSelectedAnswerId(null);
-      }
-      await refreshBoard();
-      // Counts moved, so the warnings from before this click are stale.
-      setIssues(null);
-      setReady(null);
-      setError(result.removed === 0 ? "Không có dòng nào để xoá." : null);
-    } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : "Không xoá được");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const check = async () => {
-    if (!packId) return;
-    setBusy(true);
-    try {
-      const result = await validateExport(packId);
-      setIssues(result.issues);
-      setReady(result.ready);
+      setPreviewTaskId(null);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : "Không kiểm được");
+      setError(err instanceof ApiRequestError ? err.message : "Không đổi được");
     } finally {
       setBusy(false);
     }
@@ -197,8 +112,11 @@ export default function ExportPage() {
   const look = async (taskId: number) => {
     try {
       setPreview(await previewExport(taskId));
+      setPreviewTaskId(taskId);
       setError(null);
     } catch (err) {
+      setPreview(null);
+      setPreviewTaskId(null);
       setError(err instanceof ApiRequestError ? err.message : "Không xem được");
     }
   };
@@ -220,7 +138,12 @@ export default function ExportPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${board?.round?.label ?? "submission"}.zip`;
+      // LUÔN "submission.zip". Trước đây lấy theo nhãn vòng, nên mỗi vòng ra
+      // một tên khác và nhãn tiếng Việt còn kéo theo cả lỗi 500 ở header phía
+      // máy chủ. Phải khớp SUBMISSION_ZIP_NAME trong backend/app/routers/
+      // export.py — thẻ <a download> luôn thắng header, nên lệch nhau thì tên
+      // lưu xuống máy không phải tên máy chủ gửi.
+      anchor.download = "submission.zip";
       // Two things this used to get wrong, both of which end in the same
       // symptom: the button works, no error shows, and no file arrives.
       // Firefox ignores click() on an anchor that is not in the document, and
@@ -248,6 +171,11 @@ export default function ExportPage() {
     );
   }
 
+  const unchosen =
+    board?.tasks.filter(
+      (task) => task.contributors.length > 0 && task.chosen_author_id === null
+    ) ?? [];
+
   return (
     <div className="max-w-[1200px] mx-auto p-6 font-baloo">
       <div className="flex items-center gap-3 mb-5 flex-wrap">
@@ -262,13 +190,8 @@ export default function ExportPage() {
               value={viewing ?? ""}
               onChange={(event) => {
                 setViewing(event.target.value ? Number(event.target.value) : null);
-                setIssues(null);
-                setReady(null);
                 setPreview(null);
-                // Task ids from the round left behind mean nothing here.
-                setSelectedTaskId(null);
-                setAnswers(null);
-                setSelectedAnswerId(null);
+                setPreviewTaskId(null);
               }}
             >
               <option value="">Vòng đang dùng</option>
@@ -290,333 +213,178 @@ export default function ExportPage() {
             Vòng đã nghỉ
           </span>
         )}
-        <span className="ml-auto flex gap-2">
-          <Button variant="outline" disabled={busy} onClick={() => void check()}>
-            Kiểm tra
-          </Button>
+        <span className="ml-auto flex gap-2 items-center">
+          {/* Số vòng. Nằm cạnh nút tải chứ không giấu trong màn quản trị: nó
+              quyết định tên của cả 25 file trong gói, và đặt sai thì bài bị
+              chấm hỏng mà không có dấu hiệu gì. */}
+          <label className="flex items-center gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+              Vòng
+            </span>
+            <input
+              value={phaseText}
+              disabled={busy || !packId}
+              onChange={(event) => setPhaseText(event.target.value)}
+              onBlur={() => {
+                if (phaseText !== phase?.phase) void savePhase(phaseText);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              placeholder="p1"
+              title="Số vòng trong tên file của ban tổ chức. Gõ 2 hoặc p2."
+              className={`w-14 px-2 py-1 rounded-[7px] border bg-white text-[13px] font-mono text-proto-ink text-center ${
+                phase?.guessed ? "border-[#d4a017]" : "border-proto-line"
+              }`}
+            />
+          </label>
           <Button disabled={busy || !packId} onClick={() => void download()}>
             Tải zip
           </Button>
         </span>
       </div>
 
-      {error && <p className="text-[#c64545] text-sm mb-3">{error}</p>}
-
-      {ready !== null && (
-        <div className="border border-proto-line rounded-[10px] bg-white mb-5 overflow-hidden">
-          <div className="px-4 py-2 bg-proto-soft text-sm">
-            {ready ? (
-              <b className="text-[#3d7a4d]">Không có cảnh báo nào.</b>
-            ) : (
-              <b className="text-proto-ink">{issues?.length} cảnh báo</b>
-            )}
-          </div>
-          {issues?.map((issue, index) => (
-            <div
-              key={index}
-              className="px-4 py-1.5 border-t border-proto-line text-sm flex gap-3"
-            >
-              <span className="font-mono font-bold text-proto-ink w-10">
-                {issue.task_code}
-              </span>
-              <span
-                className={
-                  issue.severity === "warning"
-                    ? "text-[#8a5a15]"
-                    : "text-proto-muted"
-                }
-              >
-                {issue.message}
-              </span>
-            </div>
-          ))}
+      {/* Tên file, in ra trước khi tải. Đây mới là thứ chặn được lần mất bài
+          thứ hai: "p2" là một con số không nói lên gì, còn một tên file đầy đủ
+          thì đối chiếu được ngay với file ban tổ chức phát. */}
+      {phase && (
+        <div
+          className={`rounded-[10px] px-4 py-2 mb-4 text-[13px] border ${
+            phase.guessed
+              ? "border-[#d4a017] bg-[#d4a017]/10 text-[#8a6a0f]"
+              : "border-proto-line bg-white text-proto-body"
+          }`}
+        >
+          Gói tải về tên <b className="font-mono">submission.zip</b>, các file
+          bên trong tên{" "}
+          <b className="font-mono text-proto-ink">
+            {phase.sample_filename ?? `query-${phase.phase}-<mã>-<loại>.csv`}
+          </b>
+          {phase.guessed && (
+            <>
+              {" "}
+              — <b>gói này không ghi số vòng</b> nên đang tạm lấy{" "}
+              <b className="font-mono">{phase.phase}</b>. Đối chiếu với tên file
+              ban tổ chức phát rồi sửa ô <b>Vòng</b> ở trên nếu lệch.
+            </>
+          )}
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-5">
+      {error && <p className="text-[#c64545] text-sm mb-3">{error}</p>}
+
+      {/* Câu có người làm mà chưa ai quyết định lấy bài của ai thì xuất ra file
+          rỗng. Nói ngay từ đầu trang, vì đây là lý do hay gặp nhất khiến bài
+          nộp thiếu câu — và chỉ ra đúng chỗ sửa được. */}
+      {unchosen.length > 0 && (
+        <div className="border border-[#d4a017] bg-[#d4a017]/10 rounded-[10px] px-4 py-2 mb-4 text-[13px] text-[#8a6a0f]">
+          <b>{unchosen.length} câu</b> có người làm nhưng chưa chọn nộp bài của
+          ai:{" "}
+          <span className="font-mono">
+            {unchosen.map((task) => task.code).join(", ")}
+          </span>
+          . Sang tab <b>Evaluation</b> để chọn.
+        </div>
+      )}
+
+      {/* Bảng cảnh báo đã bỏ cùng nút "Kiểm tra" — xem chú thích đầu file.
+          Hai thứ thật sự chặn được bài nộp hỏng vẫn còn: dải vàng liệt kê câu
+          có người làm mà chưa chọn nộp bài của ai, và chính nút Tải zip từ
+          chối với đúng mã câu khi gặp trường hợp đó. */}
+
+      {/* Danh sách bên trái, nội dung file bên phải, cùng một hàng và cùng
+          chiều cao. Trước đây khung xem trước nằm DƯỚI danh sách 25 câu, nên
+          bấm "Xem trước" xong là phải cuộn xuống mới thấy, rồi cuộn ngược lên
+          mới bấm được câu tiếp — mà so file này với file kia mới là việc chính
+          của màn này. items-start để cột nào ngắn hơn thì dừng ở đó, không bị
+          kéo dài theo cột kia. */}
+      <div className="grid lg:grid-cols-[1fr_440px] gap-5 items-start">
         <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden">
-          <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-            Các file trong gói
+          <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted flex gap-4">
+            <span className="flex-1">Các file trong gói</span>
+            <span className="w-32">Nộp bài của</span>
+            <span className="w-24"></span>
           </div>
-          <div className="p-3 max-h-[420px] overflow-y-auto">
-            {board?.tasks.map((task) => (
-              <div
-                key={task.id}
-                onClick={() => void selectTask(task)}
-                className={`flex items-center gap-2 px-2 py-1.5 border-b border-proto-line last:border-b-0 text-xs flex-wrap cursor-pointer ${
-                  task.id === selectedTaskId
-                    ? "bg-proto-primary/10"
-                    : "hover:bg-proto-soft"
-                }`}
-              >
-                <b className="font-mono text-proto-ink w-8">{task.code}</b>
-                <span className="text-[10px] font-bold uppercase text-proto-muted w-12">
-                  {task.type === "qa" ? "Q&A" : task.type}
-                </span>
-                <span className="font-mono text-proto-muted w-14">
-                  {task.answer_count} dòng
-                </span>
+          <div className="p-3 max-h-[560px] overflow-y-auto">
+            {board?.tasks.map((task) => {
+              const chosen =
+                task.contributors.find((c) => c.id === task.chosen_author_id) ??
+                null;
+              return (
+                <div
+                  key={task.id}
+                  className={`flex items-center gap-4 px-2 py-1.5 border-b border-proto-line last:border-b-0 text-xs ${
+                    task.id === previewTaskId ? "bg-proto-primary/10" : ""
+                  }`}
+                >
+                  <span className="flex-1 flex items-center gap-2 min-w-0">
+                    <b className="font-mono text-proto-ink w-8">{task.code}</b>
+                    <span className="text-[10px] font-bold uppercase text-proto-muted w-12">
+                      {task.type === "qa" ? "Q&A" : task.type}
+                    </span>
+                    <span className="font-mono text-proto-muted">
+                      {/* Số dòng của người được chọn, không phải tổng của cả
+                          nhóm: file nộp chỉ chứa bài của một người, nên tổng
+                          cộng ở đây là con số không nói lên điều gì. */}
+                      {chosen ? `${chosen.count} dòng` : "—"}
+                    </span>
+                  </span>
 
-                <span className="ml-auto flex gap-1 items-center">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void look(task.id);
-                    }}
-                  >
-                    Xem trước
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={task.answer_count === 0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void reviewTop1(task);
-                    }}
-                  >
-                    ▶ Top-1
-                  </Button>
+                  <span className="w-32 truncate">
+                    {task.contributors.length === 0 ? (
+                      <span className="text-proto-line">chưa ai làm</span>
+                    ) : chosen ? (
+                      <b className="text-[#3d7a4d]">{chosen.display_name}</b>
+                    ) : (
+                      <span className="text-[#c64545]">— chưa chọn —</span>
+                    )}
+                  </span>
 
-                  {/* Two steps rather than a window.confirm: this throws away
-                      the whole query's work for everyone, not just this tab. */}
-                  {confirming === task.id ? (
-                    <>
-                      <button
-                        type="button"
-                        className="text-[11px] font-bold text-[#c64545] underline"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void clear(task.id);
-                        }}
-                      >
-                        Xoá {task.answer_count} dòng?
-                      </button>
-                      <button
-                        type="button"
-                        className="text-[11px] text-proto-muted underline"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setConfirming(null);
-                        }}
-                      >
-                        Huỷ
-                      </button>
-                    </>
-                  ) : (
+                  <span className="w-24 flex justify-end">
                     <Button
                       size="xs"
                       variant="outline"
-                      disabled={busy || task.answer_count === 0}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setConfirming(task.id);
-                      }}
+                      onClick={() => void look(task.id)}
                     >
-                      Xoá sạch
+                      Xem trước
                     </Button>
-                  )}
-                </span>
-              </div>
-            ))}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Bounded height so the grid rows below actually mean something —
-            row 1 (auto) never scrolls, row 2 (minmax(0,1fr)) absorbs the rest
-            of the height and is the only thing that scrolls. That keeps the
-            video on screen while stepping through the answer list, which is
-            the whole point of watching it while reviewing rows. */}
-        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden h-[660px] grid grid-rows-[auto_minmax(0,1fr)]">
-          <div>
-            <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-              {selectedTask
-                ? `Task ${selectedTask.code} · ${
-                    selectedTask.type === "qa" ? "Q&A" : selectedTask.type
-                  }`
-                : "Xem trước một file"}
-            </div>
-            <div className="p-3">
-              {selectedTask ? (
-                <div className="flex flex-col gap-3">
-                  {/* The brief, verbatim — never the search screen's TaskBrief,
-                      which is laid out for a page with a result grid, not a
-                      narrow side panel. */}
-                  <div>
-                    <p
-                      className={`text-[13px] text-proto-ink whitespace-pre-wrap ${
-                        briefExpanded ? "" : "line-clamp-3"
-                      }`}
-                    >
-                      {taskBriefText(selectedTask)}
-                    </p>
-                    {taskBriefText(selectedTask).length > 140 && (
-                      <button
-                        type="button"
-                        className="text-[11px] text-proto-muted underline mt-0.5"
-                        onClick={() => setBriefExpanded((value) => !value)}
-                      >
-                        {briefExpanded ? "Thu gọn" : "Mở rộng"}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Video and still side by side — the still is the real
-                      keyframe and the video is the real position, so a mismatch
-                      between the two shows up at a glance.
-
-                      Fixed height, and NO wrapping. This row used to be
-                      flex-wrap with a 360x240 still, so on a panel narrower
-                      than ~590px the still dropped onto its own line, the
-                      top grid row grew to ~570px of the panel's 660, and the
-                      answer list underneath was squeezed to about two rows.
-                      Both children now size to this row instead of dictating
-                      it, so the list always keeps the rest. */}
-                  <div className="relative flex gap-3 items-stretch h-[220px]">
-                    <div className="flex-1 min-w-0 flex flex-col">
-                      {selectedAnswer ? (
-                        videoSrc ? (
-                          <video
-                            ref={videoRef}
-                            key={activeVideoId}
-                            src={videoSrc}
-                            controls
-                            autoPlay
-                            preload="metadata"
-                            className="rounded-[8px] flex-1 min-h-0 w-full object-contain bg-black"
-                            onLoadedMetadata={(e) => {
-                              if (selectedAnswer) {
-                                e.currentTarget.currentTime =
-                                  startMsAt(
-                                    selectedAnswer.video_id,
-                                    selectedAnswer.frames[0] ?? 0
-                                  ) / 1000;
-                              }
-                            }}
-                          />
-                        ) : (
-                          <p className="text-[11.5px] text-proto-muted">
-                            Chưa cấu hình kho video (VITE_VIDEO_BASE_URL).
-                          </p>
-                        )
-                      ) : (
-                        <div className="rounded-[8px] w-full flex-1 min-h-0 bg-proto-dark flex items-center justify-center">
-                          <span className="text-[11px] text-neutral-400 px-2 text-center">
-                            {answersLoading
-                              ? "Đang tải…"
-                              : "Bấm một dòng bên dưới để mở video. Trỏ chuột để xem nhanh ảnh frame."}
-                          </span>
-                        </div>
-                      )}
-                      {selectedAnswer && (
-                        <div className="text-xs font-mono text-proto-ink mt-1">
-                          {selectedAnswer.video_id} · frame{" "}
-                          {selectedAnswer.frames[0] ?? 0}
-                        </div>
-                      )}
-                    </div>
-                    {/* The still floats over the player instead of sitting
-                        beside it. As a sibling it was `h-full aspect-video` —
-                        200px tall by 355px wide — while the video only got
-                        whatever was left, so the image ended up larger than the
-                        thing it was meant to be checked against. It also only
-                        appears while the pointer is on a row: the video is what
-                        you keep, the still is what you glance at. */}
-                    {hoveredAnswer && (
-                      <div className="pointer-events-none absolute right-2 top-2 bottom-2 aspect-video overflow-hidden rounded-[6px] shadow-2xl ring-2 ring-white">
-                        <FramePreview
-                          videoId={hoveredAnswer.video_id}
-                          frameIdx={hoveredAnswer.frames[0] ?? 0}
-                          size="fill"
-                        />
-                        <span className="absolute bottom-0 inset-x-0 bg-black/70 text-white font-mono text-[10px] px-1 py-0.5 text-center">
-                          #{hoveredAnswer.rank} · frame{" "}
-                          {hoveredAnswer.frames[0] ?? 0}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-[11.5px] text-proto-muted">
-                  Chọn một dòng ở danh sách bên trái để xem cả task, hoặc dùng{" "}
-                  <b>▶ Top-1</b> để mở nhanh dòng hạng 1.
-                </p>
-              )}
-            </div>
+        {/* Luôn chiếm chỗ, kể cả khi chưa chọn file nào. Chỉ hiện khi có
+            preview thì lần bấm đầu tiên sẽ làm cả bảng bên trái co lại đúng
+            lúc con trỏ vừa rời khỏi nút — nhìn như trang bị giật. */}
+        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden">
+          <div className="px-4 py-2 bg-proto-soft text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+            {preview ? (
+              <span className="font-mono normal-case tracking-normal text-[11px] text-proto-ink">
+                {preview.filename} · {preview.rows} dòng
+              </span>
+            ) : (
+              "Nội dung file"
+            )}
           </div>
-
-          {/* The answer list. KeyframeImg already sets loading="lazy", so a
-              hundred rows here does not fire a hundred requests. min-h-0 is
-              what lets a grid row shrink below its content's height instead
-              of stretching the grid to fit it — without it overflow-y-auto
-              on a grid row does nothing. */}
-          <div className="min-h-0 overflow-y-auto px-3 pb-3">
-            {selectedTask && (
-              <div className="border border-proto-line rounded-[8px] overflow-hidden divide-y divide-proto-line">
-                {answersLoading && (
-                  <p className="p-3 text-[11.5px] text-proto-muted">
-                    Đang tải danh sách…
-                  </p>
-                )}
-                {!answersLoading && answers?.length === 0 && (
-                  <p className="p-3 text-[11.5px] text-proto-muted">
-                    Chưa có dòng nào.
-                  </p>
-                )}
-                {!answersLoading &&
-                  answers?.map((row) => (
-                    <div
-                      key={row.id}
-                      onClick={() => setSelectedAnswerId(row.id)}
-                      onMouseEnter={() => setHoveredAnswerId(row.id)}
-                      onMouseLeave={() =>
-                        setHoveredAnswerId((current) =>
-                          current === row.id ? null : current
-                        )
-                      }
-                      className={`flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer ${
-                        row.id === selectedAnswerId
-                          ? "bg-proto-primary/10"
-                          : "hover:bg-proto-soft"
-                      }`}
-                    >
-                      <FramePreview
-                        videoId={row.video_id}
-                        frameIdx={row.frames[0] ?? 0}
-                      />
-                      <b className="font-mono text-proto-ink w-7">
-                        #{row.rank}
-                      </b>
-                      <span className="font-mono text-proto-ink truncate">
-                        {row.video_id}
-                      </span>
-                      <span className="font-mono text-proto-muted ml-auto">
-                        frame {row.frames[0] ?? 0}
-                      </span>
-                    </div>
-                  ))}
-              </div>
+          <div className="p-3">
+            {preview ? (
+              // Cả file, không cắt 12 dòng như trước: cột này giờ cao bằng
+              // danh sách bên trái, nên chỗ đủ để cuộn xem hết — mà xem hết
+              // mới biết dòng cuối có đúng không.
+              <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-auto whitespace-pre max-h-[516px]">
+                {preview.content.trimEnd()}
+              </pre>
+            ) : (
+              <p className="text-[11.5px] text-proto-muted">
+                Bấm <b>Xem trước</b> ở một câu bên trái để đọc đúng nội dung
+                file sẽ nằm trong zip.
+              </p>
             )}
           </div>
         </div>
       </div>
-
-      {/* CSV preview is a different job from reviewing frames — full width,
-          below the two-column area, not fighting the video for space. */}
-      {preview && (
-        <div className="border border-proto-line rounded-[10px] bg-white overflow-hidden mt-5 p-3">
-          <div className="text-xs font-mono text-proto-ink mb-1">
-            {preview.filename} · {preview.rows} dòng
-          </div>
-          <pre className="text-[11px] font-mono bg-proto-soft border border-proto-line rounded p-2 overflow-x-auto whitespace-pre">
-            {preview.content.split("\n").slice(0, 12).join("\n")}
-            {preview.content.split("\n").length > 12 ? "\n…" : ""}
-          </pre>
-        </div>
-      )}
     </div>
   );
 }

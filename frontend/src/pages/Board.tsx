@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 
 import {
-  claimTask,
+
   getBoard,
-  releaseTask,
+
   type BoardResponse,
   type BoardTask,
 } from "../api/board";
@@ -64,19 +64,17 @@ export default function Board({
     };
   }, []);
 
-  const act = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn();
-      setBoard(await getBoard());
-    } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : "Thao tác hỏng");
-    }
-  };
+  // `act` từng bọc claimTask/releaseTask — hai thứ duy nhất trang này gọi mà
+  // có thể đổi dữ liệu. Bỏ Nhận/Nhả rồi thì Board chỉ còn đọc: nó tải bảng và
+  // mở task, không ghi gì. Xoá luôn cho khỏi ai tưởng còn đường ghi ở đây.
 
   const rowsPerQuery = board?.round?.rows_per_query ?? 100;
   const tasks = (board?.tasks ?? []).filter((task) => {
-    if (filter === "open") return !task.owner;
-    if (filter === "mine") return task.owner?.id === me?.id;
+    // Không còn quyền sở hữu, nên lọc theo VIỆC ĐÃ LÀM: câu nào chưa ai đụng
+    // tới, và câu nào chính tôi đã có đáp án.
+    if (filter === "open") return task.contributors.length === 0;
+    if (filter === "mine")
+      return task.contributors.some((c) => c.id === me?.id);
     return true;
   });
   const done = (board?.tasks ?? []).filter(
@@ -148,14 +146,14 @@ export default function Board({
               <th className="text-left px-3 py-2 w-16">Mã</th>
               <th className="text-left px-3 py-2 w-20">Loại</th>
               <th className="text-left px-3 py-2">Đề bài</th>
-              <th className="text-left px-3 py-2 w-36">Người giữ</th>
+              <th className="text-left px-3 py-2 w-44">Ai đã làm</th>
               <th className="text-left px-3 py-2 w-24">Đáp án</th>
               <th className="px-3 py-2 w-32"></th>
             </tr>
           </thead>
           <tbody>
             {tasks.map((task) => {
-              const mine = task.owner?.id === me?.id;
+              const mine = task.contributors.some((c) => c.id === me?.id);
               const full = task.answer_count >= rowsPerQuery;
               return (
                 <tr
@@ -178,20 +176,43 @@ export default function Board({
                       </span>
                     )}
                   </td>
+                  {/* Thay cho cột "Người giữ". Ai cũng làm được mọi câu, nên
+                      thứ đáng biết không phải ai đang giữ mà là câu nào đã có
+                      người ngó tới, và mỗi người được bao nhiêu dòng. Tên tôi
+                      in đậm để tự nhận ra giữa 5 người. */}
                   <td className="px-3 py-2 text-proto-muted">
-                    {task.owner ? (
-                      <span className={mine ? "text-proto-ink font-semibold" : ""}>
-                        {task.owner.display_name}
-                      </span>
+                    {task.contributors.length === 0 ? (
+                      <span className="text-proto-line">chưa ai làm</span>
                     ) : (
-                      "—"
+                      <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                        {task.contributors.map((c) => (
+                          <span
+                            key={c.id}
+                            className={
+                              c.id === task.chosen_author_id
+                                ? "text-[#3d7a4d] font-bold"
+                                : c.id === me?.id
+                                ? "text-proto-ink font-semibold"
+                                : ""
+                            }
+                            title={
+                              c.id === task.chosen_author_id
+                                ? `${c.display_name} — bài đang được chọn để nộp`
+                                : `${c.display_name} · ${c.count} dòng`
+                            }
+                          >
+                            {c.display_name}
+                            <span className="text-proto-line">({c.count})</span>
+                          </span>
+                        ))}
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono">
-                    {task.owner ? (
+                    {task.contributors.length > 0 ? (
                       <button
                         type="button"
-                        title={`Xem giỏ của ${task.owner.display_name}`}
+                        title="Mở giỏ đáp án"
                         onClick={() => onOpenTask(task, { openBasket: true })}
                         className="underline decoration-dotted underline-offset-2"
                       >
@@ -210,33 +231,16 @@ export default function Board({
                     )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
-                    {!task.owner && (
-                      <Button
-                        size="xs"
-                        onClick={() => void act(() => claimTask(task.id))}
-                      >
-                        Nhận
-                      </Button>
-                    )}
-                    {mine && (
-                      <span className="inline-flex gap-1.5">
-                        <Button size="xs" onClick={() => onOpenTask(task)}>
-                          Mở
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          onClick={() => void act(() => releaseTask(task.id))}
-                        >
-                          Nhả
-                        </Button>
-                      </span>
-                    )}
-                    {task.owner && !mine && (
-                      <Button size="xs" variant="ghost" onClick={() => onOpenTask(task)}>
-                        Xem
-                      </Button>
-                    )}
+                    {/* Chỉ còn một nút. "Nhận"/"Nhả" đã bỏ — không còn gì để
+                        giành — và "Xem" cũng vậy: xem hay sửa giờ là một, ai
+                        mở cũng làm được. */}
+                    <Button
+                      size="xs"
+                      variant={mine ? "primary" : "outline"}
+                      onClick={() => onOpenTask(task)}
+                    >
+                      Mở
+                    </Button>
                   </td>
                 </tr>
               );

@@ -30,6 +30,78 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ALTER TABLE packs ADD COLUMN deleted_at TEXT",
         ),
     ),
+    (
+        2,
+        (
+            # Mỗi người một danh sách riêng cho mỗi câu.
+            #
+            # Trước đây một task có MỘT danh sách xếp hạng dùng chung, cộng với
+            # owner_id để giành quyền sửa ("Nhận"/"Nhả"). Cách đó buộc cả nhóm
+            # phải chờ nhau: một câu chỉ một người làm được, và ai vào sau thì
+            # sửa đè lên danh sách của người trước.
+            #
+            # answers.author_id là CHỦ CỦA DANH SÁCH, khác created_by (người tạo
+            # ra đúng dòng đó). Hai cái trùng nhau ở mọi dòng hiện có, nhưng
+            # tách ra thì sau này admin sửa hộ một dòng trong danh sách của
+            # người khác mà danh sách vẫn thuộc về người kia.
+            "ALTER TABLE answers ADD COLUMN author_id INTEGER REFERENCES users(id)",
+            "UPDATE answers SET author_id = created_by WHERE author_id IS NULL",
+            # Xếp hạng giờ tính trong phạm vi (task, tác giả), nên chỉ mục cũ
+            # theo (task_id, sort_key) không còn phục vụ được truy vấn chính.
+            "CREATE INDEX IF NOT EXISTS idx_answers_task_author "
+            "ON answers(task_id, author_id, sort_key)",
+
+            # Bài nộp vẫn là MỘT danh sách mỗi câu. Đây là người được chọn cho
+            # câu đó. NULL = chưa chọn ai, và lúc xuất sẽ báo thiếu chứ không
+            # tự đoán.
+            "ALTER TABLE tasks ADD COLUMN chosen_author_id INTEGER REFERENCES users(id)",
+
+            # owner_id và claimed_at KHÔNG bị xoá. Xoá cột trong SQLite là dựng
+            # lại cả bảng, mà dữ liệu đó là bằng chứng ai từng giành câu nào —
+            # còn giá trị khi lần lại lịch sử. Chỉ ngừng dùng.
+        ),
+    ),
+    (
+        3,
+        (
+            # Xem lại người khác đã tìm bằng gì.
+            #
+            # schema.sql cũng có bảng này, nhưng schema.sql toàn IF NOT EXISTS
+            # và chỉ chạy trên CSDL mới — bước này là cho những CSDL đã tồn tại.
+            # Giữ hai bản GIỐNG HỆT nhau; lệch một cột là hai máy chạy hai lược
+            # đồ khác nhau mà không ai biết.
+            "CREATE TABLE IF NOT EXISTS search_states ("
+            "  user_id           INTEGER NOT NULL REFERENCES users(id),"
+            "  task_id           INTEGER NOT NULL REFERENCES tasks(id),"
+            "  query_text        TEXT NOT NULL DEFAULT '',"
+            "  search_type       TEXT NOT NULL DEFAULT 'ensemble',"
+            "  params            TEXT NOT NULL DEFAULT '{}',"
+            "  picked_frame      TEXT,"
+            "  picked_video      TEXT,"
+            "  picked_frame_idx  INTEGER,"
+            "  updated_at        TEXT NOT NULL,"
+            "  PRIMARY KEY (user_id, task_id)"
+            ")",
+            "CREATE INDEX IF NOT EXISTS idx_search_states_task "
+            "ON search_states(task_id)",
+        ),
+    ),
+    (
+        4,
+        (
+            # Số vòng trong TÊN FILE của ban tổ chức: 'p1', 'p2', 'p3'.
+            #
+            # Trước bước này export luôn sinh `query-p1-…` vì chuỗi "p1" bị
+            # viết cứng trong mã. Trình đọc gói vẫn tách được số vòng từ tên
+            # file nhưng không có chỗ nào để cất, nên một gói `query-p2-…` xuất
+            # ra vẫn mang tên p1 — sai tên file nộp, không cảnh báo, và chỉ
+            # phát hiện khi bài đã bị chấm hỏng.
+            #
+            # NULL với các gói nhập trước đây; export rơi về 'p1' như cũ, và màn
+            # Export cho sửa tay.
+            "ALTER TABLE packs ADD COLUMN phase TEXT",
+        ),
+    ),
 )
 
 

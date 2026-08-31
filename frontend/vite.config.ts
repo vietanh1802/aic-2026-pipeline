@@ -27,13 +27,19 @@ const forward = devApi
 
 // One regex covers -search, -search-candidates and -search-text: Vite reads a
 // key starting with ^ as a regex and does not anchor the end.
+//
+// `ocr` belongs in that list too. It was left out when /ocr-search was added,
+// so `npm run dev` proxied every route EXCEPT the OCR one — which then went to
+// the dev server itself, got index.html back, and failed to parse as JSON.
+// /ocr-text/{name} needs its own entry: it does not end in "-search".
 const proxy = forward
   ? {
       "/api": forward,
       "/health": forward,
       "/status": forward,
       "/static": forward,
-      "^/(ensemble|single|temporal|trake)-search": forward,
+      "/ocr-text": forward,
+      "^/(ensemble|single|temporal|trake|ocr)-search": forward,
     }
   : undefined;
 

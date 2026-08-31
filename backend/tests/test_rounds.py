@@ -44,10 +44,11 @@ def _task(conn, pack_id, code="01", kind="kis"):
 
 def _answer(conn, task_id, user_id, sort_key, video="L01_V001", frames=(10,)):
     cursor = conn.execute(
-        "INSERT INTO answers (task_id, sort_key, video_id, frames, answer_text, "
-        "origin, created_by, updated_by, updated_at, version) "
-        "VALUES (?, ?, ?, ?, NULL, 'manual', ?, ?, ?, 1)",
-        (task_id, sort_key, video, json.dumps(list(frames)), user_id, user_id, utcnow_iso()),
+        "INSERT INTO answers (task_id, author_id, sort_key, video_id, frames, "
+        "answer_text, origin, created_by, updated_by, updated_at, version) "
+        "VALUES (?, ?, ?, ?, ?, NULL, 'manual', ?, ?, ?, 1)",
+        (task_id, user_id, sort_key, video, json.dumps(list(frames)), user_id,
+         user_id, utcnow_iso()),
     )
     return cursor.lastrowid
 
@@ -303,3 +304,111 @@ def test_step_one_upgrades_a_database_that_predates_it(tmp_path, monkeypatch):
     assert apply_steps(old) == STEPS[-1][0]
     assert old.execute("SELECT COUNT(*) AS n FROM packs").fetchone()["n"] == 1
     old.close()
+
+
+def test_a_live_database_with_answers_survives_the_multi_user_steps(tmp_path, monkeypatch):
+    """CSDL production: đã chạy bước 1, có đáp án thật, chưa có author_id.
+
+    Bài test cũ dựng một CSDL đời 0 RỖNG. Nó chứng minh cột được thêm vào,
+    nhưng không chứng minh dữ liệu sống sót — mà lần deploy đưa bước 2, 3, 4
+    lên máy chủ sẽ chạy đúng trên một CSDL đang giữ bài của cả nhóm.
+
+    Ba điều phải đúng, và không điều nào hiển nhiên:
+      - không mất dòng đáp án nào
+      - author_id được điền từ created_by, không để NULL (dòng NULL sẽ biến
+        mất khỏi mọi giỏ và khỏi bài nộp mà không báo gì)
+      - chosen_author_id bắt đầu bằng NULL, nên export TỪ CHỐI thay vì đoán
+        bừa lấy bài của ai
+    """
+    import sqlite3
+
+    from app.db.migrate import migrate
+
+    path = tmp_path / "live.db"
+    old = sqlite3.connect(path, isolation_level=None)
+    old.row_factory = sqlite3.Row
+    # Lược đồ đúng như bản đang chạy trên máy chủ: sau bước 1, trước bước 2.
+    old.executescript(
+        """
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member',
+          password_hash TEXT NOT NULL, must_change_password INTEGER NOT NULL DEFAULT 1,
+          disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+        );
+        CREATE TABLE packs (
+          id INTEGER PRIMARY KEY, round_label TEXT NOT NULL,
+          source_filename TEXT NOT NULL, filename_pattern TEXT NOT NULL,
+          imported_by INTEGER NOT NULL REFERENCES users(id),
+          imported_at TEXT NOT NULL, deadline_at TEXT,
+          active INTEGER NOT NULL DEFAULT 1, deleted_at TEXT
+        );
+        CREATE TABLE tasks (
+          id INTEGER PRIMARY KEY, pack_id INTEGER NOT NULL REFERENCES packs(id),
+          code TEXT NOT NULL, type TEXT NOT NULL, query_text TEXT NOT NULL,
+          question_text TEXT, n_events INTEGER, event_labels TEXT,
+          owner_id INTEGER REFERENCES users(id), claimed_at TEXT,
+          version INTEGER NOT NULL DEFAULT 1, UNIQUE (pack_id, code)
+        );
+        CREATE TABLE answers (
+          id INTEGER PRIMARY KEY,
+          task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          sort_key REAL NOT NULL, video_id TEXT NOT NULL, frames TEXT NOT NULL,
+          answer_text TEXT, origin TEXT NOT NULL,
+          created_by INTEGER NOT NULL REFERENCES users(id),
+          updated_by INTEGER REFERENCES users(id), updated_at TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1
+        );
+        PRAGMA user_version = 1;
+        """
+    )
+    now = utcnow_iso()
+    for name in ("vanh", "an"):
+        old.execute(
+            "INSERT INTO users (username, display_name, password_hash, created_at) "
+            "VALUES (?, ?, 'x', ?)",
+            (name, name.upper(), now),
+        )
+    old.execute(
+        "INSERT INTO packs (round_label, source_filename, filename_pattern, "
+        "imported_by, imported_at, active) VALUES ('Vòng 1', 'p.zip', 'x', 1, ?, 1)",
+        (now,),
+    )
+    old.execute(
+        "INSERT INTO tasks (pack_id, code, type, query_text) "
+        "VALUES (1, '07', 'kis', 'q')"
+    )
+    # Hai người đã bỏ dòng vào cùng một câu thời còn dùng chung danh sách.
+    for index, creator in enumerate([1, 1, 2, 2, 1], start=1):
+        old.execute(
+            "INSERT INTO answers (task_id, sort_key, video_id, frames, origin, "
+            "created_by, updated_at, version) "
+            "VALUES (1, ?, 'L21_V001', ?, 'manual', ?, ?, 1)",
+            (float(index), f"[{index * 100}]", creator, now),
+        )
+    assert current_version(old) == 1
+
+    monkeypatch.setenv("AIC_DB_PATH", str(path))
+    migrate(old)
+
+    assert current_version(old) == STEPS[-1][0]
+
+    rows = old.execute("SELECT * FROM answers ORDER BY sort_key").fetchall()
+    assert len(rows) == 5, "không được mất dòng nào"
+    assert [r["author_id"] for r in rows] == [1, 1, 2, 2, 1]
+    assert all(r["author_id"] is not None for r in rows)
+
+    task = old.execute("SELECT * FROM tasks WHERE code = '07'").fetchone()
+    assert task["chosen_author_id"] is None
+
+    # Bảng của bước 3 và cột của bước 4 phải có mặt, nếu không thì tính năng
+    # xem lại đường tìm và số vòng trong tên file nộp sẽ ném lỗi lúc chạy.
+    tables = {
+        r["name"] for r in old.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "search_states" in tables
+    assert "phase" in {r["name"] for r in old.execute("PRAGMA table_info(packs)")}
+
+    # Khởi động lại lần nữa không được đổi gì — API chạy migrate mỗi lần boot.
+    migrate(old)
+    assert old.execute("SELECT COUNT(*) AS n FROM answers").fetchone()["n"] == 5

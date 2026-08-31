@@ -2,13 +2,22 @@ import { logout } from "../../api/auth";
 import type { BoardTask } from "../../api/board";
 import type { AuthUser } from "../../types/auth";
 
-export type Screen = "search" | "board" | "import" | "rounds" | "export";
+export type Screen =
+  | "search"
+  | "board"
+  | "evaluation"
+  | "import"
+  | "export";
 
+// Thứ tự này là thứ tự công việc: tìm → phân công → đọ bài → nộp. Evaluation
+// đứng trước Export vì phải chọn xong bài của ai thì file nộp mới có nội dung.
 const NAV: { id: Screen; label: string; adminOnly?: boolean }[] = [
   { id: "search", label: "Search" },
   { id: "board", label: "Board" },
+  { id: "evaluation", label: "Evaluation" },
+  // "Vòng" đã gộp vào Import: bảng vòng nằm ngay dưới khung thả file, vì
+  // nhập gói xong thì việc kế tiếp luôn là kích hoạt nó.
   { id: "import", label: "Import", adminOnly: true },
-  { id: "rounds", label: "Vòng", adminOnly: true },
   { id: "export", label: "Export" },
 ];
 

@@ -120,6 +120,16 @@ type FrameDisplayProps2 = {
   // MỚI — optional like the two above. Narrows the grid to this video.
   onToggleFocus?: (videoId: string) => void;
   focusVideos?: string[];
+  /**
+   * Tên keyframe cần khoanh đỏ, vd "L21_V001-0028-3175.jpg".
+   *
+   * Dùng khi đang xem lại đường tìm của người khác: đây là khung họ đã bấm
+   * vào. Không truyền thì không thẻ nào được khoanh, nên mọi chỗ gọi
+   * FrameDisplay chưa cập nhật vẫn chạy nguyên.
+   */
+  highlightFrame?: string;
+  /** Tên người đó, in lên chính cái khoanh — để biết đỏ này là của ai. */
+  highlightLabel?: string;
 };
 
 export function extractTimestamp(filename: string): string {
@@ -187,6 +197,8 @@ export default function FrameDisplay({
   onAddToBasket,
   onToggleFocus,
   focusVideos = [],
+  highlightFrame,
+  highlightLabel,
 }: FrameDisplayProps2) {
   const timestamp = results.map(frameTimestamp);
   // The ramp is normalised across the results actually on screen. Raw distance
@@ -200,16 +212,31 @@ export default function FrameDisplay({
     <>
       {!isLoading
         ? results.map((result, index) => {
+            // So theo `name` chứ không theo thứ hạng: cùng một truy vấn chạy
+            // lại có thể xáo nhẹ thứ tự khi index được cập nhật, còn tên
+            // keyframe thì cố định.
+            const picked =
+              highlightFrame !== undefined && result.name === highlightFrame;
             return (
               <div
                 key={index}
-                className="flex flex-col rounded-[8px] w-full h-full font-baloo bg-white border-2 overflow-hidden"
+                // Viền màu theo độ khớp vẫn giữ nguyên (style bên dưới); vòng
+                // đỏ là một lớp RIÊNG chồng lên, nên nó không cướp mất thông
+                // tin màu đang có trên thẻ.
+                className={`relative flex flex-col rounded-[8px] w-full h-full font-baloo bg-white border-2 overflow-hidden ${
+                  picked ? "ring-4 ring-[#c64545] ring-offset-1" : ""
+                }`}
                 style={{
                   borderColor: accuracyColor(
                     accuracyPercent(result.distance, minScore, maxScore)
                   ),
                 }}
               >
+                {picked && (
+                  <span className="absolute top-0 left-0 z-10 bg-[#c64545] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-br-[6px]">
+                    {highlightLabel ? `${highlightLabel} chọn` : "đã chọn"}
+                  </span>
+                )}
                 <div className="relative w-full aspect-[3/2] bg-proto-dark">
                   {result.has_image === false ? (
                     <MissingFrame name={result.name} />

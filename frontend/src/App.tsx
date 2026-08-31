@@ -11,7 +11,7 @@ import ResultInfoAndSort, {
 import TaskBrief from "./components/TaskBrief";
 import OcrCountBanner from "./components/OcrCountBanner";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
-import { useQueryStore } from "./store/queryStore";
+import { useQueryStore, type SearchType } from "./store/queryStore";
 import { usePopupStore } from "./store/popupStore";
 import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
@@ -34,8 +34,16 @@ import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
 import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
+import {
+  saveSearchState,
+  type SearchState,
+  type SearchStateInput,
+} from "./api/searchState";
+import PeerSearchPanel from "./components/PeerSearchPanel";
+import { usePeerViewStore } from "./store/peerViewStore";
 import type {
   HealthResponse,
+  ModelName,
   SearchResult,
   TemporalCandidateResult,
   TrakeCandidateResult,
@@ -96,12 +104,14 @@ function App({
   const focusVideos = useSearchStore((state) => state.focusVideos);
   const toggleFocusVideo = useSearchStore((state) => state.toggleFocusVideo);
   const clearFocus = useSearchStore((state) => state.clearFocus);
-  const resultLimit = useQueryStore((state) => state.resultLimit);
-  const topM = useQueryStore((state) => state.topM);
-  const useRerank = useQueryStore((state) => state.useRerank);
-  const ocrStripDiacritics = useQueryStore((state) => state.ocrStripDiacritics);
+  // resultLimit/topM/useRerank/ocrStripDiacritics/singleModel từng được đăng ký
+  // ở đây và doSearch đọc qua closure. Giờ doSearch đọc thẳng từ store, vì nó
+  // còn được gọi ngay sau khi áp truy vấn của người khác vào store — closure
+  // lúc đó vẫn giữ giá trị cũ và sẽ chạy sai tham số. Chỉ hai cái dưới đây còn
+  // ở lại, vì phần render thật sự đọc chúng.
   const searchType = useQueryStore((state) => state.searchType);
-  const singleModel = useQueryStore((state) => state.singleModel);
+  // Đang xem lại đường tìm của ai, nếu có. Chỉ dùng để khoanh đỏ.
+  const peerViewing = usePeerViewStore((state) => state.viewing);
   const [showPopup, setShowPopup] = useState<boolean>(false);
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [startTime, setStartTime] = useState<number>(0);
@@ -314,11 +324,78 @@ function App({
     }
   };
 
-  const doSearch = async () => {
+  /**
+   * Trạng thái hiện tại, đóng gói để gửi đi.
+   *
+   * Đọc thẳng từ store chứ không dùng các const ở đầu component: hàm này được
+   * gọi ngay sau khi áp truy vấn của người khác vào store, mà lúc đó closure
+   * vẫn còn giữ giá trị cũ.
+   */
+  const currentStateInput = (picked?: {
+    name: string;
+    video: string;
+    frameIdx: number;
+  }): SearchStateInput => {
+    const q = useQueryStore.getState();
+    return {
+      query_text: q.queryText,
+      search_type: q.searchType,
+      params: {
+        resultLimit: q.resultLimit,
+        topM: q.topM,
+        useRerank: q.useRerank,
+        singleModel: q.singleModel,
+        ocrStripDiacritics: q.ocrStripDiacritics,
+      },
+      picked_frame: picked?.name ?? null,
+      picked_video: picked?.video ?? null,
+      picked_frame_idx: picked?.frameIdx ?? null,
+    };
+  };
+
+  // Gửi đi rồi quên. Không chờ, không báo lỗi: mất một lần ghi trạng thái thì
+  // đồng đội thấy truy vấn cũ hơn vài giây, còn chặn ô search lại vì nó thì
+  // hỏng đúng việc chính.
+  const recordState = (picked?: {
+    name: string;
+    video: string;
+    frameIdx: number;
+  }) => {
+    if (!activeTask) {
+      return;
+    }
+    void saveSearchState(activeTask.id, currentStateInput(picked)).catch(
+      () => undefined
+    );
+  };
+
+  /**
+   * @param options.record false khi lần chạy này là để XEM LẠI bài người khác.
+   *   Ghi vào đây sẽ biến truy vấn của họ thành truy vấn của mình trên bảng
+   *   chung — cả nhóm nhìn vào tưởng hai người tự nghĩ ra cùng một câu.
+   */
+  const doSearch = async (options?: { record?: boolean }) => {
     if (isSearchDisabled) {
       console.warn(`[health] Search blocked: ${backendHealth.message}`);
       return;
     }
+    if (options?.record !== false) {
+      // Tự bấm Search nghĩa là quay về việc của mình: bỏ khoanh đỏ của người
+      // khác, nếu không nó sẽ trôi sang một bộ kết quả không liên quan.
+      usePeerViewStore.getState().clear();
+      recordState();
+    }
+    // Mọi nhánh bên dưới đọc từ store, không đọc const ở đầu component — xem
+    // lý do ở currentStateInput.
+    const {
+      queryText,
+      searchType,
+      resultLimit,
+      topM,
+      useRerank,
+      singleModel,
+      ocrStripDiacritics,
+    } = useQueryStore.getState();
     setIsLoading(true);
     try {
       if (searchType === "temporal") {
@@ -408,6 +485,40 @@ function App({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  /**
+   * Dựng lại màn hình của một người khác rồi khoanh đỏ khung họ đã chọn.
+   *
+   * Chạy lại truy vấn chứ không chép danh sách kết quả của họ: cùng truy vấn,
+   * cùng tham số, cùng index thì ra cùng kết quả, nên chép lại chỉ là nhân bản
+   * thứ tính lại được trong một giây rưỡi.
+   */
+  const applyPeerState = (state: SearchState) => {
+    const q = useQueryStore.getState();
+    q.setQueryText(state.query_text);
+    q.setSearchType(state.search_type as SearchType);
+    // Từng tham số một, và chỉ khi có mặt: bản ghi cũ có thể thiếu trường mới
+    // thêm, mà ghi đè bằng undefined sẽ xoá mất cấu hình đang dùng.
+    if (state.params.resultLimit) q.setResultLimit(state.params.resultLimit);
+    if (typeof state.params.topM === "number") q.setTopM(state.params.topM);
+    if (typeof state.params.useRerank === "boolean") {
+      q.setUseRerank(state.params.useRerank);
+    }
+    if (state.params.singleModel) {
+      q.setSingleModel(state.params.singleModel as ModelName);
+    }
+    if (typeof state.params.ocrStripDiacritics === "boolean") {
+      q.setOcrStripDiacritics(state.params.ocrStripDiacritics);
+    }
+    usePeerViewStore.getState().view({
+      userId: state.user.id,
+      displayName: state.user.display_name,
+      pickedFrame: state.picked_frame,
+      pickedVideo: state.picked_video,
+      pickedFrameIdx: state.picked_frame_idx,
+    });
+    void doSearch({ record: false });
   };
 
   const { hasQueried, setHasQueried } = useIsQueryStore();
@@ -510,6 +621,23 @@ function App({
       {/* Đề bài của task đang mở — nguyên văn, chỉ đọc, không bao giờ dịch.
           Pin lên đỉnh khung nhìn: cuộn qua cả trăm kết quả vẫn còn thấy đề. */}
       {activeTask && <TaskBrief task={activeTask} />}
+
+      {/* Ai đang tìm câu này bằng truy vấn gì. Đặt ngay dưới đề bài: đọc đề
+          xong, thứ tiếp theo đáng biết là người bên cạnh đã thử gì rồi — trước
+          khi gõ lại đúng câu đó. Tự ẩn khi chưa ai khác đụng vào câu này. */}
+      {activeTask && (
+        <PeerSearchPanel
+          taskId={activeTask.id}
+          onOpenState={applyPeerState}
+          onOpenVideo={(videoId, frameIdx) => {
+            setframeId(String(frameIdx));
+            setVideoUrl(videoId);
+            setStartTime(startMsAt(videoId, frameIdx));
+            setTrakeSlot(null);
+            setShowPopup(true);
+          }}
+        />
+      )}
 
       {/* Project Description (only when no results) */}
       {!hasQueried && !activeTask && (
@@ -732,12 +860,27 @@ function App({
             }
                   onToggleFocus={toggleFocusVideo}
                   focusVideos={focusVideos}
-                        onClick={(result) => {
+                  // Khung người đang được xem đã bấm. FrameDisplay khoanh đỏ
+                  // đúng thẻ này; undefined khi không xem ai thì không thẻ nào
+                  // được khoanh.
+                  highlightFrame={peerViewing?.pickedFrame ?? undefined}
+                  highlightLabel={peerViewing?.displayName}
+                  onClick={(result) => {
+                    const video = videoIdFromFrame(result.frame);
+                    const frameIdx = frameIndexFromResult(result);
                     setframeId(frameIdFromName(result.name));
-                    setVideoUrl(videoIdFromFrame(result.frame));
+                    setVideoUrl(video);
                     setStartTime(startMsFromResult(result));
                     setShowPopup(true);
-                        }}
+                    // Bấm vào một khung là hành động đáng lưu nhất trong cả
+                    // lượt tìm: nó nói người này CHỌN khung nào, chứ không chỉ
+                    // gõ gì. Đây là thứ được khoanh đỏ khi người khác xem lại.
+                    recordState({
+                      name: result.name,
+                      video,
+                      frameIdx,
+                    });
+                  }}
                 />
               </div>
             </div>

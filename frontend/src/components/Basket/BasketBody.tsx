@@ -76,6 +76,19 @@ export default function BasketBody({
   const [rows, setRows] = useState<AnswerRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // ── Kéo thả để sắp lại thứ tự ──────────────────────────────────────────
+  // Dùng drag-and-drop gốc của HTML5, không thêm thư viện: danh sách này là
+  // một cột dọc đơn giản, và mỗi phụ thuộc mới lại là một thứ phải cài trên
+  // máy mọi người rồi qua CI.
+  //
+  // `dragIndex` là dòng đang cầm, `overIndex` là chỗ sắp thả — cái sau chỉ để
+  // vẽ vạch chỉ chỗ, không đụng gì tới dữ liệu.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  // Dòng đang được rê chuột vào ẢNH NHỎ — quyết định ảnh xem trước nào bung.
+  // Giữ id chứ không giữ chỉ số: id không đổi khi danh sách được sắp lại, còn
+  // chỉ số thì đổi, và ảnh sẽ nhảy sang dòng khác ngay giữa lúc kéo thả.
+  const [hoverRowId, setHoverRowId] = useState<number | null>(null);
   const [step, setStep] = useState(task.type === "trake" ? 2 : 25);
   // What is in the box, which may briefly be empty or half-typed. `step` only
   // ever holds a value the server would accept.
@@ -113,9 +126,14 @@ export default function BasketBody({
     setStepText(String(next));
   }, [task.type]);
 
-  // Not `task.owner?.id !== me?.id`: an unclaimed task has no owner, and that
-  // form would lock the holder out of a basket nobody owns.
-  const readOnly = Boolean(task.owner) && task.owner?.id !== me?.id;
+  // Giỏ này LUÔN sửa được. Trước đây readOnly bật khi câu đã bị người khác
+  // "Nhận", nhưng giờ mỗi người có danh sách riêng cho mỗi câu, và backend chỉ
+  // cho ghi vào danh sách của chính người đang đăng nhập — không còn gì để
+  // khoá ở tầng giao diện.
+  //
+  // Giữ lại biến thay vì xoá và gỡ 6 chỗ dùng nó: màn Export sắp tới cần bày
+  // bài của người khác ở chế độ chỉ đọc, và lúc đó nó lại có việc.
+  const readOnly = false;
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -129,6 +147,34 @@ export default function BasketBody({
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Thả dòng `from` vào chỗ của dòng `to`.
+   *
+   * Backend chỉ nhận "đặt ngay TRƯỚC dòng X" hoặc "ngay SAU dòng X", nên phải
+   * chọn vế nào tuỳ hướng kéo:
+   *
+   *   kéo XUỐNG (from < to)  →  đặt SAU  rows[to]
+   *   kéo LÊN   (from > to)  →  đặt TRƯỚC rows[to]
+   *
+   * Chọn nhầm vế thì dòng lệch đúng một bậc so với chỗ người dùng thả — sai
+   * kiểu rất khó thấy, vì nó vẫn di chuyển, chỉ là không tới đúng chỗ.
+   */
+  const dropRow = async (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || to >= rows.length) {
+      return;
+    }
+    const moved = rows[from];
+    const anchor = rows[to];
+    await act(() =>
+      reorderAnswer(
+        task.id,
+        from < to
+          ? { answer_id: moved.id, after_id: anchor.id }
+          : { answer_id: moved.id, before_id: anchor.id }
+      )
+    );
   };
 
   const submitManual = async () => {
@@ -425,19 +471,54 @@ export default function BasketBody({
         )}
         {rows.map((row, index) => (
           <div key={row.id}>
-            {CUTS.includes(index + 1) && (
-              <div className="flex items-center gap-2 my-1.5">
-                <b className="text-[9px] font-extrabold tracking-wide text-proto-primary-active">
-                  R@{index + 1}
-                </b>
-                <span className="flex-1 h-px bg-proto-primary/40" />
-              </div>
-            )}
             <div
-              className={`${isDialog ? "group" : ""} relative flex items-center gap-2 px-2 py-0.5 rounded-[7px] bg-white border border-proto-line border-l-[3px] mb-1 ${rowTextSize} cursor-pointer ${stripe(
-                row
-              )} ${index === 0 ? "bg-proto-primary/10" : ""} ${
+              draggable={!readOnly}
+              // Cả DÒNG kéo được, không phải chỉ một tay cầm nhỏ. Nhưng dòng
+              // có chứa ô nhập số frame với mấy cái nút — bắt đầu kéo từ trong
+              // đó thì người dùng mất luôn khả năng bôi đen sửa số. Nên chặn
+              // drag khi điểm bắt đầu nằm trong một phần tử tương tác.
+              onDragStart={(e) => {
+                const el = e.target as HTMLElement;
+                if (el.closest("input,textarea,button,select,a")) {
+                  e.preventDefault();
+                  return;
+                }
+                setDragIndex(index);
+                e.dataTransfer.effectAllowed = "move";
+                // Firefox không khởi động drag nếu dataTransfer rỗng.
+                e.dataTransfer.setData("text/plain", String(row.id));
+              }}
+              onDragOver={(e) => {
+                if (dragIndex === null) return;
+                e.preventDefault();          // không gọi thì onDrop không chạy
+                e.dataTransfer.dropEffect = "move";
+                if (overIndex !== index) setOverIndex(index);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = dragIndex;
+                setDragIndex(null);
+                setOverIndex(null);
+                if (from !== null) void dropRow(from, index);
+              }}
+              onDragEnd={() => {
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              // `group` đã bỏ khỏi đây: chỗ duy nhất dùng group-hover là ảnh
+              // xem trước, và nó đã chuyển sang group/thumb gắn vào riêng cái
+              // ảnh nhỏ. Để lại một class không ai dùng chỉ khiến người sau
+              // tưởng có thứ gì đó phụ thuộc vào nó.
+              className={`relative flex items-center gap-2 px-2 py-0.5 rounded-[7px] bg-white border border-proto-line border-l-[3px] mb-1 ${rowTextSize} ${
+                readOnly ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+              } ${stripe(row)} ${index === 0 ? "bg-proto-primary/10" : ""} ${
                 row.id === activeRowId ? "ring-2 ring-proto-primary-active" : ""
+              } ${dragIndex === index ? "opacity-40" : ""} ${
+                overIndex === index && dragIndex !== null && dragIndex !== index
+                  ? dragIndex < index
+                    ? "border-b-2 border-b-proto-primary-active"
+                    : "border-t-2 border-t-proto-primary-active"
+                  : ""
               }`}
               onClick={() => onRowClick(row)}
               title={
@@ -446,21 +527,50 @@ export default function BasketBody({
                   : `Thêm bởi ${row.created_by?.display_name ?? "—"}`
               }
             >
-              <FramePreview videoId={row.video_id} frameIdx={row.frames[0]} />
-              {/* Rendered always, revealed on hover: no fetch on hover, and the
-                  browser has the file from the thumbnail already. Skipped in
-                  the panel — it sits beside the video, so the video is the
-                  preview. */}
-              {isDialog && (
-                <div className="pointer-events-none absolute left-14 top-0 z-[1000] hidden group-hover:block">
-                  <FramePreview
-                    videoId={row.video_id}
-                    frameIdx={row.frames[0]}
-                    size="large"
-                    className="shadow-2xl border-2 border-white"
-                  />
-                </div>
+              {/* Chấm nắm: chỉ để người dùng biết dòng này kéo được. Bản thân
+                  nó không xử lý gì — cả dòng mới là vùng kéo. */}
+              {!readOnly && (
+                <span
+                  className="shrink-0 select-none text-proto-line leading-none"
+                  title="Kéo để đổi thứ tự"
+                >
+                  ⠿
+                </span>
               )}
+              {/* Ảnh xem trước chỉ bung khi rê vào ĐÚNG cái ảnh nhỏ này.
+                  Trước đây `group` đặt trên cả dòng, nên rê vào bất kỳ đâu —
+                  kể cả số frame hay khoảng trống — là ảnh lớn 360×240 bung ra
+                  che mất mấy dòng trên dưới.
+
+                  Điều khiển bằng state của React chứ KHÔNG dùng group-hover
+                  của Tailwind. Lý do đo được: bản dev bọc luật hover trong
+                  `@media (hover: hover)` còn bản build production thì không,
+                  nên cùng một dòng mã cho ra hai hành vi khác nhau ở hai chỗ —
+                  kiểu sai chỉ lộ ra sau khi deploy. `onMouseEnter` chạy y hệt
+                  nhau ở cả hai. */}
+              <span
+                className="relative shrink-0 leading-none"
+                onMouseEnter={() => setHoverRowId(row.id)}
+                onMouseLeave={() =>
+                  setHoverRowId((cur) => (cur === row.id ? null : cur))
+                }
+              >
+                <FramePreview videoId={row.video_id} frameIdx={row.frames[0]} />
+                {/* Chỉ dựng khi đang rê tới. Ảnh lớn dùng CÙNG file với ảnh
+                    nhỏ nên trình duyệt đã có sẵn, không phải tải gì thêm. Bỏ
+                    qua ở panel — nó nằm cạnh video, nên video chính là ảnh xem
+                    trước. */}
+                {isDialog && hoverRowId === row.id && (
+                  <div className="pointer-events-none absolute left-14 top-0 z-[1000]">
+                    <FramePreview
+                      videoId={row.video_id}
+                      frameIdx={row.frames[0]}
+                      size="large"
+                      className="shadow-2xl border-2 border-white"
+                    />
+                  </div>
+                )}
+              </span>
               <i className="not-italic w-6 text-right font-mono font-extrabold text-proto-muted">
                 {row.rank}
               </i>
@@ -504,6 +614,12 @@ export default function BasketBody({
               <span className="ml-auto flex gap-1" onClick={(event) => event.stopPropagation()}>
                 {!readOnly && (
                   <>
+                    {/* Chỉ còn "↑1" và "×". Việc sắp lại thứ tự đã chuyển
+                        sang KÉO THẢ cả dòng (xem onDragStart phía trên).
+
+                        Giữ "↑1" vì kéo một dòng từ hạng 60 lên hạng 1 là cuộn
+                        rất lâu, còn nút thì một cú bấm. Hai thứ bù nhau chứ
+                        không thay nhau. */}
                     {index > 0 && (
                       <button
                         type="button"
@@ -528,6 +644,18 @@ export default function BasketBody({
                 )}
               </span>
             </div>
+            {/* Vạch R@k nằm SAU dòng thứ k, không phải trước.
+                R@k nghĩa là "điểm tính trên k dòng đầu", nên mọi thứ PHÍA TRÊN
+                vạch mới là phần được tính. Vẽ trước dòng thì R@1 hiện lên trên
+                dòng 1 — trông như dòng 1 nằm ngoài top-1, ngược hẳn ý nghĩa. */}
+            {CUTS.includes(index + 1) && (
+              <div className="flex items-center gap-2 my-1.5">
+                <b className="text-[9px] font-extrabold tracking-wide text-proto-primary-active">
+                  R@{index + 1}
+                </b>
+                <span className="flex-1 h-px bg-proto-primary/40" />
+              </div>
+            )}
           </div>
         ))}
       </div>
