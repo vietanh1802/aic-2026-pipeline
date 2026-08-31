@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "dataset": {
+    "slug": "round1",
+    "display_name": "AI Challenge 2026 - Round 1",
+    "version": "round1-v1",
+    "query_count": 25,
+    "task_counts": {
+      "KIS": 20,
+      "QA": 4,
+      "TRAKE": 1
+    },
+    "source": {
+      "filename": "AIC2026_Round1 (1).docx",
+      "sha256": "d4ed30020b6204ca9dc1c082a517f310d91e6afefe836ffadc6d484abde7acab",
+      "provenance": "team_submission_summary_docx"
+    }
+  },
+  "reference_set": {
+    "version": "r1-manual-v1",
+    "label_semantics": "Team manually selected target video and rank-1 evidence from Round 1; these are historical team references, not organizer-certified ground truth.",
+    "interval_annotation": "pending",
+    "notes": "valid_start_frame and valid_end_frame are intentionally null until manual interval review."
+  },
+  "queries": [
+    {
+      "id": "p1-1",
+      "ordinal": 1,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V046",
+        "reference_frame_idx": 6665,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-2",
+      "ordinal": 2,
+      "task_type": "KIS",
+      "query_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L28_V018",
+        "reference_frame_idx": 3302,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-3",
+      "ordinal": 3,
+      "task_type": "QA",
+      "query_vi": "Hình ảnh một con cá được đặt lên cân, sau đó có cảnh một con cá khác cùng loại bị một người cầm đuôi. Con số hiển thị cuối cùng trên cân là bao nhiêu?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V007",
+        "reference_frame_idx": 8775,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": "37.05",
+      "trake_events": null
+    },
+    {
+      "id": "p1-4",
+      "ordinal": 4,
+      "task_type": "KIS",
+      "query_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V021",
+        "reference_frame_idx": 20282,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-5",
+      "ordinal": 5,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V035",
+        "reference_frame_idx": 5384,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-6",
+      "ordinal": 6,
+      "task_type": "KIS",
+      "query_vi": "Mẩu tin bắt đầu với hình ảnh nột người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V023",
+        "reference_frame_idx": 18422,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-7",
+      "ordinal": 7,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip bắt đầu bằng cảnh cà rốt cắt hình ngôi sao đang được luộc trong nồi nước sôi, đặt trong rổ lưới kim loại và được đảo bằng đôi đũa gỗ. Đoạn clip kết thúc bằng hình ảnh đĩa rau củ luộc và đồ chiên được trình bày đẹp mắt, gồm đậu bắp, súp lơ, cà rốt hình ngôi sao, bí xanh, chén nước chấm màu hồng ở giữa và đôi đũa màu hồng nhạt đặt bên phải",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V041",
+        "reference_frame_idx": 5246,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-8",
+      "ordinal": 8,
+      "task_type": "KIS",
+      "query_vi": "Người đầu bếp lần lượt đặt các miếng nguyên liệu dạng thanh và những lát cắt hình hoa vào một đĩa đang được hấp trong nồi. Các nguyên liệu được dùng đũa sắp xếp xen kẽ xung quanh phần thức ăn đã có sẵn trên đĩa. Sau đó, đầu bếp dùng muỗng lấy thêm một loại nguyên liệu mềm từ tô thủy tinh. Phần nguyên liệu này được đặt vào giữa đĩa, xung quanh là các miếng dạng thanh và hình hoa đã được sắp xếp trước đó.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V171",
+        "reference_frame_idx": 5609,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-9",
+      "ordinal": 9,
+      "task_type": "QA",
+      "query_vi": "Đoạn phim ghi lại cảnh những chiếc xe ô tô lội nước, chiếc xe màu vàng, màu đỏ và màu đen lần lượt chuẩn bị đi qua cầu. Con số được ghi trên biển báo bên trái của cây cầu là bao nhiêu?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V003",
+        "reference_frame_idx": 26219,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": "2.15",
+      "trake_events": null
+    },
+    {
+      "id": "p1-10",
+      "ordinal": 10,
+      "task_type": "KIS",
+      "query_vi": "Hành động cắt chùm nho bằng kéo từ giàn nho bằng một chiếc kéo màu đen. Có thể thấy có một sợi dây màu xanh dương được buộc vào cuống của chùm nho này trước khi nó được cắt.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L29_V013",
+        "reference_frame_idx": 11276,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-11",
+      "ordinal": 11,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay chậm tại vị trí vạch đích của cuộc đua xe đạp. Góc máy sát mặt đường bắt trọn khoảnh khắc về đích theo thứ tự nhất, nhì, ba lần lượt là 1 tay đua áo vàng quần đen, 1 tay đua áo xanh dương quần đen và 1 tay đua áo xanh dương quần đỏ",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V021",
+        "reference_frame_idx": 6363,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-12",
+      "ordinal": 12,
+      "task_type": "KIS",
+      "query_vi": "Có thể thấy trong cảnh quay có 4 tài xế xe ôm công nghệ trong trạm xăng, trong đó 3 người đứng đợi còn 1 người lái xe từ trái sang phải khung hình. Trước đó là cảnh một người đậy nắp bình xăng xe máy của họ. Có thông tin về giá dầu mazut được hiển thị trong khung hình.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V001",
+        "reference_frame_idx": 3166,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-13",
+      "ordinal": 13,
+      "task_type": "KIS",
+      "query_vi": "Một người đứng dưới nước và rọi đèn. Tiếp theo là cảnh người này kéo lưới cá lúc bình minh, sau đó được một nhóm người khác tiến đến dùng máy quay ghi hình.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L29_V021",
+        "reference_frame_idx": 6538,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-14",
+      "ordinal": 14,
+      "task_type": "KIS",
+      "query_vi": "Người đầu bếp lần lượt đặt các miếng nguyên liệu dạng thanh và những lát cắt hình hoa vào một đĩa đang được hấp trong nồi. Các nguyên liệu được dùng đũa sắp xếp xen kẽ xung quanh phần thức ăn đã có sẵn trên đĩa. Sau đó, đầu bếp dùng muỗng lấy thêm một loại nguyên liệu mềm từ tô thủy tinh. Phần nguyên liệu này được đặt vào giữa đĩa, xung quanh là các miếng dạng thanh và hình hoa đã được sắp xếp trước đó.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V171",
+        "reference_frame_idx": 5538,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-15",
+      "ordinal": 15,
+      "task_type": "QA",
+      "query_vi": "Bản đồ phân bố động đất tại một vùng trên thế giới, với một bảng chú giải phía bên trái gồm các kí hiệu nhiều màu sắc tương ứng với các vị trí tâm chấn có cấp độ động đất khác nhau. Không tính bảng chú giải, có bao nhiêu vị trí ghi nhận động đất cấp độ 4?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V010",
+        "reference_frame_idx": 19515,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": "12",
+      "trake_events": null
+    },
+    {
+      "id": "p1-16",
+      "ordinal": 16,
+      "task_type": "TRAKE",
+      "query_vi": "Đoạn video bắt đầu bằng ảnh cận đầu một con lân trắng, mũi đỏ, bên cạnh lá cờ trắng viền đỏ. E1: Khoảnh khắc đầu tiên xuất hiện đầy đủ hai con rồng vàng đang xoay vòng. E2: Khoảnh khắc đầu tiên con lân hoàn tất cú xoay người trên các thanh trụ (thời điểm đâu tiên các chân của lân đặt trên trụ sau khi xoay). E3: Khoảnh khắc đầu tiên dùi chạm vào kẻng đồng múa lân.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L24_V024",
+        "reference_frame_idx": null,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Khoảnh khắc đầu tiên xuất hiện đầy đủ hai con rồng vàng đang xoay vòng.",
+          "reference_frame_idx": 9784,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Khoảnh khắc đầu tiên con lân hoàn tất cú xoay người trên các thanh trụ (thời điểm đâu tiên các chân của lân đặt trên trụ sau khi xoay).",
+          "reference_frame_idx": 10128,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Khoảnh khắc đầu tiên dùi chạm vào kẻng đồng múa lân.",
+          "reference_frame_idx": 10190,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ]
+    },
+    {
+      "id": "p1-17",
+      "ordinal": 17,
+      "task_type": "QA",
+      "query_vi": "Đoạn clip mô tả hậu quả của hiện tượng sạt lở đất nghiêm trọng, đất đá tràn xuống gây tắc nghẽn hoàn toàn một đoạn đường đèo. Trong một cảnh quay cận, có thể thấy một cột mốc đường bộ với phần đỉnh màu đỏ chỉ còn lộ ra phần trên, phần lớn đã bị đất đá vùi lấp. Ở cảnh quay cuối, một người đi xe máy đang vật lộn để điều khiển phương tiện vượt qua khu vực bùn lầy, trên chiếc xe máy có treo một vật màu xanh lá. Tên của con đèo là gì?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V008",
+        "reference_frame_idx": 5888,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": "Tà Pứa",
+      "trake_events": null
+    },
+    {
+      "id": "p1-18",
+      "ordinal": 18,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay cho thấy hành động trình bày món ăn sau khi hoàn thành giai đoạn chế biến. Bún được cho đầu tiên vào một chén rỗng, sau đó đầu bếp lần lượt cho từng vá nước dùng cùng các nguyên liệu như thịt gà, cà rốt, sả, nấm mèo vào chén bún, và kết thúc bằng việc thả một cọng ngò lên trên cùng. Cảnh quay tiếp theo là cảnh zoom xa dần chén bún, ta thấy bên cạnh chén bún còn có 1 chén nước chấm nhỏ với 2 miếng ớt.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V389",
+        "reference_frame_idx": 5767,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-19",
+      "ordinal": 19,
+      "task_type": "KIS",
+      "query_vi": "Con lân do hai người điều khiển đang đứng thẳng và xoay vòng trên đỉnh cột. Sau vài giây nghỉ, con lân bất ngờ nhảy qua hai chiếc cột kế bên, chúi đầu xuống ngoạm lấy quả bí đỏ kèm bông hoa màu vàng. Cảnh quay kết thúc khi con lân tiếp tục nhảy sang các cột tiếp theo.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L24_V035",
+        "reference_frame_idx": 14353,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-20",
+      "ordinal": 20,
+      "task_type": "KIS",
+      "query_vi": "Ba người đang đi bộ xuống một con dốc trong cơn mưa, có 2 người cầm dù, trong đó người cầm dù đi sau lại mặc một chiếc áo mưa có in hình con gấu ở sau lưng. Sau đó ta thấy nhiều người đang cùng nhau bước về hướng một căn nhà thông qua một con đường đất, bên cạnh là một cái ao.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V026",
+        "reference_frame_idx": 7586,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-21",
+      "ordinal": 21,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay bắt đầu bằng cảnh những con tôm đã được lột vỏ và nấu chín đang nằm trên dĩa, phía sau là người đầu bếp đang đặt 3 ổ bánh mì lên bàn. Sau đó là cảnh quay các đầu bếp, có người thì trang trí món ăn, có người thì chế biến món ăn. Những con tôm được cắt làm đôi và được nướng trên bếp.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V011",
+        "reference_frame_idx": 15247,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-22",
+      "ordinal": 22,
+      "task_type": "KIS",
+      "query_vi": "Người phụ nữ mặc áo dài màu hồng, đeo kính đang giảng giải về các trường hợp sử dụng khác nhau của động từ 'remember' dựa trên mốc thời gian của hành động được nhắc tới.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V041",
+        "reference_frame_idx": 16541,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-23",
+      "ordinal": 23,
+      "task_type": "KIS",
+      "query_vi": "Hình ảnh giáo viên nam mặc sơ mi trắng, thắt cà vạt tối màu, nổi bật trên phông nền xanh dương đậm có hoa văn mờ. Slide bài giảng Nền trắng với khung viền màu hồng tím, phía trên có thanh tiêu đề xanh dương chứa họa tiết địa cầu và mũi tên vàng/xanh ngọc. Bên dưới là sơ đồ 3 tầng được liên kết bởi các mũi tên xanh ngọc trỏ xuống: Tầng 1: 2 khối hộp được bao bởi 1 khối hộp cam. Tầng 2: 1 khối hộp lớn màu xanh dương đậm ở chính giữa. Tầng 3: 2 khối hộp được bao bởi 1 khối hộp xanh lá cây.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V060",
+        "reference_frame_idx": 28712,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-24",
+      "ordinal": 24,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip được cắt từ một phóng sự về một nhóm các nghệ nhân làm nghề đan lát các sản phẩm thủ công từ cây lục bình. Đầu tiên là một cảnh lia cam duy nhất từ trái sang phải, theo thứ tự ta thấy 4 sản phẩm: túi xách, chậu hoa, bộ ấm tách trà và túi xách. Ngay sau cảnh này, người phụ nữ bên trái lấy một tách trà trong bộ ấm tách và nâng niu trong khi nghe người phụ nữ bên phải trò chuyện.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L29_V001",
+        "reference_frame_idx": 9039,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p1-25",
+      "ordinal": 25,
+      "task_type": "KIS",
+      "query_vi": "Hai bạn học sinh mặc đồng phục áo trắng, quần xanh, quàng khăn đỏ đang làm MC trên một sân khấu tại trường học, phía sau là một bộ trống cơ màu đỏ và một cây đàn piano.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V003",
+        "reference_frame_idx": 6618,
+        "valid_start_frame": null,
+        "valid_end_frame": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round1_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    }
+  ]
+}

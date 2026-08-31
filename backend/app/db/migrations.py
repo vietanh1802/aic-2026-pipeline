@@ -30,6 +30,129 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ALTER TABLE packs ADD COLUMN deleted_at TEXT",
         ),
     ),
+    (
+        2,
+        (
+            """
+            CREATE TABLE evaluation_datasets (
+                id INTEGER PRIMARY KEY,
+                slug TEXT NOT NULL,
+                version TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                query_count INTEGER NOT NULL,
+                source_filename TEXT,
+                source_sha256 TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(slug, version)
+            )
+            """,
+            """
+            CREATE TABLE evaluation_queries (
+                id INTEGER PRIMARY KEY,
+                dataset_id INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,
+                query_key TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                task_type TEXT NOT NULL,
+                query_vi TEXT NOT NULL,
+                UNIQUE(dataset_id, query_key)
+            )
+            """,
+            """
+            CREATE TABLE evaluation_reference_sets (
+                id INTEGER PRIMARY KEY,
+                dataset_id INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,
+                version TEXT NOT NULL,
+                label_semantics TEXT NOT NULL,
+                interval_annotation TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(dataset_id, version)
+            )
+            """,
+            """
+            CREATE TABLE evaluation_references (
+                id INTEGER PRIMARY KEY,
+                reference_set_id INTEGER NOT NULL REFERENCES evaluation_reference_sets(id) ON DELETE CASCADE,
+                query_id INTEGER NOT NULL REFERENCES evaluation_queries(id) ON DELETE CASCADE,
+                video_id TEXT NOT NULL,
+                reference_frame_idx INTEGER,
+                valid_start_frame INTEGER,
+                valid_end_frame INTEGER,
+                status TEXT NOT NULL,
+                confidence TEXT,
+                provenance TEXT,
+                qa_answer TEXT,
+                trake_events_json TEXT,
+                UNIQUE(reference_set_id, query_id)
+            )
+            """,
+        ),
+    ),
+    (
+        3,
+        (
+            """
+            CREATE TABLE evaluation_runs (
+                id INTEGER PRIMARY KEY,
+                dataset_id INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,
+                reference_set_id INTEGER NOT NULL REFERENCES evaluation_reference_sets(id) ON DELETE CASCADE,
+                strategy TEXT NOT NULL,
+                video_ranking_policy TEXT NOT NULL,
+                translator TEXT NOT NULL,
+                status TEXT NOT NULL,
+                query_count INTEGER NOT NULL,
+                completed_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                created_by_user_id INTEGER,
+                configuration_json TEXT NOT NULL,
+                runtime_json TEXT,
+                summary_json TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                updated_at TEXT NOT NULL,
+                resume_count INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE evaluation_query_results (
+                id INTEGER PRIMARY KEY,
+                run_id INTEGER NOT NULL REFERENCES evaluation_runs(id) ON DELETE CASCADE,
+                query_id INTEGER NOT NULL REFERENCES evaluation_queries(id) ON DELETE CASCADE,
+                query_key TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                task_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                query_vi TEXT NOT NULL,
+                query_en TEXT,
+                translator TEXT NOT NULL,
+                reference_video TEXT NOT NULL,
+                reference_frame_idx INTEGER,
+                predicted_top1_video TEXT,
+                reference_video_rank INTEGER,
+                hit_at_1 INTEGER,
+                hit_at_3 INTEGER,
+                hit_at_5 INTEGER,
+                hit_at_10 INTEGER,
+                reciprocal_rank REAL,
+                not_retrieved INTEGER,
+                translation_ms REAL,
+                retrieval_ms REAL,
+                aggregation_ms REAL,
+                total_ms REAL,
+                frame_results_json TEXT,
+                ranked_videos_json TEXT,
+                error TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                UNIQUE(run_id, query_id)
+            )
+            """,
+            "CREATE INDEX idx_evaluation_runs_status ON evaluation_runs(status)",
+            "CREATE INDEX idx_evaluation_query_results_run ON evaluation_query_results(run_id, ordinal)",
+        ),
+    ),
 )
 
 

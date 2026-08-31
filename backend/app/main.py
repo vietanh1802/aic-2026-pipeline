@@ -44,17 +44,22 @@ from pydantic import BaseModel, Field
 from app.models import SearchResult, SearchResponse
 from app.db.connection import get_conn
 from app.db.migrate import migrate
+
 from app.routers import (
     answers as answers_router,
     auth as auth_router,
     board as board_router,
     export as export_router,
+    evaluation as evaluation_router,
     packs as packs_router,
     rounds as rounds_router,
 )
+
 from app.version import SHORT_COMMIT, VERSION
 from app.asr_service import asr_status, search_asr
 from app.multimodal import multimodal_search
+from app.evaluation.runner import interrupt_incomplete_runs
+
 from app import ocr_search as ocr_route
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
@@ -494,9 +499,15 @@ async def lifespan(app: FastAPI):
     # triển khai chỉ còn một artefact. Chạy trước warm-up vì nó tính bằng mili
     # giây, còn warm-up tính bằng phút.
     _conn = get_conn()
-    try:
+    try :
         migrate(_conn)
-    finally:
+
+        interrupted = interrupt_incomplete_runs(_conn)
+        if interrupted :
+            print(
+                f"[evaluation] marked {interrupted} unfinished run(s) as interrupted"
+            )
+    finally :
         _conn.close()
 
     if os.environ.get("AIC_WARMUP", "1") != "0":
@@ -525,6 +536,7 @@ app.include_router(board_router.router)
 app.include_router(answers_router.router)
 app.include_router(export_router.router)
 app.include_router(rounds_router.router)
+app.include_router(evaluation_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is
