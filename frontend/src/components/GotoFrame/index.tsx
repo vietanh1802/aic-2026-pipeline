@@ -30,7 +30,10 @@ export default function GotoFrame() {
   };
 
   return (
-    <div className="font-baloo">
+    // `relative` để câu báo lỗi treo ở dưới mà không đội thanh điều hướng lên
+    // cao thêm một dòng — ô này giờ nằm TRONG thanh đó, nên mọi thay đổi chiều
+    // cao của nó đều đẩy cả trang xuống.
+    <div className="font-baloo relative">
       <input
         type="text"
         value={text}
@@ -45,10 +48,12 @@ export default function GotoFrame() {
         }}
         placeholder="Tới frame — L01_V001 1234"
         title="Dán video + frame, hoặc tên file keyframe, rồi Enter"
-        className="w-[230px] px-3 py-1.5 rounded-md border border-proto-line bg-white text-[12.5px] font-mono text-proto-ink"
+        className="w-[210px] px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-mono text-proto-ink"
       />
       {error && (
-        <p className="mt-1 text-[11px] text-[#c64545] max-w-[230px]">{error}</p>
+        <p className="absolute left-0 top-full mt-1 z-30 w-[230px] rounded-[6px] border border-[#c64545] bg-white px-2 py-1 text-[11px] text-[#c64545] shadow-sm">
+          {error}
+        </p>
       )}
     </div>
   );

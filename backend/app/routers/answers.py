@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app import audit
-from app.answers.autofill import spread
+from app.answers import autofill
 from app.auth.deps import active_user
 from app.db.connection import get_db, utcnow_iso
 from app.routers._shared import (
@@ -76,6 +76,25 @@ class AutofillRequest(BaseModel):
     # replace_auto drop the generated rows, then refill - for changing the step
     # clear        drop the generated rows and stop
     mode: str = "append"
+
+    # ── Rải quanh NHIỀU mốc ──────────────────────────────────────────────────
+    #
+    # Mặc định lấy mọi dòng ghim tay trong giỏ làm mốc. Trước đây chỉ lấy dòng
+    # đầu, nên thấy bốn khung cùng đúng thì ba khung kia không được rải quanh —
+    # phải tự ngồi tính từng số frame.
+    #
+    # anchor_ids khoanh lại còn đúng những dòng muốn dùng; bỏ trống là dùng hết.
+    anchor_ids: list[int] | None = None
+    # Bước riêng cho từng mốc, theo đúng thứ tự mốc. Thiếu phần tử nào thì phần
+    # tử cuối được dùng tiếp; bỏ trống hẳn thì mọi mốc dùng chung `step`. Có
+    # mặt vì hành động ở video quay chậm trải dài hơn hẳn video quay nhanh.
+    steps: list[int] | None = None
+    # both | up | down, dùng cho MỌI mốc chưa có chiều riêng.
+    direction: str = autofill.BOTH
+    # Chiều riêng cho từng mốc, cùng thứ tự với mốc. Mốc nằm giữa cảnh dài thì
+    # rải hai phía; mốc nằm ngay đầu cảnh thì rải xuống là ném đi nửa số dòng.
+    # Ép cả ba dùng chung một chiều là bắt hai mốc chịu thiệt vì mốc thứ ba.
+    directions: list[str] | None = None
 
 
 def _row_with_rank(conn: sqlite3.Connection, answer_id: int) -> sqlite3.Row:
@@ -407,18 +426,53 @@ def autofill_answers(
             detail="Pin at least one answer first — autofill spreads around it.",
         )
 
-    # The anchor is whichever row the user put at rank 1, not whatever the ranker
-    # liked best. Spec §7.1.
-    anchor_row = rows[0]
-    anchor_frames = [int(f) for f in json.loads(anchor_row["frames"])]
-    if not anchor_frames:
+    # Mốc là NHỮNG DÒNG NGƯỜI DÙNG TỰ GHIM, theo đúng thứ hạng họ xếp — không
+    # phải thứ máy chấm cho là nhất (spec §7.1). Trước đây chỉ lấy rows[0]: thấy
+    # bốn khung cùng đúng thì ba khung sau bị bỏ mặc.
+    #
+    # Dòng auto của lần điền trước không được làm mốc, nếu không thì mỗi lần
+    # bấm lại sẽ rải quanh chính thứ mình vừa sinh ra và trôi xa dần khỏi khung
+    # thật.
+    candidates = [row for row in rows if row["origin"] != "auto"] or [rows[0]]
+    if payload.anchor_ids:
+        wanted = set(payload.anchor_ids)
+        chosen = [row for row in candidates if row["id"] in wanted]
+        if not chosen:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Không có dòng nào trong số đã chọn để làm mốc.",
+            )
+        candidates = chosen
+
+    anchors: list[tuple[str, list[int], str | None]] = []
+    for row in candidates:
+        frames_of = [int(f) for f in json.loads(row["frames"])]
+        if frames_of:
+            anchors.append(
+                (
+                    row["video_id"],
+                    frames_of,
+                    row["answer_text"] if task["type"] == "qa" else None,
+                )
+            )
+    if not anchors:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="The first answer has no frame to spread around.",
+            detail="Không mốc nào có số frame để rải quanh.",
         )
-    anchor = anchor_frames[0]
-    video_id = anchor_row["video_id"]
-    answer_text = anchor_row["answer_text"] if task["type"] == "qa" else None
+
+    steps = [s for s in (payload.steps or []) if s > 0] or [payload.step]
+    fallback = (
+        payload.direction
+        if payload.direction in autofill.DIRECTIONS
+        else autofill.BOTH
+    )
+    # Chiều lạ rơi về `fallback` chứ không làm hỏng cả lượt điền: giá trị này
+    # tới từ giao diện, và một chuỗi sai chính tả không đáng để mất 97 dòng.
+    directions = [
+        d if d in autofill.DIRECTIONS else fallback
+        for d in (payload.directions or [])
+    ] or [fallback]
 
     taken = {
         (row["video_id"], tuple(int(f) for f in json.loads(row["frames"])))
@@ -428,18 +482,18 @@ def autofill_answers(
     now = utcnow_iso()
     added = 0
 
-    for frame in spread(anchor, payload.step, needed * 2):
+    # Sinh dư rồi lọc: mỗi mốc có thể va vào dòng đã có hoặc tụt xuống dưới 0,
+    # nên số lượt sinh luôn nhiều hơn số dòng thật sự thêm được.
+    for index, delta in autofill.plan(
+        len(anchors), steps, directions, needed * 8 + 64
+    ):
         if added >= needed:
             break
-        # TRAKE keeps the whole tuple and shifts it by one delta, so the gaps
-        # between events survive. Guessing per-event offsets would be inventing
-        # numbers, and the scoring is lopsided: the wrong video is zero outright,
-        # while a wrong mark costs 1/N.
-        frames = (
-            [frame + (f - anchor) for f in anchor_frames]
-            if task["type"] == "trake"
-            else [frame]
-        )
+        video_id, anchor_frames, answer_text = anchors[index]
+        # TRAKE giữ nguyên cả bộ và dời đi cùng một lượng, nên khoảng cách giữa
+        # các mốc còn nguyên. Đoán lệch riêng từng mốc là bịa số, mà thang điểm
+        # thì lệch hẳn: sai video là mất trắng, còn sai một mốc chỉ mất 1/N.
+        frames = [f + delta for f in anchor_frames]
         key = (video_id, tuple(frames))
         if any(f < 0 for f in frames) or key in taken:
             continue

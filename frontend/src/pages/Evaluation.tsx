@@ -79,6 +79,19 @@ export default function EvaluationPage() {
   const [pending, setPending] = useState<Hovered | null>(null);
   const [hovered, setHovered] = useState<Hovered | null>(null);
 
+  /**
+   * Bấm vào một mốc — video nhảy TỨC THÌ, không qua độ trễ 180ms.
+   *
+   * Rê chuột là để lướt qua nhiều mốc mà không kéo video theo từng cái; bấm là
+   * một quyết định, và bắt nó chờ thêm 180ms chỉ khiến thao tác trông đơ. Ghi
+   * cả `pending` để khi thả chuột ra hiệu ứng viền sáng vẫn ở đúng mốc vừa bấm
+   * chứ không nhảy về mốc con trỏ tình cờ đi ngang.
+   */
+  const pickFrame = (target: Hovered) => {
+    setPending(target);
+    setHovered(target);
+  };
+
   // Kéo thả trong cột của mình: dòng đang cầm và chỗ sắp thả.
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -278,10 +291,18 @@ export default function EvaluationPage() {
         </p>
       ) : (
         <>
-          {/* Đề bài bên trái, video bên phải. Video nằm TRÊN các cột bài và
-              các cột tự cuộn bên trong, nên nó không bao giờ bị đẩy khỏi tầm
-              nhìn lúc đang dò dòng — đó mới là điểm của việc vừa xem vừa so. */}
-          <div className="grid md:grid-cols-[1fr_520px] gap-4 mb-4 items-start">
+          {/* Đề bài bên trái, video bên phải, và cả khối GHIM lại khi cuộn.
+              Nằm ở trên thôi thì chưa đủ: cột bài dài hơn màn hình, nên vừa
+              kéo xuống soi ảnh là đề bài lẫn video đều trôi mất — đúng lúc cần
+              chúng nhất, vì soi ảnh là để đối chiếu với đề.
+
+              `-mx-6 px-6` kéo nền ra sát mép trong của khung `p-6` bên ngoài,
+              nếu không thì các dòng bên dưới sẽ lộ ra ở hai bên khi trượt qua.
+              z-20 đủ để nằm trên lưới bài mà vẫn dưới popup video. */}
+          {/* Hai cột BẰNG NHAU. Trước là `[1fr_520px]`: đề bài nuốt hết chỗ
+              thừa nên trên màn rộng nó dài gấp đôi khung video, trong khi đề
+              bài chỉ có vài dòng còn video mới là thứ cần to. */}
+          <div className="sticky top-0 z-20 bg-proto-canvas -mx-6 px-6 pt-1 pb-3 grid md:grid-cols-2 gap-4 items-start">
             <div className="border border-proto-line rounded-[10px] bg-white p-3">
               <div className="flex items-center gap-2 mb-1">
                 <b className="font-mono text-proto-ink">{task.code}</b>
@@ -359,14 +380,21 @@ export default function EvaluationPage() {
                                 frameAt: at,
                               })
                             }
-                            className={`flex-1 min-w-0 rounded-[6px] overflow-hidden border-2 ${
+                            onClick={() =>
+                              pickFrame({
+                                authorId: hovered.authorId,
+                                row: hovered.row,
+                                frameAt: at,
+                              })
+                            }
+                            className={`flex-1 min-w-0 rounded-[6px] overflow-hidden border-2 cursor-pointer ${
                               at === hovered.frameAt
                                 ? "border-proto-primary-active"
-                                : "border-transparent"
+                                : "border-transparent hover:border-proto-line"
                             }`}
-                            title={
+                            title={`${
                               task.event_labels[at] ?? `Mốc ${at + 1}`
-                            }
+                            } — bấm để nhảy tới frame ${frame}`}
                           >
                             {/* Chiều cao đặt ở khung bọc, không ở ảnh: size
                                 "fill" sinh h-full, mà h-full trong một thẻ cha
@@ -379,7 +407,7 @@ export default function EvaluationPage() {
                               />
                             </span>
                             <span className="block text-[10px] font-mono text-proto-muted truncate px-0.5">
-                              <b className="text-[#a9583e]">E{at + 1}</b> {frame}
+                              <b className="text-proto-primary-active">E{at + 1}</b> {frame}
                             </span>
                           </button>
                         ))}
@@ -617,8 +645,12 @@ export default function EvaluationPage() {
                           {task.type === "trake" && (
                             <div className="flex gap-1">
                               {row.frames.map((frame, at) => (
-                                <span
+                                // <button> chứ không <span>: đây là thứ bấm
+                                // được, nên nó phải bấm được cả bằng bàn phím
+                                // và phải đọc ra là nút với trình đọc màn hình.
+                                <button
                                   key={at}
+                                  type="button"
                                   onMouseEnter={() =>
                                     setPending({
                                       authorId: group.author.id,
@@ -626,14 +658,24 @@ export default function EvaluationPage() {
                                       frameAt: at,
                                     })
                                   }
-                                  title={
+                                  onClick={(event) => {
+                                    // Dòng cha kéo thả được; không chặn thì cú
+                                    // bấm này cũng chạy luôn handler của dòng.
+                                    event.stopPropagation();
+                                    pickFrame({
+                                      authorId: group.author.id,
+                                      row,
+                                      frameAt: at,
+                                    });
+                                  }}
+                                  title={`${
                                     task.event_labels[at] ?? `Mốc ${at + 1}`
-                                  }
-                                  className={`flex-1 min-w-0 rounded-[4px] overflow-hidden border ${
+                                  } — bấm để nhảy tới frame ${frame}`}
+                                  className={`flex-1 min-w-0 rounded-[4px] overflow-hidden border cursor-pointer ${
                                     hovered?.row.id === row.id &&
                                     hovered.frameAt === at
                                       ? "border-proto-primary-active"
-                                      : "border-transparent"
+                                      : "border-transparent hover:border-proto-line"
                                   }`}
                                 >
                                   <span className="block w-full h-[56px]">
@@ -644,10 +686,10 @@ export default function EvaluationPage() {
                                     />
                                   </span>
                                   <span className="block text-[9.5px] font-mono text-proto-muted truncate text-center">
-                                    <b className="text-[#a9583e]">E{at + 1}</b>{" "}
+                                    <b className="text-proto-primary-active">E{at + 1}</b>{" "}
                                     {frame}
                                   </span>
-                                </span>
+                                </button>
                               ))}
                             </div>
                           )}

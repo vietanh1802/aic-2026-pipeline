@@ -8,6 +8,7 @@ import {
   patchAnswer,
   reorderAnswer,
   type AnswerRow,
+  type SpreadDirection,
 } from "../../api/answers";
 import { ApiRequestError } from "../../api/base";
 import type { BoardTask } from "../../api/board";
@@ -23,6 +24,14 @@ import { useAuthStore } from "../../store/authStore";
 // nothing; from 6 to 5 buys a fifth of a point. Nobody does that arithmetic
 // under time pressure, so the lines get drawn.
 const CUTS = [1, 5, 20, 50, 100];
+
+// Ba chiều rải, dùng chung cho hàng "đặt cho tất cả" và cho từng hàng mốc.
+// Ký hiệu: ↕ hai phía, ↑ chỉ cộng lên, ↓ chỉ trừ xuống.
+const DIRECTIONS: readonly (readonly [SpreadDirection, string, string])[] = [
+  ["both", "Hai phía", "↕"],
+  ["up", "Chỉ cộng lên", "↑"],
+  ["down", "Chỉ trừ xuống", "↓"],
+] as const;
 
 // The range AutofillRequest.step accepts on the server (ge=1, le=2000). The UI
 // must not offer a value the API will reject.
@@ -89,6 +98,18 @@ export default function BasketBody({
   // Giữ id chứ không giữ chỉ số: id không đổi khi danh sách được sắp lại, còn
   // chỉ số thì đổi, và ảnh sẽ nhảy sang dòng khác ngay giữa lúc kéo thả.
   const [hoverRowId, setHoverRowId] = useState<number | null>(null);
+  // ── Rải quanh nhiều mốc ─────────────────────────────────────────────────
+  //
+  // Mốc = các dòng người dùng tự ghim (origin "manual"). Mặc định dùng HẾT.
+  // `anchorOff` giữ những dòng bị bỏ tick — giữ mặt trái thay vì giữ mặt phải
+  // để một dòng vừa thêm vào giỏ tự động được tính là mốc, không phải tick lại.
+  const [anchorOff, setAnchorOff] = useState<Set<number>>(new Set());
+  // Chiều và bước RIÊNG theo id dòng. Mốc nào chưa đặt thì rơi về mặc định
+  // ("hai phía", và ô "Bước" chung bên trên) — nên mở bảng ra là dùng được
+  // ngay, chỉ ai cần mới phải chỉnh.
+  const [dirById, setDirById] = useState<Record<number, SpreadDirection>>({});
+  const [stepById, setStepById] = useState<Record<number, string>>({});
+
   const [step, setStep] = useState(task.type === "trake" ? 2 : 25);
   // What is in the box, which may briefly be empty or half-typed. `step` only
   // ever holds a value the server would accept.
@@ -204,6 +225,40 @@ export default function BasketBody({
 
   const { anchor, autoCount, needed, from, to } = autofillPlan(rows, rowsPerQuery, step);
 
+  // Dòng auto không bao giờ làm mốc: bấm điền lần hai mà rải quanh thứ mình
+  // vừa sinh ra thì tâm rải trôi xa dần khỏi khung thật.
+  const pinned = rows.filter((row) => row.origin !== "auto");
+  const anchors = pinned.filter((row) => !anchorOff.has(row.id));
+  const stepOf = (id: number) => {
+    const parsed = Number(stepById[id]);
+    return Number.isInteger(parsed) && inStepRange(parsed) ? parsed : step;
+  };
+  const dirOf = (id: number): SpreadDirection => dirById[id] ?? "both";
+  // Gửi luôn cả hai danh sách, không cần cờ bật/tắt: mốc chưa chỉnh gì thì
+  // stepOf trả về `step` chung và dirOf trả "both", tức đúng hành vi mặc định.
+  // Một cờ "bật riêng" chỉ thêm một trạng thái để quên bật.
+  const autofillArgs = () => ({
+    step,
+    // Chỉ gửi anchor_ids khi đã bỏ bớt: gửi cả danh sách đầy đủ cũng ra kết
+    // quả y hệt, nhưng để trống thì backend tự lấy mọi dòng ghim tay và tính
+    // năng vẫn đúng kể cả khi giao diện lệch pha với giỏ.
+    ...(anchors.length === pinned.length
+      ? {}
+      : { anchor_ids: anchors.map((row) => row.id) }),
+    steps: anchors.map((row) => stepOf(row.id)),
+    directions: anchors.map((row) => dirOf(row.id)),
+  });
+
+  /** Đặt cùng một chiều cho mọi mốc đang tick — lối tắt cho trường hợp thường. */
+  const setAllDirections = (value: SpreadDirection) =>
+    setDirById((current) => {
+      const next = { ...current };
+      anchors.forEach((row) => {
+        next[row.id] = value;
+      });
+      return next;
+    });
+
   // ── Áp đáp án cho tất cả dòng ────────────────────────────────────────────
   // A Q&A task has one answer; only the frame varies per row. The anchor
   // (rank 1) usually gets typed first, so this copies it onto every other
@@ -297,8 +352,10 @@ export default function BasketBody({
                 <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
                   Mốc neo
                 </span>
-                <span className="font-mono text-xs text-proto-ink">
-                  {anchor ? `${anchor.video_id} · ${anchor.frames.join(", ")}` : "—"}
+                <span className="text-[11.5px] text-proto-ink">
+                  {anchors.length === 0
+                    ? "—"
+                    : `${anchors.length}/${pinned.length} dòng ghim tay`}
                 </span>
                 {/* Typed, not dragged. The step is a frame count someone has in
                     mind — 2 for a TRAKE window, 25 for a second at 25 fps — and a
@@ -351,12 +408,123 @@ export default function BasketBody({
                   Đoạn đã ghim {markedRange.start} → {markedRange.end}
                 </p>
               )}
+              {/* Lối tắt, KHÔNG phải trạng thái. Chiều thật nằm trên từng
+                  hàng mốc bên dưới; ba nút này chỉ ghi cùng một giá trị vào
+                  mọi hàng đang tick. Có mặt vì phần lớn lúc cả ba mốc cùng
+                  một chiều, bấm ba lần trên ba hàng là thừa. */}
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+                  Đặt cho tất cả
+                </span>
+                {DIRECTIONS.map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={anchors.length === 0}
+                    onClick={() => setAllDirections(id)}
+                    className="text-[11.5px] px-2 py-0.5 rounded-[6px] border border-proto-line bg-white text-proto-muted disabled:opacity-40"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Mỗi mốc một hàng, mỗi hàng tự quyết bước VÀ chiều của nó.
+                  Trước đây chiều là một lựa chọn dùng chung cho cả ba mốc, mà
+                  ba mốc nằm ở ba chỗ khác nhau trong ba video khác nhau: cái
+                  giữa cảnh cần hai phía, cái ngay đầu cảnh mà rải xuống là ném
+                  đi nửa số dòng. Hiện cả khi chỉ có một mốc — đó vẫn là chỗ
+                  duy nhất đặt được chiều. */}
+              {pinned.length > 0 && (
+                <div className="mt-2 border border-proto-line rounded-[8px] bg-white divide-y divide-proto-line max-h-48 overflow-y-auto">
+                  {pinned.map((row, index) => {
+                    const on = !anchorOff.has(row.id);
+                    return (
+                      <div
+                        key={row.id}
+                        className={`flex items-center gap-2 px-2 py-1 text-[11.5px] ${
+                          on ? "" : "opacity-45"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          title="Dùng dòng này làm mốc"
+                          onChange={() =>
+                            setAnchorOff((current) => {
+                              const next = new Set(current);
+                              if (next.has(row.id)) next.delete(row.id);
+                              else next.add(row.id);
+                              return next;
+                            })
+                          }
+                        />
+                        <b className="font-mono text-proto-ink w-5 shrink-0">
+                          {index + 1}
+                        </b>
+                        <span className="font-mono text-proto-ink truncate min-w-0">
+                          {row.video_id}
+                        </span>
+                        <span className="font-mono text-proto-muted ml-auto shrink-0">
+                          {row.frames.join(", ")}
+                        </span>
+
+                        {/* Ba nút chiều, ký hiệu thay cho chữ: ba hàng × ba
+                            nhãn dài là một bức tường chữ, mà mũi tên thì đọc
+                            được ngay. Chữ đầy đủ nằm ở tooltip. */}
+                        <span className="flex shrink-0 rounded-[5px] overflow-hidden border border-proto-line">
+                          {DIRECTIONS.map(([id, label, glyph]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              disabled={!on}
+                              title={label}
+                              onClick={() =>
+                                setDirById((current) => ({
+                                  ...current,
+                                  [row.id]: id,
+                                }))
+                              }
+                              className={`w-6 py-0.5 text-[12px] leading-none ${
+                                dirOf(row.id) === id
+                                  ? "bg-proto-primary text-white font-bold"
+                                  : "bg-white text-proto-muted"
+                              }`}
+                            >
+                              {glyph}
+                            </button>
+                          ))}
+                        </span>
+
+                        <input
+                          type="number"
+                          min={STEP_MIN}
+                          max={STEP_MAX}
+                          disabled={!on}
+                          value={stepById[row.id] ?? String(step)}
+                          onChange={(event) =>
+                            setStepById((current) => ({
+                              ...current,
+                              [row.id]: event.target.value,
+                            }))
+                          }
+                          title="Bước riêng cho mốc này"
+                          className="w-14 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink shrink-0"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="flex items-center gap-3 mt-2 flex-wrap">
                 <span className="text-[11.5px] text-proto-muted">
-                  {!anchor
-                    ? "Thêm ít nhất một đáp án để làm mốc neo."
+                  {anchors.length === 0
+                    ? "Thêm ít nhất một đáp án, hoặc tick lại một mốc."
                     : needed === 0
                     ? `Đã đủ ${rowsPerQuery} dòng. Xoá dòng auto rồi đổi bước nếu muốn trải lại.`
+                    : anchors.length > 1
+                    ? `${needed} dòng auto → đủ ${rowsPerQuery} · vòng tròn qua ${anchors.length} mốc`
                     : `${needed} dòng auto → đủ ${rowsPerQuery} · phủ ${from} → ${to}`}
                 </span>
                 <span className="ml-auto flex gap-2">
@@ -376,8 +544,10 @@ export default function BasketBody({
                   </Button>
                   <Button
                     size="xs"
-                    disabled={busy || !anchor || needed === 0}
-                    onClick={() => void act(() => autofillAnswers(task.id, { step }))}
+                    disabled={busy || anchors.length === 0 || needed === 0}
+                    onClick={() =>
+                      void act(() => autofillAnswers(task.id, autofillArgs()))
+                    }
                   >
                     Điền {needed} dòng
                   </Button>

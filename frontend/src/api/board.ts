@@ -210,16 +210,18 @@ export function patchPack(
   });
 }
 
-export function deletePack(packId: number): Promise<{ pack: RoundPack }> {
-  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}`, {
-    method: "DELETE",
-  });
-}
-
-export function restorePack(packId: number): Promise<{ pack: RoundPack }> {
-  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}/restore`, {
-    method: "POST",
-  });
+/**
+ * Xoá một vòng và mọi thứ dưới nó. KHÔNG khôi phục được.
+ *
+ * Trả về số lượng đã xoá chứ không trả về pack: hàng đó không còn tồn tại.
+ * Backend từ chối nếu đó là vòng đang thi.
+ *
+ * restorePack() đã bỏ cùng endpoint /restore — xoá mềm không còn nữa.
+ */
+export function deletePack(
+  packId: number
+): Promise<{ deleted: boolean; tasks: number; answers: number }> {
+  return apiFetch(`/api/admin/packs/${packId}`, { method: "DELETE" });
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────

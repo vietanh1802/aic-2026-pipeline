@@ -77,8 +77,15 @@ export default function Board({
       return task.contributors.some((c) => c.id === me?.id);
     return true;
   });
-  const done = (board?.tasks ?? []).filter(
-    (task) => task.answer_count >= rowsPerQuery
+  // "Đủ 100 dòng" nghĩa là CÓ MỘT NGƯỜI làm xong, không phải tổng của cả nhóm
+  // đạt 100.
+  //
+  // Trước đây đếm bằng task.answer_count, mà con số đó cộng dồn cả 5 người: ba
+  // người mỗi người 40 dòng thành 120, vượt 100, và câu đó bị tính là xong
+  // trong khi không ai có nổi một danh sách hoàn chỉnh để nộp. Bài nộp lấy của
+  // MỘT người, nên phép đếm cũng phải theo từng người.
+  const done = (board?.tasks ?? []).filter((task) =>
+    task.contributors.some((c) => c.count >= rowsPerQuery)
   ).length;
 
   if (board && !board.round) {
@@ -118,7 +125,10 @@ export default function Board({
         {(
           [
             ["all", "Tất cả"],
-            ["open", "Chưa ai nhận"],
+            // "Chưa ai nhận" là chữ còn sót từ thời Nhận/Nhả. Bộ lọc này vốn
+            // đã đọc contributors, tức là "chưa ai LÀM" — nhãn cũ mô tả một cơ
+            // chế không còn tồn tại.
+            ["open", "Chưa ai làm"],
             ["mine", "Của tôi"],
           ] as const
         ).map(([id, label]) => (
@@ -147,14 +157,18 @@ export default function Board({
               <th className="text-left px-3 py-2 w-20">Loại</th>
               <th className="text-left px-3 py-2">Đề bài</th>
               <th className="text-left px-3 py-2 w-44">Ai đã làm</th>
-              <th className="text-left px-3 py-2 w-24">Đáp án</th>
+              <th className="text-left px-3 py-2 w-24">Số người</th>
               <th className="px-3 py-2 w-32"></th>
             </tr>
           </thead>
           <tbody>
             {tasks.map((task) => {
               const mine = task.contributors.some((c) => c.id === me?.id);
-              const full = task.answer_count >= rowsPerQuery;
+              // Cùng phép đếm với `done` ở trên: đã có ít nhất một người làm
+              // xong một danh sách đầy đủ.
+              const full = task.contributors.some(
+                (c) => c.count >= rowsPerQuery
+              );
               return (
                 <tr
                   key={task.id}
@@ -208,26 +222,36 @@ export default function Board({
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono">
-                    {task.contributors.length > 0 ? (
+                  {/* Số NGƯỜI đã làm câu này, không phải tổng số dòng.
+                      "300/100" là con số vô nghĩa: nó cộng dồn ba danh sách
+                      của ba người rồi đem so với hạn mức của MỘT danh sách,
+                      nên vừa vượt trần vừa không nói lên điều gì. Bài nộp lấy
+                      của một người, còn thứ đáng biết khi lướt bảng là câu nào
+                      đã có người ngó tới. Chi tiết từng người vẫn nằm nguyên ở
+                      cột bên trái. */}
+                  <td className="px-3 py-2">
+                    {task.contributors.length === 0 ? (
+                      <span className="text-proto-line">—</span>
+                    ) : (
                       <button
                         type="button"
-                        title="Mở giỏ đáp án"
+                        title={
+                          full
+                            ? `Đã có người làm đủ ${rowsPerQuery} dòng`
+                            : `Chưa ai đủ ${rowsPerQuery} dòng`
+                        }
                         onClick={() => onOpenTask(task, { openBasket: true })}
                         className="underline decoration-dotted underline-offset-2"
                       >
-                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
-                          {task.answer_count}
-                        </span>
-                        <span className="text-proto-muted">/{rowsPerQuery}</span>
+                        <b
+                          className={`font-mono ${
+                            full ? "text-[#3d7a4d]" : "text-proto-ink"
+                          }`}
+                        >
+                          {task.contributors.length}
+                        </b>
+                        <span className="text-proto-muted"> người</span>
                       </button>
-                    ) : (
-                      <>
-                        <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
-                          {task.answer_count}
-                        </span>
-                        <span className="text-proto-muted">/{rowsPerQuery}</span>
-                      </>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">

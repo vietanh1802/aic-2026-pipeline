@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from app import audit
 from app.db.connection import utcnow_iso
 from app.db.migrations import STEPS, current_version
-from app.routers._shared import active_pack, pack_counts
+from app.routers._shared import active_pack
 
 
 def _user(conn, username="admin", role="admin"):
@@ -155,26 +155,52 @@ def test_deleting_the_live_round_is_refused(conn):
     ).fetchone()["deleted_at"] is None
 
 
-def test_delete_is_soft_and_restore_undoes_it(conn):
-    from app.routers.rounds import delete_pack, restore_pack
+def test_delete_really_removes_the_pack_and_everything_under_it(conn):
+    """Xoá là xoá THẬT — thay cho xoá mềm + nút Khôi phục đã bỏ.
+
+    Bốn bảng trỏ tới tasks và chỉ answers có ON DELETE CASCADE, nên thứ tự dọn
+    trong delete_pack là thứ duy nhất giữ cho lệnh xoá không ném
+    FOREIGN KEY constraint failed rồi bỏ lại một vòng xoá dở.
+    """
+    from app.db.connection import utcnow_iso as _now
+    from app.routers.rounds import delete_pack
 
     admin_id = _user(conn)
     admin = conn.execute("SELECT * FROM users WHERE id = ?", (admin_id,)).fetchone()
     pack = _pack(conn, "Thử nghiệm", admin_id, active=0)
     task = _task(conn, pack)
     _answer(conn, task, admin_id, 1.0)
+    conn.execute(
+        "INSERT INTO search_states (user_id, task_id, query_text, search_type, "
+        "params, updated_at) VALUES (?, ?, 'x', 'ensemble', '{}', ?)",
+        (admin_id, task, _now()),
+    )
+    conn.execute(
+        "INSERT INTO presence (user_id, task_id, last_seen_at) VALUES (?, ?, ?)",
+        (admin_id, task, _now()),
+    )
 
-    delete_pack(pack, admin, conn)
-    assert conn.execute(
-        "SELECT deleted_at FROM packs WHERE id = ?", (pack,)
-    ).fetchone()["deleted_at"] is not None
-    # Soft: the work is still there, which is the entire point.
-    assert pack_counts(conn, pack) == (1, 1)
+    result = delete_pack(pack, admin, conn)
+    assert result == {"deleted": True, "tasks": 1, "answers": 1}
 
-    restore_pack(pack, admin, conn)
-    assert conn.execute(
-        "SELECT deleted_at FROM packs WHERE id = ?", (pack,)
-    ).fetchone()["deleted_at"] is None
+    def count(sql, params=()):
+        return conn.execute(sql, params).fetchone()[0]
+
+    assert count("SELECT COUNT(*) FROM packs WHERE id = ?", (pack,)) == 0
+    assert count("SELECT COUNT(*) FROM tasks WHERE id = ?", (task,)) == 0
+    assert count("SELECT COUNT(*) FROM answers WHERE task_id = ?", (task,)) == 0
+    assert count("SELECT COUNT(*) FROM search_states WHERE task_id = ?", (task,)) == 0
+    # presence chỉ mất CON TRỎ, không mất dòng: dòng đó nói "người này đang
+    # online", xoá đi thì họ biến khỏi danh sách đang-xem của đồng đội.
+    assert count("SELECT COUNT(*) FROM presence WHERE user_id = ?", (admin_id,)) == 1
+    assert count(
+        "SELECT COUNT(*) FROM presence WHERE task_id IS NOT NULL"
+    ) == 0
+
+    entry = conn.execute(
+        "SELECT * FROM audit_log WHERE action = ?", (audit.PACK_DELETE,)
+    ).fetchone()
+    assert "vĩnh viễn" in entry["summary"]
 
 
 def test_renaming_a_round_is_logged_but_a_no_op_rename_is_not(conn):

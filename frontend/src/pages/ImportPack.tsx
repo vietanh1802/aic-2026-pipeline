@@ -260,7 +260,7 @@ function Row({
             <ol className="list-none mt-1 space-y-0.5">
               {file.event_labels.map((label, index) => (
                 <li key={index} className="truncate">
-                  <b className="text-[#a9583e]">E{index + 1}</b> {label}
+                  <b className="text-proto-primary-active">E{index + 1}</b> {label}
                 </li>
               ))}
             </ol>

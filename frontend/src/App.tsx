@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
-import GotoFrame from "./components/GotoFrame";
-import Header from "./components/Header";
 import ProjectDescription from "./components/ProjectDescription";
 import QueryInput from "./components/QueryInput";
 import ResultInfoAndSort, {
@@ -13,6 +11,7 @@ import OcrCountBanner from "./components/OcrCountBanner";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
 import { useQueryStore, type SearchType } from "./store/queryStore";
 import { usePopupStore } from "./store/popupStore";
+import { useHealthStore } from "./store/healthStore";
 import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
@@ -40,9 +39,8 @@ import {
   type SearchStateInput,
 } from "./api/searchState";
 import PeerSearchPanel from "./components/PeerSearchPanel";
-import { usePeerViewStore } from "./store/peerViewStore";
+import { usePickedFrameStore } from "./store/pickedFrameStore";
 import type {
-  HealthResponse,
   ModelName,
   SearchResult,
   TemporalCandidateResult,
@@ -50,11 +48,6 @@ import type {
 } from "./types/api";
 import KeyframeFPS from "./mapping/fps_map.json";
 
-type BackendHealth = {
-  status: "checking" | "starting" | "ready" | "offline" | "failed";
-  message: string;
-  detail?: string;
-};
 function frameIndexFromResult(result: SearchResult): number {
   if (typeof result.frame_idx === "number") {
     return result.frame_idx;
@@ -64,27 +57,6 @@ function frameIndexFromResult(result: SearchResult): number {
 
 function startMsFromResult(result: SearchResult): number {
   return startMsAt(videoIdFromFrame(result.frame), frameIndexFromResult(result));
-}
-
-function describeBackendHealth(health: HealthResponse): BackendHealth {
-  if (!health.ok) {
-    return { status: "offline", message: "API offline" };
-  }
-  if (health.warmup.state === "failed") {
-    return {
-      status: "failed",
-      message: "API warm-up failed",
-      detail: health.warmup.error ?? undefined,
-    };
-  }
-  if (health.warmup.state !== "ready") {
-    return {
-      status: "starting",
-      message: "API starting",
-      detail: "Loading indexes and models",
-    };
-  }
-  return { status: "ready", message: "API ready" };
 }
 
 function App({
@@ -110,8 +82,9 @@ function App({
   // lúc đó vẫn giữ giá trị cũ và sẽ chạy sai tham số. Chỉ hai cái dưới đây còn
   // ở lại, vì phần render thật sự đọc chúng.
   const searchType = useQueryStore((state) => state.searchType);
-  // Đang xem lại đường tìm của ai, nếu có. Chỉ dùng để khoanh đỏ.
-  const peerViewing = usePeerViewStore((state) => state.viewing);
+  // Khung đang được khoanh đỏ trong lưới, và chép từ ai (null nếu tự chọn).
+  const pickedFrame = usePickedFrameStore((state) => state.frame);
+  const pickedFrom = usePickedFrameStore((state) => state.from);
   const [showPopup, setShowPopup] = useState<boolean>(false);
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [startTime, setStartTime] = useState<number>(0);
@@ -121,50 +94,12 @@ function App({
   const queryText = useQueryStore((state) => state.queryText);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const [backendHealth, setBackendHealth] = useState<BackendHealth>({
-    status: "checking",
-    message: "Checking API",
-  });
+  // Trạng thái backend giờ do <ApiStatus/> trên thanh điều hướng hỏi và ghi
+  // vào store; ở đây chỉ đọc, để khoá nút Search khi index chưa nạp xong. Tự
+  // hỏi lại lần nữa sẽ thành hai vòng lặp gọi /health mỗi 5 giây và hai chỗ có
+  // thể hiện hai trạng thái khác nhau cùng lúc.
+  const backendHealth = useHealthStore((state) => state.health);
   const isSearchDisabled = backendHealth.status !== "ready";
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const pollHealth = async () => {
-      try {
-        const health = await videoSearchApi.getHealth();
-        if (!cancelled) {
-          setBackendHealth(describeBackendHealth(health));
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setBackendHealth({
-            status: "offline",
-            message: "API offline",
-            detail: err instanceof Error ? err.message : "Health check failed",
-          });
-        }
-      }
-    };
-
-    void pollHealth();
-    const interval = window.setInterval(() => {
-      void pollHealth();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  const healthClassName = {
-    checking: "border-proto-line bg-white text-proto-muted",
-    starting: "border-[#d4a017] bg-[#d4a017]/12 text-[#8a6a0f]",
-    ready: "border-[#5db872] bg-[#5db872]/12 text-[#3d7a4d]",
-    offline: "border-[#c64545] bg-[#c64545]/10 text-[#8f3030]",
-    failed: "border-[#c64545] bg-[#c64545]/10 text-[#8f3030]",
-  }[backendHealth.status];
 
   // ── Temporal Search (Alg.4) — anchor do người dùng tự chọn từ kết quả
   // search đã có (paper: "the initially retrieved and reranked input frame
@@ -187,12 +122,23 @@ function App({
       console.warn("[basket] Chưa mở task nào từ bảng Board.");
       return;
     }
+    const video = videoIdFromFrame(result.frame);
+    const frameIdx = frameIndexFromResult(result);
     try {
       await addAnswer(activeTask.id, {
-        video_id: videoIdFromFrame(result.frame),
-        frames: [Number(result.frame_idx ?? 0)],
+        video_id: video,
+        frames: [frameIdx],
       });
       onBasketChanged?.();
+      // Bỏ một khung vào giỏ LÀ chọn khung đó — tín hiệu mạnh nhất trong cả
+      // lượt tìm, mạnh hơn cả mở video ra xem.
+      //
+      // Trước đây chỉ nút 🔍 (mở video) mới ghi lại, nên người nào bấm thẳng
+      // "+" thì `picked_frame` vẫn là null. Đồng đội bấm "Coi X làm" sau đó
+      // thấy đúng lưới kết quả của X nhưng KHÔNG có thẻ nào được khoanh đỏ —
+      // không phải vòng khoanh mờ, mà là chẳng có khung nào để khoanh.
+      recordState({ name: result.name, video, frameIdx });
+      usePickedFrameStore.getState().set(result.name);
     } catch (err) {
       console.error("Không thêm được vào giỏ:", err);
     }
@@ -324,6 +270,64 @@ function App({
     }
   };
 
+  // Đang điền hàng loạt: khoá nút để không bấm hai lần thành hai bộ dòng.
+  const [trakeFilling, setTrakeFilling] = useState(false);
+  const [trakeFilled, setTrakeFilled] = useState<string | null>(null);
+
+  /**
+   * Đổ thẳng cả danh sách ứng viên TRAKE vào giỏ, giữ nguyên thứ hạng.
+   *
+   * Video hạng 1 thành dòng 1, hạng 2 thành dòng 2, cứ thế. Mỗi video là MỘT
+   * dòng mang đủ N mốc mà thuật toán đã chọn.
+   *
+   * Có mặt vì luồng cũ bắt bấm "Chọn ▸" trên từng thẻ, mà mỗi thẻ lại bày ra
+   * một dãy ứng viên cho từng mốc — nhìn vào không biết phải chọn cái nào
+   * trước. Mà trong đa số trường hợp thứ đúng để nộp chính là thứ thuật toán
+   * đã xếp sẵn. Nút này lấy nguyên xếp hạng đó; muốn chỉnh mốc nào thì vẫn
+   * chỉnh sau trên từng thẻ như cũ.
+   *
+   * Gửi TUẦN TỰ, không Promise.all: mỗi lần thêm lấy một sort_key mới dựa trên
+   * dòng cuối hiện có, nên chạy song song thì thứ tự về giỏ là ngẫu nhiên —
+   * đúng cái thứ tự vừa bỏ công giữ.
+   */
+  const fillTrakeFromCandidates = async () => {
+    if (!activeTask || trakeFilling) {
+      return;
+    }
+    setTrakeFilling(true);
+    let added = 0;
+    let skipped = 0;
+    try {
+      for (const candidate of trakeCandidates) {
+        const frames = (candidate.events ?? []).map((event) => event.frame_idx);
+        // Một dòng thiếu mốc là một dòng SAI, không phải một dòng chưa xong:
+        // TRAKE chấm cả bộ, nên bỏ qua còn hơn nộp thiếu.
+        if (
+          frames.length === 0 ||
+          frames.some((frame) => typeof frame !== "number")
+        ) {
+          skipped += 1;
+          continue;
+        }
+        await addAnswer(activeTask.id, {
+          video_id: candidate.video ?? "",
+          frames: frames as number[],
+        });
+        added += 1;
+      }
+      onBasketChanged?.();
+      setTrakeFilled(
+        `Đã thêm ${added} dòng vào giỏ theo đúng thứ hạng` +
+          (skipped ? `, bỏ qua ${skipped} video thiếu mốc.` : ".")
+      );
+    } catch (err) {
+      console.error("Không điền được danh sách TRAKE:", err);
+      setTrakeFilled(`Dừng ở dòng ${added + 1} — xem console.`);
+    } finally {
+      setTrakeFilling(false);
+    }
+  };
+
   /**
    * Trạng thái hiện tại, đóng gói để gửi đi.
    *
@@ -380,9 +384,10 @@ function App({
       return;
     }
     if (options?.record !== false) {
-      // Tự bấm Search nghĩa là quay về việc của mình: bỏ khoanh đỏ của người
-      // khác, nếu không nó sẽ trôi sang một bộ kết quả không liên quan.
-      usePeerViewStore.getState().clear();
+      // Truy vấn mới nghĩa là bộ kết quả mới, nên khung đang khoanh không còn
+      // nằm trong đó — bỏ khoanh, nếu không vòng đỏ sẽ trôi sang một thẻ không
+      // liên quan hoặc trỏ vào chỗ trống.
+      usePickedFrameStore.getState().set(null);
       recordState();
     }
     // Mọi nhánh bên dưới đọc từ store, không đọc const ở đầu component — xem
@@ -422,6 +427,9 @@ function App({
         const res = await videoSearchApi.trakeSearchText(queryText, {
           topVideos: 20,
         });
+        // Xoá thông báo của lượt điền trước: giữ lại thì sau khi search câu
+        // khác vẫn thấy "Đã thêm 20 dòng" và tưởng lượt này đã điền rồi.
+        setTrakeFilled(null);
         if (res.error) {
           console.error("TRAKE search text error:", res.error);
           setTrakeCandidates([]);
@@ -488,11 +496,16 @@ function App({
   };
 
   /**
-   * Dựng lại màn hình của một người khác rồi khoanh đỏ khung họ đã chọn.
+   * Lấy trạng thái của một người khác làm trạng thái của MÌNH.
    *
-   * Chạy lại truy vấn chứ không chép danh sách kết quả của họ: cùng truy vấn,
-   * cùng tham số, cùng index thì ra cùng kết quả, nên chép lại chỉ là nhân bản
-   * thứ tính lại được trong một giây rưỡi.
+   * Không phải "xem nhờ rồi trả lại". Sau khi bấm, truy vấn, tham số và khung
+   * đã chọn của họ trở thành của bạn — kể cả trên bảng chung, nên đồng đội
+   * thấy bạn đang ở cùng chỗ với họ. Vì thế không có dải "đang xem" và cũng
+   * chẳng có gì để "thoát".
+   *
+   * Chạy lại truy vấn chứ không chép danh sách kết quả: cùng truy vấn, cùng
+   * tham số, cùng index thì ra cùng kết quả, nên chép lại chỉ là nhân bản thứ
+   * tính lại được trong một giây rưỡi.
    */
   const applyPeerState = (state: SearchState) => {
     const q = useQueryStore.getState();
@@ -511,13 +524,22 @@ function App({
     if (typeof state.params.ocrStripDiacritics === "boolean") {
       q.setOcrStripDiacritics(state.params.ocrStripDiacritics);
     }
-    usePeerViewStore.getState().view({
-      userId: state.user.id,
-      displayName: state.user.display_name,
-      pickedFrame: state.picked_frame,
-      pickedVideo: state.picked_video,
-      pickedFrameIdx: state.picked_frame_idx,
-    });
+    usePickedFrameStore
+      .getState()
+      .set(state.picked_frame, state.user.display_name);
+    // Ghi ngay, kèm đúng khung họ đã chọn: từ giây này trạng thái đó là của
+    // mình. Ghi TRƯỚC doSearch và gọi doSearch với record:false, vì nhánh ghi
+    // trong doSearch luôn xoá khung đang chọn — nó phục vụ một truy vấn mới,
+    // không phải một trạng thái vừa chép về.
+    if (state.picked_video && state.picked_frame && state.picked_frame_idx !== null) {
+      recordState({
+        name: state.picked_frame,
+        video: state.picked_video,
+        frameIdx: state.picked_frame_idx,
+      });
+    } else {
+      recordState();
+    }
     void doSearch({ record: false });
   };
 
@@ -592,31 +614,13 @@ function App({
 
   return (
     <div className="relative min-h-screen bg-proto-canvas p-2">
-      {/* Header — one flex row, nothing stacked.
-          The counter, the goto-frame box and the API chip used to be absolutely
-          positioned on top of <Header/>. Header's `my-9` collapsed through this
-          wrapper, so `top-0` landed on Header's own content instead of above it,
-          and the right-hand pair sat straight over "VQF — Video Query Finder"
-          and the build badge. Laying them out rather than stacking them makes the
-          collision impossible, and `flex-wrap` drops the right-hand cluster onto
-          its own line on a narrow window instead of letting it ride over anything. */}
-      <div className="w-full flex flex-wrap items-center gap-x-4 gap-y-2 pr-2">
-        <div className="flex-1 min-w-[260px]">
-          <Header />
-        </div>
-        <div className="flex items-start gap-2 shrink-0">
-          <GotoFrame />
-          <div
-            className={`max-w-[320px] rounded-md border px-3 py-2 text-xs font-bold shadow-sm ${healthClassName}`}
-            title={backendHealth.detail}
-          >
-            <span>{backendHealth.message}</span>
-            {backendHealth.detail && (
-              <span className="ml-2 font-normal">{backendHealth.detail}</span>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Khối header cũ — logo "Scavenger", chữ VQF, badge phiên bản, ô "Tới
+          frame" và badge trạng thái API — đã tháo khỏi đây.
+
+          Nó cao gần 90px (Header dùng `my-9`) và chỉ có ở màn Search, tức là
+          ăn mất gần một hàng kết quả mỗi lần tìm. Ba thứ có việc thật đã lên
+          thanh điều hướng chung, nơi chúng dùng được ở mọi màn; logo và chữ
+          VQF thì không gắn hành động nào nên bỏ hẳn. */}
 
       {/* Đề bài của task đang mở — nguyên văn, chỉ đọc, không bao giờ dịch.
           Pin lên đỉnh khung nhìn: cuộn qua cả trăm kết quả vẫn còn thấy đề. */}
@@ -835,7 +839,7 @@ function App({
                   className={`ml-2 flex h-10 w-10 items-center justify-center rounded-[6px] border-2 ${
                     focusVideos.includes(key)
                       ? "bg-proto-primary border-proto-primary"
-                      : "bg-[#EFEFEF] border-[#E3E3E3]"
+                      : "bg-proto-soft border-proto-line"
                   }`}
                 >
                   🎯
@@ -860,11 +864,11 @@ function App({
             }
                   onToggleFocus={toggleFocusVideo}
                   focusVideos={focusVideos}
-                  // Khung người đang được xem đã bấm. FrameDisplay khoanh đỏ
-                  // đúng thẻ này; undefined khi không xem ai thì không thẻ nào
-                  // được khoanh.
-                  highlightFrame={peerViewing?.pickedFrame ?? undefined}
-                  highlightLabel={peerViewing?.displayName}
+                  // Khung bạn đang chọn. FrameDisplay khoanh đỏ đúng thẻ
+                  // này; undefined khi chưa chọn gì thì không thẻ nào được
+                  // khoanh.
+                  highlightFrame={pickedFrame ?? undefined}
+                  highlightLabel={pickedFrom ?? undefined}
                   onClick={(result) => {
                     const video = videoIdFromFrame(result.frame);
                     const frameIdx = frameIndexFromResult(result);
@@ -874,12 +878,16 @@ function App({
                     setShowPopup(true);
                     // Bấm vào một khung là hành động đáng lưu nhất trong cả
                     // lượt tìm: nó nói người này CHỌN khung nào, chứ không chỉ
-                    // gõ gì. Đây là thứ được khoanh đỏ khi người khác xem lại.
+                    // gõ gì. Đây là thứ được khoanh đỏ, và là thứ đồng đội thấy
+                    // khi họ lấy trạng thái của bạn.
                     recordState({
                       name: result.name,
                       video,
                       frameIdx,
                     });
+                    // Khoanh chuyển sang khung vừa bấm, và không còn "chép từ
+                    // ai" nữa vì đây là lựa chọn của chính mình.
+                    usePickedFrameStore.getState().set(result.name);
                   }}
                 />
               </div>
@@ -919,15 +927,48 @@ function App({
           ) : trakeCandidates.length === 0 ? (
             <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
           ) : (
-            <TrakeCandidates
-              results={trakeCandidates}
-              parts={queryParts}
-              swaps={trakeSwaps}
-              onSwap={swapTrakeEvent}
-              onOpenEvent={openTrakeEvent}
-              onCommit={activeTask?.type === "trake" ? commitTrakeRow : undefined}
-              onResetSlot={resetTrakeEvent}
-            />
+            <>
+              {/* Đường đi mặc định cho TRAKE, đặt TRƯỚC danh sách.
+                  Luồng cũ chỉ có nút "Chọn ▸" trên từng thẻ, mà mỗi thẻ lại
+                  bày dãy ứng viên cho từng mốc — mở ra không biết bấm gì
+                  trước. Nút này nhận nguyên xếp hạng thuật toán đưa; ai muốn
+                  chỉnh mốc thì vẫn chỉnh trên từng thẻ bên dưới như cũ. */}
+              {activeTask?.type === "trake" && (
+                <div className="flex items-center gap-3 flex-wrap mb-3 px-3 py-2 rounded-[10px] border border-proto-primary bg-white">
+                  <button
+                    type="button"
+                    disabled={trakeFilling}
+                    onClick={() => void fillTrakeFromCandidates()}
+                    className="text-[13px] font-bold px-3 py-1.5 rounded-[8px] bg-proto-primary text-white disabled:opacity-50"
+                  >
+                    {trakeFilling
+                      ? "Đang điền…"
+                      : `Điền ${trakeCandidates.length} video vào giỏ`}
+                  </button>
+                  <span className="text-[12.5px] text-proto-body">
+                    Video hạng 1 thành dòng 1, hạng 2 thành dòng 2… mỗi video
+                    một dòng đủ {queryParts.length || activeTask.n_events || 0}{" "}
+                    mốc.
+                  </span>
+                  {trakeFilled && (
+                    <span className="text-[12.5px] text-[#3d7a4d] font-semibold ml-auto">
+                      {trakeFilled}
+                    </span>
+                  )}
+                </div>
+              )}
+              <TrakeCandidates
+                results={trakeCandidates}
+                parts={queryParts}
+                swaps={trakeSwaps}
+                onSwap={swapTrakeEvent}
+                onOpenEvent={openTrakeEvent}
+                onCommit={
+                  activeTask?.type === "trake" ? commitTrakeRow : undefined
+                }
+                onResetSlot={resetTrakeEvent}
+              />
+            </>
           )}
         </div>
       )}

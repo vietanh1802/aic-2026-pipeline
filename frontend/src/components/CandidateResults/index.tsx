@@ -487,7 +487,10 @@ function eventTone(pick: EventPick | null, pool: TemporalCandidate[]): string {
     .map((candidate) => candidate.score)
     .filter((score): score is number => typeof score === "number");
   if (typeof pick?.score !== "number" || scores.length < 2) {
-    return "#e6dfd8";
+    // Cùng giá trị với --proto-line. Viết cứng vì hàm này trả về một chuỗi màu
+    // cho thuộc tính style, không phải class Tailwind — đổi bảng màu nền thì
+    // phải sửa cả chỗ này, nếu không một viền kem sẽ nằm lại giữa nền xanh.
+    return "#d3e2f1";
   }
   const min = Math.min(...scores, pick.score);
   const max = Math.max(...scores, pick.score);
@@ -659,7 +662,7 @@ function TrakeCard({
                       type="button"
                       title={`Mở video tại mốc E${index + 1}`}
                       onClick={() => onOpenEvent(index, pick)}
-                      className="absolute bottom-0 right-0 mr-1 mb-1 p-1 bg-[#EFEFEF] hover:bg-white rounded-[4px] border-2 border-[#E3E3E3]"
+                      className="absolute bottom-0 right-0 mr-1 mb-1 p-1 bg-proto-soft hover:bg-white rounded-[4px] border-2 border-proto-line"
                     >
                       <img src="/search.svg" alt="mở video" />
                     </button>
@@ -678,7 +681,7 @@ function TrakeCard({
                       type="button"
                       title="Trả về lựa chọn của DP"
                       onClick={() => onResetSlot(index)}
-                      className="absolute top-0 right-0 mr-1 mt-1 flex h-10 w-10 items-center justify-center rounded-[4px] bg-[#EFEFEF] hover:bg-white border-2 border-[#E3E3E3] text-[11px] font-bold"
+                      className="absolute top-0 right-0 mr-1 mt-1 flex h-10 w-10 items-center justify-center rounded-[4px] bg-proto-soft hover:bg-white border-2 border-proto-line text-[11px] font-bold"
                     >
                       ↩ DP
                     </button>

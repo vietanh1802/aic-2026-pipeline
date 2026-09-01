@@ -4,7 +4,6 @@ import {
   listSearchStates,
   type SearchState,
 } from "../../api/searchState";
-import { usePeerViewStore } from "../../store/peerViewStore";
 import { useAuthStore } from "../../store/authStore";
 
 const POLL_MS = 5000;
@@ -45,8 +44,6 @@ export default function PeerSearchPanel({
   onOpenVideo: (videoId: string, frameIdx: number) => void;
 }) {
   const me = useAuthStore((state) => state.user);
-  const viewing = usePeerViewStore((state) => state.viewing);
-  const clearViewing = usePeerViewStore((state) => state.clear);
   const [states, setStates] = useState<SearchState[]>([]);
   const [open, setOpen] = useState(true);
 
@@ -74,11 +71,21 @@ export default function PeerSearchPanel({
   const others = states.filter((state) => state.user.id !== me?.id);
   const mine = states.find((state) => state.user.id === me?.id) ?? null;
 
+  // "Cả nhóm" nghĩa là CẢ MÌNH.
+  //
+  // Trước đây dòng này đếm `others`, mà `others` là danh sách đã loại chính
+  // mình ra để dựng các hàng "Coi X làm" — nên con số đứng im dù mình vừa
+  // search hay vừa chọn khung. Ba người cùng làm mà mãi chỉ hiện "2 người".
+  //
+  // Bỏ qua ai có dòng nhưng chưa gõ gì: mở câu lên rồi đóng lại không phải là
+  // đang tìm câu này.
+  const working = states.filter((state) => state.query_text.trim() !== "");
+
   // Trước đây chỗ này `return null` khi chưa ai khác tìm câu này. Gọn, nhưng
   // nhìn từ ngoài thì "chưa ai tìm" và "tính năng hỏng" giống hệt nhau — không
   // có gì trên màn hình để phân biệt. Nên vẫn hiện một dòng, nói rõ là đang
   // theo dõi mà chưa có ai.
-  if (others.length === 0 && !viewing) {
+  if (others.length === 0) {
     return (
       <div className="max-w-[98%] mx-auto mb-3 px-3 py-1.5 border border-dashed border-proto-line rounded-[10px] bg-white font-baloo text-[11.5px] text-proto-muted">
         Chưa ai khác tìm câu này. Khi có người search, truy vấn của họ hiện ở
@@ -94,24 +101,13 @@ export default function PeerSearchPanel({
           Cả nhóm đang tìm câu này
         </span>
         <span className="text-[11px] text-proto-muted">
-          {others.length} người
+          {working.length} người
         </span>
 
-        {/* Dải báo "đang xem bài người khác". Không có nó thì lưới kết quả của
-            X trông hệt kết quả của mình, và rất dễ tưởng mình vừa tìm ra. */}
-        {viewing && (
-          <span className="ml-2 flex items-center gap-2 text-[11.5px] px-2 py-0.5 rounded-full bg-[#c64545]/10 text-[#c64545] font-semibold">
-            Đang xem đường tìm của {viewing.displayName}
-            <button
-              type="button"
-              onClick={clearViewing}
-              className="underline decoration-dotted"
-              title="Bỏ khoanh đỏ, quay lại việc của mình"
-            >
-              thoát
-            </button>
-          </span>
-        )}
+        {/* Dải "Đang xem đường tìm của X — thoát" đã bỏ. Nó mô tả một chế
+            độ không còn tồn tại: bấm "Coi X làm" giờ LẤY LUÔN trạng thái của X
+            làm của mình, nên không có gì để thoát khỏi. Hàng "bạn" ở cuối bảng
+            sẽ đổi theo, đó mới là chỗ nói bạn đang ở đâu. */}
 
         <button
           type="button"
@@ -124,14 +120,10 @@ export default function PeerSearchPanel({
 
       {open && (
         <div className="divide-y divide-proto-line">
-          {others.map((state) => {
-            const isViewing = viewing?.userId === state.user.id;
-            return (
+          {others.map((state) => (
               <div
                 key={state.user.id}
-                className={`flex items-center gap-3 px-3 py-1.5 text-xs ${
-                  isViewing ? "bg-[#c64545]/5" : ""
-                }`}
+                className="flex items-center gap-3 px-3 py-1.5 text-xs"
               >
                 <b className="text-proto-ink w-20 shrink-0 truncate">
                   {state.user.display_name}
@@ -169,29 +161,35 @@ export default function PeerSearchPanel({
                   </button>
                 )}
 
+                {/* Không còn trạng thái "đang xem người này", nên nút không
+                    còn hai kiểu tô màu. Bấm là lấy luôn, xong. */}
                 <button
                   type="button"
                   onClick={() => onOpenState(state)}
                   disabled={!state.query_text}
-                  className={`shrink-0 px-2 py-0.5 rounded-[6px] border font-semibold ${
-                    isViewing
-                      ? "border-[#c64545] text-[#c64545]"
-                      : "border-proto-primary text-proto-primary-active"
-                  } disabled:opacity-40`}
+                  className="shrink-0 px-2 py-0.5 rounded-[6px] border border-proto-primary text-proto-primary-active font-semibold disabled:opacity-40"
+                  title={`Lấy truy vấn và khung đã chọn của ${state.user.display_name} làm của bạn`}
                 >
                   Coi {state.user.display_name} làm
                 </button>
               </div>
-            );
-          })}
+          ))}
 
-          {/* Của chính mình, để đối chiếu. Nằm cuối và mờ hơn: nó là thứ bạn
-              đã biết, có mặt chỉ để so với hàng trên. */}
+          {/* Của chính mình, để đối chiếu. Nằm cuối và nền mờ hơn.
+
+              Bố cục phải GIỐNG HỆT các hàng trên — cùng huy hiệu loại search,
+              cùng nút mở video. Bản trước viết gọn hơn, thiếu cả hai, nên nhìn
+              xuống thấy người khác có "BEIT3+CLIP" còn mình thì không và tưởng
+              mình đang chạy kiểu search khác. Hàng này có mặt để SO SÁNH, mà
+              thiếu đúng hai ô đáng so thì nó phản tác dụng.
+
+              Chỉ thiếu nút "Coi … làm", vì đó đã là màn hình bạn đang đứng. */}
           {mine && (
             <div className="flex items-center gap-3 px-3 py-1.5 text-xs bg-proto-soft/50">
-              <b className="text-proto-muted w-20 shrink-0 truncate">
-                bạn
-              </b>
+              <b className="text-proto-muted w-20 shrink-0 truncate">bạn</b>
+              <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-proto-cream-strong text-proto-muted shrink-0">
+                {TYPE_LABEL[mine.search_type] ?? mine.search_type}
+              </span>
               <span
                 className="text-proto-muted truncate flex-1 min-w-0"
                 title={mine.query_text}
@@ -200,9 +198,24 @@ export default function PeerSearchPanel({
                   <i className="text-proto-line">chưa gõ gì</i>
                 )}
               </span>
-              <span className="text-proto-muted shrink-0">
+              <span className="text-proto-muted shrink-0 hidden md:inline">
                 {ago(mine.updated_at)}
               </span>
+              {mine.picked_video && mine.picked_frame_idx !== null && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenVideo(
+                      mine.picked_video as string,
+                      mine.picked_frame_idx as number
+                    )
+                  }
+                  className="shrink-0 px-2 py-0.5 rounded-[6px] border border-proto-line text-proto-muted"
+                  title="Mở video tại khung bạn đã chọn"
+                >
+                  ▶ {mine.picked_video} · {mine.picked_frame_idx}
+                </button>
+              )}
             </div>
           )}
         </div>

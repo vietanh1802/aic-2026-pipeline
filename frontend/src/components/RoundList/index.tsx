@@ -5,7 +5,6 @@ import {
   deletePack,
   listPacks,
   patchPack,
-  restorePack,
   type RoundPack,
 } from "../../api/board";
 import { ApiRequestError } from "../../api/base";
@@ -17,6 +16,10 @@ import Button from "../Button";
  * Trước đây là màn "Vòng" riêng. Gộp xuống dưới màn Import vì hai việc luôn đi
  * liền nhau: nhập gói xong thì việc kế tiếp là kích hoạt nó, mà trước đó phải
  * chuyển tab mới thấy kết quả của lần nhập vừa rồi.
+ *
+ * Xoá là VĨNH VIỄN — nút "Khôi phục" đã bỏ. Hai thứ chặn mất bài vẫn còn:
+ * không xoá được vòng đang thi, và mỗi lần xoá đều ghi vào nhật ký kèm số task
+ * và số đáp án đã mất.
  *
  * Nhập gói KHÔNG tự đổi vòng đang thi. Ngày trước nó tự đổi và không nói gì,
  * nên lần nhập thứ hai gạt vòng đang thi khỏi mọi màn hình — đúng vụ "mất toàn
@@ -274,17 +277,20 @@ function Row({
           </span>
         ) : askingDelete ? (
           <span className="inline-flex gap-2 items-center">
+            {/* Nói thẳng là mất hẳn. Trước đây câu xác nhận hứa "khôi phục lại
+                được bất cứ lúc nào" — giữ nguyên chữ đó sau khi bỏ nút khôi
+                phục là nói dối người dùng ngay tại nút nguy hiểm nhất màn. */}
             <button
               type="button"
               className="text-[11.5px] font-bold text-[#c64545] underline"
               onClick={() =>
                 void onAct(
                   () => deletePack(pack.id),
-                  `Đã xoá “${pack.label}”. Khôi phục lại được bất cứ lúc nào.`
+                  `Đã xoá vĩnh viễn “${pack.label}”.`
                 )
               }
             >
-              Xoá {pack.task_count} task, {pack.answer_count} đáp án?
+              Xoá vĩnh viễn {pack.task_count} task, {pack.answer_count} đáp án?
             </button>
             <button
               type="button"
@@ -297,18 +303,13 @@ function Row({
         ) : (
           <span className="inline-flex gap-1.5 items-center">
             {deleted ? (
-              <Button
-                size="xs"
-                disabled={busy}
-                onClick={() =>
-                  void onAct(
-                    () => restorePack(pack.id),
-                    `Đã khôi phục “${pack.label}”.`
-                  )
-                }
-              >
-                Khôi phục
-              </Button>
+              // Vòng bị xoá mềm TRƯỚC khi bỏ tính năng này. Danh sách mặc định
+              // không trả chúng về nữa nên nhánh này gần như không chạy tới;
+              // giữ lại để nếu ai gọi API kèm include_deleted thì bảng vẫn vẽ
+              // ra được, thay vì hiện một hàng có nút bấm không làm gì.
+              <span className="text-[11px] text-proto-muted">
+                đã xoá từ trước
+              </span>
             ) : (
               <>
                 {!pack.active && (

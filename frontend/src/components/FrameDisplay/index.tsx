@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { OcrSearchResult, SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
@@ -123,12 +124,19 @@ type FrameDisplayProps2 = {
   /**
    * Tên keyframe cần khoanh đỏ, vd "L21_V001-0028-3175.jpg".
    *
-   * Dùng khi đang xem lại đường tìm của người khác: đây là khung họ đã bấm
-   * vào. Không truyền thì không thẻ nào được khoanh, nên mọi chỗ gọi
-   * FrameDisplay chưa cập nhật vẫn chạy nguyên.
+   * Là khung ĐANG ĐƯỢC CHỌN. Sau khi bấm "Coi X làm" thì đó là khung X đã bấm
+   * trong lưới — không phải đáp án cuối X bỏ vào giỏ, mà là cái thẻ X mở ra
+   * đầu tiên rồi mới chỉnh tới lui trong popup. Đó mới là chỗ bạn cần bắt đầu
+   * để đi lại đường của X.
+   *
+   * Không truyền thì không thẻ nào được khoanh, nên mọi chỗ gọi FrameDisplay
+   * chưa cập nhật vẫn chạy nguyên.
    */
   highlightFrame?: string;
-  /** Tên người đó, in lên chính cái khoanh — để biết đỏ này là của ai. */
+  /**
+   * Tên người mình vừa chép trạng thái từ đó, in lên chính cái khoanh.
+   * Bỏ trống khi tự bấm chọn — lúc đó nhãn ghi "khung bạn đã chọn".
+   */
   highlightLabel?: string;
 };
 
@@ -208,6 +216,27 @@ export default function FrameDisplay({
   const minScore = scores.length ? Math.min(...scores) : 0;
   const maxScore = scores.length ? Math.max(...scores) : 0;
 
+  // Cuộn tới thẻ được khoanh khi nó vừa xuất hiện.
+  //
+  // Khoanh đậm cỡ nào cũng vô nghĩa nếu thẻ nằm ở hàng thứ tám: bấm "Coi X
+  // làm" xong thì thấy một lưới kết quả trông y như mọi lưới khác, phải tự dò
+  // mới ra khung X đã bấm — mà đó chính là thứ vừa bấm nút để xem.
+  //
+  // `block: "center"` chứ không phải "start": khối đề bài + video ở trên được
+  // ghim lại, nên căn lên đầu sẽ đẩy thẻ nằm khuất ngay dưới khối đó.
+  const pickedRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!highlightFrame || isLoading) {
+      return;
+    }
+    // Đợi một nhịp để lưới vẽ xong; scrollIntoView trên phần tử vừa mount
+    // trong cùng một lượt render sẽ tính sai vị trí.
+    const timer = window.setTimeout(() => {
+      pickedRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [highlightFrame, isLoading, results]);
+
   return (
     <>
       {!isLoading
@@ -220,21 +249,36 @@ export default function FrameDisplay({
             return (
               <div
                 key={index}
-                // Viền màu theo độ khớp vẫn giữ nguyên (style bên dưới); vòng
-                // đỏ là một lớp RIÊNG chồng lên, nên nó không cướp mất thông
-                // tin màu đang có trên thẻ.
-                className={`relative flex flex-col rounded-[8px] w-full h-full font-baloo bg-white border-2 overflow-hidden ${
-                  picked ? "ring-4 ring-[#c64545] ring-offset-1" : ""
+                // Viền xám, không còn tô theo độ khớp.
+                //
+                // Trước đây viền chạy từ đỏ qua vàng sang xanh theo điểm. Với
+                // 50 thẻ đứng cạnh nhau thì đó là 50 mảng màu tranh nhau, mà
+                // dải điểm thật lại rất hẹp — một lần đo đi từ 100.0% xuống
+                // 98.8%, tức gần như cùng một màu. Màu đó không phân biệt được
+                // thẻ nào với thẻ nào, chỉ làm nhiễu đúng thứ cần nhìn là ẢNH.
+                //
+                // Con số phần trăm ở góc dưới vẫn giữ màu — nó đọc được chính
+                // xác, và một chữ nhỏ thì không lấn ảnh như một khung bao quanh.
+                //
+                // Thẻ được khoanh phải nhìn ra NGAY giữa 50 thẻ giống hệt nhau.
+                //
+                // Bản trước chỉ có `ring-4` mảnh, và hồi đó mọi thẻ còn viền
+                // màu theo điểm nên vòng đỏ lẫn vào đám ấy. Giờ viền chung là
+                // xám nhạt, nên thẻ được khoanh đổi hẳn: viền đỏ dày, quầng đỏ
+                // bên ngoài, đổ bóng đỏ, và nhô lên một chút. Bốn thứ cùng lúc
+                // vì một mình cái nào cũng có thể chìm khi cuộn nhanh.
+                ref={picked ? pickedRef : undefined}
+                className={`relative flex flex-col rounded-[8px] w-full h-full font-baloo bg-white overflow-hidden ${
+                  picked
+                    ? "border-[3px] border-[#c64545] ring-4 ring-[#c64545]/40 ring-offset-2 ring-offset-proto-canvas shadow-lg shadow-[#c64545]/35 scale-[1.02] z-10"
+                    : "border-2 border-proto-line"
                 }`}
-                style={{
-                  borderColor: accuracyColor(
-                    accuracyPercent(result.distance, minScore, maxScore)
-                  ),
-                }}
               >
                 {picked && (
-                  <span className="absolute top-0 left-0 z-10 bg-[#c64545] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-br-[6px]">
-                    {highlightLabel ? `${highlightLabel} chọn` : "đã chọn"}
+                  <span className="absolute top-0 left-0 right-0 z-10 bg-[#c64545] text-white text-[11px] font-bold px-2 py-1 text-center tracking-wide">
+                    {highlightLabel
+                      ? `${highlightLabel} bấm vào khung này`
+                      : "khung bạn đã chọn"}
                   </span>
                 )}
                 <div className="relative w-full aspect-[3/2] bg-proto-dark">
@@ -309,7 +353,7 @@ export default function FrameDisplay({
                     {onUseAsAnchor && (
                       <button
                         type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-[#E3E3E3] bg-[#EFEFEF]"
+                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-proto-line bg-proto-soft"
                         title="Dùng làm mốc cho Temporal Search"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -325,7 +369,7 @@ export default function FrameDisplay({
                         className={`flex h-7 w-7 items-center justify-center rounded-[4px] border-2 ${
                           focusVideos.includes(videoOf(result))
                             ? "bg-proto-primary border-proto-primary"
-                            : "bg-[#EFEFEF] border-[#E3E3E3]"
+                            : "bg-proto-soft border-proto-line"
                         }`}
                         title={
                           focusVideos.includes(videoOf(result))
@@ -342,7 +386,7 @@ export default function FrameDisplay({
                     )}
                     <button
                       type="button"
-                      className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-[#E3E3E3] bg-[#EFEFEF]"
+                      className="flex h-7 w-7 items-center justify-center rounded-[4px] border-2 border-proto-line bg-proto-soft"
                       title="Mở video"
                       onClick={() => onClick(result)}
                     >
@@ -363,7 +407,7 @@ export default function FrameDisplay({
                   className="w-full h-full rounded-[4px]"
                   containerClassName="w-full h-full"
                 />
-                <div className="absolute bottom-0 right-0 mr-1 mb-1 p-1 bg-[#EFEFEF] w-fit h-fit rounded-[4px] border-2 border-[#E3E3E3]">
+                <div className="absolute bottom-0 right-0 mr-1 mb-1 p-1 bg-proto-soft w-fit h-fit rounded-[4px] border-2 border-proto-line">
                   <Skeleton width={20} height={20} />
                 </div>
               </div>

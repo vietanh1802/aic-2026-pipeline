@@ -25,6 +25,9 @@ PACK_IMPORT = "pack.import"
 PACK_ACTIVATE = "pack.activate"
 PACK_RENAME = "pack.rename"
 PACK_DELETE = "pack.delete"
+# Không còn endpoint nào ghi ra hành động này: xoá vòng giờ là xoá thật,
+# không có đường khôi phục. Giữ hằng số vì nhật ký cũ vẫn chứa nó và màn
+# nhật ký phải đọc lại được những dòng đó.
 PACK_RESTORE = "pack.restore"
 ANSWER_DELETE = "answer.delete"
 ANSWERS_CLEAR = "answers.clear"

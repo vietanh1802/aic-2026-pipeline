@@ -77,6 +77,9 @@ export function reorderAnswer(
   });
 }
 
+/** Chiều rải quanh mốc. */
+export type SpreadDirection = "both" | "up" | "down";
+
 export function autofillAnswers(
   taskId: number,
   payload: {
@@ -85,6 +88,16 @@ export function autofillAnswers(
     // clear drops the generated rows and stops; replace_auto drops and refills
     // in one call, which reads as a no-op from the UI.
     mode?: "append" | "replace_auto" | "clear";
+    /**
+     * Những dòng dùng làm mốc. Bỏ trống = mọi dòng ghim tay trong giỏ.
+     *
+     * Trước đây backend chỉ lấy dòng hạng 1, nên thấy bốn khung cùng đúng thì
+     * ba khung kia phải tự ngồi tính số frame bằng tay.
+     */
+    anchor_ids?: number[];
+    /** Bước riêng cho từng mốc, cùng thứ tự với anchor_ids. Bỏ trống = dùng `step`. */
+    steps?: number[];
+    direction?: SpreadDirection;
   }
 ): Promise<{ added: number; removed?: number; total: number }> {
   return apiFetch(`/api/tasks/${taskId}/answers/autofill`, {
