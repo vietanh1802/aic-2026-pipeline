@@ -20,6 +20,10 @@ from app.evaluation.repository import (
     resume_run,
 )
 from app.evaluation.runner import enqueue_run
+from app.translation import (
+    DEFAULT_TRANSLATION_POLICY,
+    translation_policy_options,
+)
 
 
 router = APIRouter(prefix = "/api/admin/evaluation", tags = ["evaluation"])
@@ -28,6 +32,17 @@ router = APIRouter(prefix = "/api/admin/evaluation", tags = ["evaluation"])
 class EvaluationRunCreate(BaseModel) :
     dataset_version : str = "round1-v1"
     reference_set_version : str = "r1-manual-v1"
+    translation_policy : str = DEFAULT_TRANSLATION_POLICY
+
+
+@router.get("/translation-policies")
+def translation_policies(
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+) -> dict[str, Any] :
+    return {
+        "default" : DEFAULT_TRANSLATION_POLICY,
+        "policies" : translation_policy_options(),
+    }
 
 
 @router.get("/datasets")
@@ -62,6 +77,7 @@ def start_run(
             payload.dataset_version,
             payload.reference_set_version,
             int(user["id"]),
+            translation_policy = payload.translation_policy,
         )
     except ValueError as exc :
         raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = str(exc))

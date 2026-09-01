@@ -17,6 +17,12 @@ export type EvaluationResultStatus =
   | "failed"
   | "interrupted";
 
+export interface EvaluationTranslationPolicy {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface EvaluationReferenceSet {
   id: number;
   version: string;
@@ -55,6 +61,7 @@ export interface EvaluationConfiguration {
   top_k?: number;
   top_m?: number;
   use_rerank?: boolean;
+  translation_policy?: string;
   [key: string]: unknown;
 }
 
@@ -171,6 +178,13 @@ export interface EvaluationResult {
   finished_at: string | null;
 }
 
+export function listEvaluationTranslationPolicies(): Promise<{
+  default: string;
+  policies: EvaluationTranslationPolicy[];
+}> {
+  return apiFetch("/api/admin/evaluation/translation-policies");
+}
+
 export function listEvaluationDatasets(): Promise<{
   datasets: EvaluationDataset[];
 }> {
@@ -186,6 +200,7 @@ export function getEvaluationDataset(
 export function createEvaluationRun(payload: {
   dataset_version: string;
   reference_set_version: string;
+  translation_policy: string;
 }): Promise<{ run: EvaluationRun }> {
   return apiFetch("/api/admin/evaluation/runs", {
     method: "POST",

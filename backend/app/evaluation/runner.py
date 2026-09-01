@@ -9,9 +9,9 @@ from typing import Any, Callable
 
 from app.db.connection import get_conn, utcnow_iso
 from app.evaluation.ensemble import evaluate_translated_ensemble_query
-from app.evaluation.repository import get_results, update_counts
+from app.evaluation.repository import get_results, get_run, update_counts
 from app.evaluation.scoring import summarize_run_results
-from app.translation import translate_vi_to_en
+from app.translation import DEFAULT_TRANSLATION_POLICY, translate_vi_to_en
 from app.version import SHORT_COMMIT, VERSION
 
 
@@ -77,8 +77,8 @@ def process_run(
     run_id : int,
     *,
     conn_factory : Callable[[], sqlite3.Connection] = get_conn,
-    translate_fn = translate_vi_to_en,
-    evaluate_fn = evaluate_translated_ensemble_query,
+    translate_fn = None,
+    evaluate_fn = None,
     runtime_snapshot_fn = _runtime_snapshot,
 ) -> None :
     conn = conn_factory()
@@ -94,6 +94,14 @@ def process_run(
         ).rowcount
         if (claimed != 1) :
             return
+
+        run = get_run(conn, run_id)
+        if (run is None) :
+            return
+        translation_policy = str(
+            (run.get("configuration") or {}).get("translation_policy")
+            or DEFAULT_TRANSLATION_POLICY
+        )
 
         try :
             runtime = runtime_snapshot_fn()
@@ -142,7 +150,13 @@ def process_run(
             query_en = None
             translation_ms = None
             try :
-                query_en, translation_ms = translate_fn(row["query_vi"])
+                if (translate_fn is None) :
+                    query_en, translation_ms = translate_vi_to_en(
+                        row["query_vi"],
+                        policy = translation_policy,
+                    )
+                else :
+                    query_en, translation_ms = translate_fn(row["query_vi"])
                 conn.execute(
                     """
                     UPDATE evaluation_query_results
@@ -152,12 +166,21 @@ def process_run(
                     (query_en, float(translation_ms), row["id"]),
                 )
 
-                result = evaluate_fn(
-                    row["query_vi"],
-                    query_en,
-                    row["reference_video"],
-                    translation_ms = float(translation_ms),
-                )
+                if (evaluate_fn is None) :
+                    result = evaluate_translated_ensemble_query(
+                        row["query_vi"],
+                        query_en,
+                        row["reference_video"],
+                        translation_ms = float(translation_ms),
+                        translation_policy = translation_policy,
+                    )
+                else :
+                    result = evaluate_fn(
+                        row["query_vi"],
+                        query_en,
+                        row["reference_video"],
+                        translation_ms = float(translation_ms),
+                    )
                 metrics = result["metrics"]
                 timings = result["timings"]
                 conn.execute(

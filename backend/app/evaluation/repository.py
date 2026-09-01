@@ -7,7 +7,11 @@ from typing import Any
 from app.db.connection import utcnow_iso
 from app.evaluation.ensemble import MODELS, STRATEGY_NAME, TOP_K, TOP_M, USE_RERANK
 from app.evaluation.scoring import VIDEO_RANKING_POLICY
-from app.translation import TRANSLATOR_ID
+from app.translation import (
+    DEFAULT_TRANSLATION_POLICY,
+    normalize_translation_policy,
+    translator_id_for_policy,
+)
 
 
 def _loads(value : str | None) -> Any :
@@ -148,7 +152,11 @@ def create_run(
     dataset_version : str,
     reference_set_version : str,
     created_by_user_id : int | None,
+    translation_policy : str = DEFAULT_TRANSLATION_POLICY,
 ) -> dict[str, Any] :
+    selected_policy = normalize_translation_policy(translation_policy)
+    translator_id = translator_id_for_policy(selected_policy)
+
     dataset = conn.execute(
         "SELECT * FROM evaluation_datasets WHERE version = ?",
         (dataset_version,),
@@ -170,7 +178,8 @@ def create_run(
         "models"     : MODELS,
         "top_k"      : TOP_K,
         "top_m"      : TOP_M,
-        "use_rerank" : USE_RERANK,
+        "use_rerank"         : USE_RERANK,
+        "translation_policy" : selected_policy,
     }
     now = utcnow_iso()
     conn.execute("BEGIN IMMEDIATE")
@@ -188,7 +197,7 @@ def create_run(
                 reference_set["id"],
                 STRATEGY_NAME,
                 VIDEO_RANKING_POLICY,
-                TRANSLATOR_ID,
+                translator_id,
                 dataset["query_count"],
                 created_by_user_id,
                 json.dumps(configuration, ensure_ascii = False),
@@ -226,7 +235,7 @@ def create_run(
                     row["ordinal"],
                     row["task_type"],
                     row["query_vi"],
-                    TRANSLATOR_ID,
+                    translator_id,
                     row["video_id"],
                     row["reference_frame_idx"],
                 )

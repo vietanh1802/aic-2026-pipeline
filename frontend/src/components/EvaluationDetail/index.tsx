@@ -10,6 +10,15 @@ import KeyframeImg from "../KeyframeImg";
 
 const FPS = KeyframeFPS as Record<string, number | undefined>;
 
+function translationPolicyLabel(value: string | null): string {
+  if (!value) return "Not recorded";
+  if (value === "visual_faithful") return "Visual faithful";
+  if (value === "scene_clauses") return "Scene clauses";
+  if (value === "retrieval_compact") return "Retrieval compact";
+  if (value === "salience_first") return "Salience first";
+  return value;
+}
+
 function formatSeconds(ms: number | null): string {
   if (ms === null) return "—";
   return `${(ms / 1000).toFixed(2)}s`;
@@ -28,8 +37,10 @@ function frameNumber(frame: EvaluationFrameResult): number | null {
 
 export default function EvaluationDetail({
   result,
+  translationPolicy,
 }: {
   result: EvaluationResult | null;
+  translationPolicy: string | null;
 }) {
   const [preview, setPreview] = useState<{
     videoId: string;
@@ -117,6 +128,9 @@ export default function EvaluationDetail({
           </p>
           <div className="text-[10.5px] text-proto-muted mt-1 font-mono">
             {result.translator}
+          </div>
+          <div className="text-[10.5px] text-proto-muted mt-0.5">
+            Policy · {translationPolicyLabel(translationPolicy)}
           </div>
         </section>
 

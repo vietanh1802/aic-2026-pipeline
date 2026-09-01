@@ -4,7 +4,12 @@ import time
 from typing import Any
 
 from app.evaluation.scoring import VIDEO_RANKING_POLICY, rank_visual_videos, score_video_ranking
-from app.translation import TRANSLATOR_ID, translate_vi_to_en
+from app.translation import (
+    DEFAULT_TRANSLATION_POLICY,
+    normalize_translation_policy,
+    translate_vi_to_en,
+    translator_id_for_policy,
+)
 
 
 STRATEGY_NAME = "ensemble_search_en_v1"
@@ -18,14 +23,23 @@ def evaluate_ensemble_query(
     query_vi : str,
     reference_video : str,
     *,
+    translation_policy : str | None = None,
     search_fn = None,
 ) -> dict[str, Any] :
-    query_en, translation_ms = translate_vi_to_en(query_vi)
+    selected_policy = normalize_translation_policy(translation_policy)
+    if (translation_policy is None) :
+        query_en, translation_ms = translate_vi_to_en(query_vi)
+    else :
+        query_en, translation_ms = translate_vi_to_en(
+            query_vi,
+            policy = selected_policy,
+        )
     return evaluate_translated_ensemble_query(
         query_vi,
         query_en,
         reference_video,
         translation_ms = translation_ms,
+        translation_policy = selected_policy,
         search_fn = search_fn,
     )
 
@@ -36,8 +50,10 @@ def evaluate_translated_ensemble_query(
     reference_video : str,
     *,
     translation_ms : float,
+    translation_policy : str | None = None,
     search_fn = None,
 ) -> dict[str, Any] :
+    selected_policy = normalize_translation_policy(translation_policy)
     if (search_fn is None) :
         from app.preprocess import ensemble_search
         search_fn = ensemble_search
@@ -61,14 +77,15 @@ def evaluate_translated_ensemble_query(
     return {
         "strategy"             : STRATEGY_NAME,
         "video_ranking_policy" : VIDEO_RANKING_POLICY,
-        "translator"           : TRANSLATOR_ID,
+        "translator"           : translator_id_for_policy(selected_policy),
         "query_vi"             : query_vi,
         "query_en"             : query_en,
         "configuration" : {
             "models"     : MODELS,
             "top_k"      : TOP_K,
             "top_m"      : TOP_M,
-            "use_rerank" : USE_RERANK,
+            "use_rerank"         : USE_RERANK,
+            "translation_policy" : selected_policy,
         },
         "frame_results"  : frame_results,
         "ranked_videos"  : ranked_videos,

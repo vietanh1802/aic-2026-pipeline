@@ -8,12 +8,14 @@ import {
   getEvaluationRun,
   listEvaluationDatasets,
   listEvaluationRuns,
+  listEvaluationTranslationPolicies,
   resumeEvaluationRun,
   type EvaluationDataset,
   type EvaluationResult,
   type EvaluationRun,
   type EvaluationRunStatus,
   type EvaluationSummary,
+  type EvaluationTranslationPolicy,
 } from "../api/evaluation";
 import Button from "../components/Button";
 import EvaluationDetail from "../components/EvaluationDetail";
@@ -68,6 +70,14 @@ function strategyLabel(value: string): string {
 function translatorLabel(value: string): string {
   if (value.toLowerCase().includes("gemini")) return "Gemini · VI → EN";
   return value;
+}
+
+function translationPolicyLabel(
+  value: string | null | undefined,
+  policies: EvaluationTranslationPolicy[]
+): string {
+  if (!value) return "Not recorded";
+  return policies.find((policy) => policy.id === value)?.label ?? value;
 }
 
 function rankingLabel(value: string): string {
@@ -231,6 +241,8 @@ function SummaryMetrics({ summary }: { summary: EvaluationSummary }) {
 
 export default function Evaluation() {
   const [datasets, setDatasets] = useState<EvaluationDataset[]>([]);
+  const [policies, setPolicies] = useState<EvaluationTranslationPolicy[]>([]);
+  const [selectedPolicy, setSelectedPolicy] = useState("");
   const [runs, setRuns] = useState<EvaluationRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [run, setRun] = useState<EvaluationRun | null>(null);
@@ -250,13 +262,16 @@ export default function Evaluation() {
     const load = async () => {
       setLoading(true);
       try {
-        const [datasetResponse, runResponse] = await Promise.all([
+        const [datasetResponse, runResponse, policyResponse] = await Promise.all([
           listEvaluationDatasets(),
           listEvaluationRuns(),
+          listEvaluationTranslationPolicies(),
         ]);
         if (cancelled) return;
 
         setDatasets(datasetResponse.datasets);
+        setPolicies(policyResponse.policies);
+        setSelectedPolicy(policyResponse.default);
         setRuns(runResponse.runs);
 
         const latestRun = runResponse.runs[0] ?? null;
@@ -379,6 +394,9 @@ export default function Evaluation() {
     [referenceSetVersion, selectedDataset]
   );
 
+  const selectedPolicyDefinition =
+    policies.find((policy) => policy.id === selectedPolicy) ?? null;
+
   const activeRun = runs.find((item) => ACTIVE_STATUSES.has(item.status)) ?? null;
 
   const selectedResult =
@@ -419,7 +437,7 @@ export default function Evaluation() {
     const targetDatasetVersion = run?.dataset_version ?? datasetVersion;
     const targetReferenceVersion =
       run?.reference_set_version ?? referenceSetVersion;
-    if (!targetDatasetVersion || !targetReferenceVersion) return;
+    if (!targetDatasetVersion || !targetReferenceVersion || !selectedPolicy) return;
 
     setActionBusy(true);
     try {
@@ -437,6 +455,7 @@ export default function Evaluation() {
       const response = await createEvaluationRun({
         dataset_version: targetDatasetVersion,
         reference_set_version: targetReferenceVersion,
+        translation_policy: selectedPolicy,
       });
       patchRun(response.run);
       setRun(response.run);
@@ -532,7 +551,10 @@ export default function Evaluation() {
             ) : (
               runs.map((item) => (
                 <option key={item.id} value={item.id}>
-                  #{item.id} · {item.status} · {formatDate(item.created_at)}
+                  #{item.id} · {translationPolicyLabel(
+                    item.configuration?.translation_policy,
+                    policies
+                  )} · {item.status} · {formatDate(item.created_at)}
                 </option>
               ))
             )}
@@ -646,10 +668,46 @@ export default function Evaluation() {
                 {run ? translatorLabel(run.translator) : "Recorded when the run starts"}
               </div>
               {run && (
-                <div className="text-[10.5px] font-mono text-proto-muted mt-0.5">
-                  {run.translator}
-                </div>
+                <>
+                  <div className="text-[10.5px] font-mono text-proto-muted mt-0.5">
+                    {run.translator}
+                  </div>
+                  <div className="text-[10.5px] text-proto-muted mt-0.5">
+                    Policy used · <b className="text-proto-ink font-medium">
+                      {translationPolicyLabel(
+                        run.configuration?.translation_policy,
+                        policies
+                      )}
+                    </b>
+                  </div>
+                </>
               )}
+            </div>
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-proto-line">
+            <div className="grid sm:grid-cols-[220px_minmax(0,1fr)] gap-3 items-start">
+              <label>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1">
+                  Policy for next run
+                </div>
+                <select
+                  className="w-full px-2 py-1.5 rounded-[7px] border border-proto-line bg-white text-[13px] text-proto-ink"
+                  value={selectedPolicy}
+                  disabled={policies.length === 0 || actionBusy}
+                  onChange={(event) => setSelectedPolicy(event.target.value)}
+                >
+                  {policies.map((policy) => (
+                    <option key={policy.id} value={policy.id}>
+                      {policy.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="text-[11.5px] text-proto-muted leading-relaxed pt-[17px]">
+                {selectedPolicyDefinition?.description ??
+                  "Choose the translation policy that will be frozen into the next evaluation run."}
+              </div>
             </div>
           </div>
 
@@ -752,7 +810,7 @@ export default function Evaluation() {
               <Button
                 size="sm"
                 loading={actionBusy}
-                disabled={!!activeRun || !datasetVersion || !referenceSetVersion}
+                disabled={!!activeRun || !datasetVersion || !referenceSetVersion || !selectedPolicy}
                 className="ml-auto"
                 onClick={() => void startRun()}
               >
@@ -911,7 +969,10 @@ export default function Evaluation() {
               )}
             </div>
 
-            <EvaluationDetail result={selectedResult} />
+            <EvaluationDetail
+              result={selectedResult}
+              translationPolicy={run.configuration?.translation_policy ?? null}
+            />
           </div>
         </div>
       )}
