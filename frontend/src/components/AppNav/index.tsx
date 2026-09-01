@@ -2,11 +2,18 @@ import { logout } from "../../api/auth";
 import type { BoardTask } from "../../api/board";
 import type { AuthUser } from "../../types/auth";
 
-export type Screen = "search" | "board" | "import" | "rounds" | "export";
+export type Screen =
+  | "search"
+  | "board"
+  | "evaluation"
+  | "import"
+  | "rounds"
+  | "export";
 
 const NAV: { id: Screen; label: string; adminOnly?: boolean }[] = [
   { id: "search", label: "Search" },
   { id: "board", label: "Board" },
+  { id: "evaluation", label: "Evaluation", adminOnly: true },
   { id: "import", label: "Import", adminOnly: true },
   { id: "rounds", label: "Vòng", adminOnly: true },
   { id: "export", label: "Export" },

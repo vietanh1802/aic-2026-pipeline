@@ -8,6 +8,7 @@ import AnswerBasket from "./components/AnswerBasket";
 import AppNav, { type Screen } from "./components/AppNav";
 import Board from "./pages/Board";
 import ChangePassword from "./pages/ChangePassword";
+import Evaluation from "./pages/Evaluation";
 import ExportPage from "./pages/Export";
 import ImportPack from "./pages/ImportPack";
 import Login from "./pages/Login";
@@ -155,6 +156,7 @@ export default function Root() {
           }}
         />
       )}
+      {screen === "evaluation" && <Evaluation />}
       {screen === "import" && (
         <ImportPack onImported={() => setScreen("rounds")} />
       )}
