@@ -164,12 +164,19 @@ export default function Root() {
       {screen === "export" && <ExportPage />}
 
       {/* Kept mounted rather than unmounted, so switching to the board and back
-          does not throw away the current search results. */}
-      <div hidden={screen !== "search"}>
+          does not throw away the current search results.
+
+          Màn "Lịch sử" cũng nằm trong cây này chứ không phải một trang riêng ở
+          Root: bấm "Coi X làm" phải áp truy vấn vào ô search rồi chạy lại, mà
+          hàm làm việc đó sống trong App. Dựng nó ở Root sẽ phải luồn ngược
+          hàm ấy lên qua hai tầng. */}
+      <div hidden={screen !== "search" && screen !== "history"}>
         <App
           activeTask={task}
           rowsPerQuery={rowsPerQuery}
           onBasketChanged={() => void refreshCount()}
+          view={screen === "history" ? "history" : "search"}
+          onLeaveHistory={() => setScreen("search")}
         />
       </div>
 

@@ -35,7 +35,10 @@ export default function TaskBrief({
       className={
         isPopup
           ? "sticky top-0 z-20 -mx-6 -mt-6 mb-3 px-6 py-3 bg-white border-b-2 border-proto-primary/40 font-baloo"
-          : "sticky top-0 z-[100] max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border-l-4 border-l-proto-primary border border-proto-line font-baloo shadow-sm"
+          : // top theo chiều cao thật của thanh nav, không phải 0: nav giờ cũng
+            // dính, nên top-0 sẽ khiến hai khối chồng lên nhau. z thấp hơn nav
+            // vì nav phải nằm trên cùng.
+            "sticky top-[var(--nav-h)] z-40 max-w-[98%] mx-auto mb-3 px-4 py-3 rounded-[10px] bg-proto-card border-l-4 border-l-proto-primary border border-proto-line font-baloo shadow-sm"
       }
     >
       <div className="flex items-center gap-2 mb-1 flex-wrap">

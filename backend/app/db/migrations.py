@@ -102,6 +102,32 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ALTER TABLE packs ADD COLUMN phase TEXT",
         ),
     ),
+    (
+        5,
+        (
+            # Lịch sử tìm kiếm: mọi truy vấn đã từng gõ cho một câu.
+            #
+            # search_states chỉ giữ một dòng mỗi người mỗi câu và bị đè mỗi lần
+            # search. Đồng đội bấm "Coi X làm" chỉ xem được truy vấn X đang gõ
+            # ngay lúc đó; X gõ câu khác là câu cũ mất hẳn, kể cả khi chính câu
+            # cũ mới là câu tìm ra đáp án.
+            "CREATE TABLE IF NOT EXISTS search_history ("
+            "  id                INTEGER PRIMARY KEY,"
+            "  user_id           INTEGER NOT NULL REFERENCES users(id),"
+            "  task_id           INTEGER NOT NULL REFERENCES tasks(id),"
+            "  query_text        TEXT NOT NULL DEFAULT '',"
+            "  search_type       TEXT NOT NULL DEFAULT 'ensemble',"
+            "  params            TEXT NOT NULL DEFAULT '{}',"
+            "  picked_frame      TEXT,"
+            "  picked_video      TEXT,"
+            "  picked_frame_idx  INTEGER,"
+            "  created_at        TEXT NOT NULL,"
+            "  updated_at        TEXT NOT NULL"
+            ")",
+            "CREATE INDEX IF NOT EXISTS idx_search_history_task "
+            "ON search_history(task_id, updated_at DESC)",
+        ),
+    ),
 )
 
 

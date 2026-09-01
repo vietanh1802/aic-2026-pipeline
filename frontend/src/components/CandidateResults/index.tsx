@@ -3,8 +3,6 @@ import { useState } from "react";
 import KeyframeImg from "../KeyframeImg";
 import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
 import { frameGap } from "../../helpers/candidates";
-import { spreadTrakeSlotsFor } from "../../helpers/keyframes";
-import { keyframeUrl } from "../../helpers/videoSource";
 import type {
   TemporalCandidate,
   TemporalCandidateResult,
@@ -49,10 +47,16 @@ function CardHead({
   got?: number;
   total: number;
   score?: number;
-  open: boolean;
-  onToggle: () => void;
-  openLabel: string;
-  /** Sits before the expand toggle. TRAKE puts its "Chọn" button here. */
+  /**
+   * Nút gấp/mở, chỉ vẽ khi có `onToggle`.
+   *
+   * Thẻ Temporal vẫn dùng ("Chỉnh biên"). Thẻ TRAKE thì không: dải ứng viên
+   * của nó luôn mở, nên một nút chỉ để giấu chúng đi là thừa.
+   */
+  open?: boolean;
+  onToggle?: () => void;
+  openLabel?: string;
+  /** Nằm trước nút gấp. TRAKE đặt nút "Chọn" ở đây. */
   action?: React.ReactNode;
 }) {
   return (
@@ -77,13 +81,15 @@ function CardHead({
       )}
       <span className="ml-auto flex items-center gap-3">
         {action}
-        <button
-          type="button"
-          onClick={onToggle}
-          className="text-[11.5px] font-semibold text-proto-primary-active"
-        >
-          {open ? "Thu lại ▴" : `${openLabel} ▾`}
-        </button>
+        {onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="text-[11.5px] font-semibold text-proto-primary-active"
+          >
+            {open ? "Thu lại ▴" : `${openLabel} ▾`}
+          </button>
+        )}
       </span>
     </div>
   );
@@ -516,10 +522,9 @@ function TrakeCard({
   onOpenEvent?: (eventIndex: number, pick: EventPick) => void;
   /** Write the whole line as one answer. Undefined hides the button. */
   onCommit?: (video: string, frames: number[]) => void;
-  /** Drop this slot's override and go back to the DP's pick. */
+  /** Bỏ mốc do người dùng tự đổi, trả về khung thuật toán đã chọn ban đầu. */
   onResetSlot?: (eventIndex: number) => void;
 }) {
-  const [open, setOpen] = useState(true);
   const [lightboxAt, setLightboxAt] = useState<number | null>(null);
 
   const events = result.events ?? [];
@@ -537,32 +542,13 @@ function TrakeCard({
   const missing = frames.findIndex((frame) => typeof frame !== "number");
   const complete = missing === -1;
 
-  // Every frame this card knows about, main picks and candidate pools alike —
-  // the widest window the backend thinks the action lives in.
-  const spreadEven = () => {
-    const known = slots
-      .flatMap((index) => [events[index], ...poolAt(index)])
-      .map((candidate) => candidate?.frame_idx)
-      .filter((frame): frame is number => typeof frame === "number");
-    if (known.length === 0) {
-      return;
-    }
-    const picks = spreadTrakeSlotsFor(
-      result.video ?? "",
-      Math.min(...known),
-      Math.max(...known),
-      count
-    );
-    picks.forEach((pick, index) =>
-      onSwap(index, {
-        name: pick.name,
-        url: pick.byHand ? "" : keyframeUrl(pick.name),
-        frame_idx: pick.frameIdx,
-        timestamp: "",
-        byHand: pick.byHand,
-      })
-    );
-  };
+  // Nút "Trải đều" đã bỏ. Nó ghi đè cả N mốc bằng N vị trí chia đều trên
+  // khoảng ứng viên — tiện khi thuật toán dồn mấy mốc vào cùng một giây, nhưng
+  // tên nút không hề nói rằng nó đụng vào dữ liệu, và ai bấm nhầm thì phải
+  // hoàn tác từng ô một. Cách lấy đủ 100 dòng giờ là nút "Điền N video vào
+  // giỏ" phía trên danh sách: nhận nguyên xếp hạng thuật toán đưa.
+  //
+  // helpers/trakeSpread.ts vẫn còn cùng bộ test của nó, chỉ là không ai gọi.
 
   return (
     <div
@@ -576,19 +562,8 @@ function TrakeCard({
         got={result.discovery_score}
         total={parts.length}
         score={result.combined_score}
-        open={open}
-        onToggle={() => setOpen((value) => !value)}
-        openLabel="Ứng viên từng mốc"
         action={
           <span className="flex items-center gap-1.5">
-            <button
-              type="button"
-              title="Rải đều N mốc trên toàn bộ khoảng ứng viên rồi chỉnh tay"
-              onClick={spreadEven}
-              className="text-[11.5px] font-bold px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-proto-body"
-            >
-              Trải đều
-            </button>
             {onCommit && (
               <button
                 type="button"
@@ -674,16 +649,22 @@ function TrakeCard({
                     </span>
                   )}
 
-                  {/* Swapping used to be one-way: try an alternative and the
-                      DP's pick was gone. */}
+                  {/* Đổi mốc từng là một chiều: thử một ứng viên khác là mất
+                      luôn khung thuật toán đã chọn.
+
+                      Nhãn cũ là "↩ DP" — DP là dynamic programming, tên thuật
+                      toán chạy ở backend. Người dùng không có nghĩa vụ biết nó,
+                      và nút này chỉ làm đúng một việc: trả lại khung máy chọn
+                      ban đầu. Nút rộng theo chữ thay vì khung vuông 40×40, vì
+                      hai chữ không nhét vừa. */}
                   {onResetSlot && swaps[index] !== undefined && (
                     <button
                       type="button"
-                      title="Trả về lựa chọn của DP"
+                      title="Trả về khung máy đã chọn ban đầu"
                       onClick={() => onResetSlot(index)}
-                      className="absolute top-0 right-0 mr-1 mt-1 flex h-10 w-10 items-center justify-center rounded-[4px] bg-proto-soft hover:bg-white border-2 border-proto-line text-[11px] font-bold"
+                      className="absolute top-0 right-0 mr-1 mt-1 flex h-8 items-center justify-center px-2 rounded-[4px] bg-proto-soft hover:bg-white border-2 border-proto-line text-[11px] font-bold whitespace-nowrap"
                     >
-                      ↩ DP
+                      ↩ Máy chọn
                     </button>
                   )}
                 </div>
@@ -702,7 +683,9 @@ function TrakeCard({
                 </div>
               </div>
 
-              {open && pool.length > 0 && (
+              {/* Luôn mở. Nút "Thu lại" đã bỏ: nó chỉ giấu đúng thứ khiến
+                  thẻ này đáng nhìn — 10 ứng viên khác cho mỗi mốc. */}
+              {pool.length > 0 && (
                 <Strip
                   label={`Cách khớp khác cho E${index + 1}`}
                   tone="event"

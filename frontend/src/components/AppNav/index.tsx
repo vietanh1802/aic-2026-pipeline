@@ -1,11 +1,15 @@
+import { useEffect, useRef } from "react";
+
 import { logout } from "../../api/auth";
 import ApiStatus from "../ApiStatus";
+import { useSearchStore } from "../../store/useSearchStore";
 import GotoFrame from "../GotoFrame";
 import type { BoardTask } from "../../api/board";
 import type { AuthUser } from "../../types/auth";
 
 export type Screen =
   | "search"
+  | "history"
   | "board"
   | "evaluation"
   | "import"
@@ -50,10 +54,46 @@ export default function AppNav({
   rowsPerQuery: number;
   onOpenBasket: () => void;
 }) {
+  // Tab "Lịch sử" không nằm trong NAV vì nó không phải một màn cố định: nó
+  // thuộc về MỘT câu, và chỉ có nghĩa khi đang ở khu vực tìm kiếm. Ở Board hay
+  // Export thì "lịch sử của câu nào" không có câu trả lời.
+  //
+  // Điều kiện phải kể cả `history`, nếu không tab tự biến mất ngay khi bấm vào
+  // nó và không còn đường quay lại.
+  const showHistory =
+    task !== null && (screen === "search" || screen === "history");
+  const summary = useSearchStore((state) => state.summary);
   const items = NAV.filter((item) => !item.adminOnly || user.role === "admin");
 
+  // Thanh này dính ở đỉnh trang, nên mọi khối dính khác — đề bài ở màn Search,
+  // khối video ở màn Evaluation — phải đậu ngay DƯỚI nó. Chúng đọc chiều cao
+  // qua biến CSS `--nav-h`.
+  //
+  // Đo thật thay vì viết cứng một con số: thanh có flex-wrap, và trên màn hẹp
+  // cụm bên phải rơi xuống dòng thứ hai làm nó cao gấp đôi. Một hằng số 40px
+  // sẽ để đề bài chui một nửa xuống gầm đúng lúc màn hình đã chật nhất.
+  const bar = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = bar.current;
+    if (!node) {
+      return;
+    }
+    const publish = () =>
+      document.documentElement.style.setProperty(
+        "--nav-h",
+        `${Math.round(node.getBoundingClientRect().height)}px`
+      );
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="flex flex-wrap items-center gap-y-1 gap-x-1 px-4 py-1.5 border-b border-proto-line bg-proto-soft font-baloo">
+    <div
+      ref={bar}
+      className="sticky top-0 z-50 flex flex-wrap items-center gap-y-1 gap-x-1 px-4 py-1.5 border-b border-proto-line bg-proto-soft font-baloo"
+    >
       {items.map((item) => (
         <button
           key={item.id}
@@ -69,33 +109,73 @@ export default function AppNav({
         </button>
       ))}
 
-      {/* Always occupies the slot. Hiding it when no task is open made the
-          basket - and autofill with it - unreachable without knowing that the
-          Board is the way in. */}
-      {task ? (
+      {showHistory && (
         <button
           type="button"
-          onClick={onOpenBasket}
-          title="Mở giỏ đáp án · Autofill"
-          className="ml-3 flex items-center gap-2 text-[12px] px-3 py-1 rounded-[7px] border border-proto-primary bg-white"
+          // Bật/tắt, không phải điều hướng một chiều: lịch sử giờ là một lớp
+          // phủ lên màn Search, nên nút mở nó cũng phải đóng được nó.
+          onClick={() => onNavigate(screen === "history" ? "search" : "history")}
+          title={
+            screen === "history"
+              ? "Đóng lịch sử"
+              : `Mọi truy vấn cả nhóm đã gõ cho câu ${task.code}`
+          }
+          className={`text-[12.5px] px-3 py-1 rounded-[7px] border ${
+            screen === "history"
+              ? "bg-proto-card border-proto-cream-strong text-proto-ink font-semibold"
+              : "border-transparent text-proto-muted"
+          }`}
         >
-          <span className="text-proto-muted">
-            Task <b className="text-proto-ink font-mono">{task.code}</b>
-          </span>
-          <span className="font-mono font-bold text-proto-ink">
-            {answerCount}
-            <span className="text-proto-muted font-normal">/{rowsPerQuery}</span>
-          </span>
-          <span className="text-proto-primary-active font-semibold">Giỏ</span>
+          Lịch sử <span className="font-mono">{task.code}</span>
         </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => onNavigate("board")}
-          className="ml-3 text-[12px] px-3 py-1 rounded-[7px] border border-dashed border-proto-line text-proto-muted"
-        >
-          Chưa mở task — vào Board để nhận
-        </button>
+      )}
+
+      {/* Chỉ ở khu vực tìm kiếm. Giỏ đáp án là việc của lúc đang tìm; đứng ở
+          Board thì bảng đã có cột số dòng của từng câu, còn ở Import/Export nó
+          chỉ là một ô đếm không dùng tới.
+
+          Trong khu vực đó thì luôn chiếm chỗ, kể cả khi chưa mở task nào: ẩn
+          hẳn sẽ làm giỏ — và nút Điền tự động bên trong nó — không còn đường
+          vào nếu không biết phải quay lại Board. */}
+      {(screen === "search" || screen === "history") &&
+        (task ? (
+          <button
+            type="button"
+            onClick={onOpenBasket}
+            title="Mở giỏ đáp án · Autofill"
+            className="ml-3 flex items-center gap-2 text-[12px] px-3 py-1 rounded-[7px] border border-proto-primary bg-white"
+          >
+            <span className="text-proto-muted">
+              Task <b className="text-proto-ink font-mono">{task.code}</b>
+            </span>
+            <span className="font-mono font-bold text-proto-ink">
+              {answerCount}
+              <span className="text-proto-muted font-normal">/{rowsPerQuery}</span>
+            </span>
+            <span className="text-proto-primary-active font-semibold">Giỏ</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onNavigate("board")}
+            className="ml-3 text-[12px] px-3 py-1 rounded-[7px] border border-dashed border-proto-line text-proto-muted"
+          >
+            Chưa mở task — vào Board để nhận
+          </button>
+        ))}
+
+      {/* "50 khung · 1.8s" — trước đây là một khối riêng nằm giữa đề bài và
+          lưới ảnh, cao chừng 40px chỉ để nói hai con số, lại đi kèm ô "Sorted
+          By" đã bỏ. Ở đây nó không tốn thêm dòng nào.
+
+          Chỉ hiện ở khu vực tìm kiếm: đứng ở Board hay Export thì con số của
+          lượt tìm gần nhất không nói lên điều gì. */}
+      {summary !== null && (screen === "search" || screen === "history") && (
+        <span className="ml-3 text-[12px] text-proto-muted">
+          <b className="font-mono text-proto-ink">{summary.count}</b>{" "}
+          {summary.unit === "videos" ? "video" : "khung"} ·{" "}
+          <span className="font-mono">{summary.seconds.toFixed(1)}s</span>
+        </span>
       )}
 
       {/* Ô "Tới frame" và badge trạng thái backend, dồn từ khối header riêng

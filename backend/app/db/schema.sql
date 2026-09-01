@@ -101,6 +101,31 @@ CREATE TABLE IF NOT EXISTS search_states (
 );
 CREATE INDEX IF NOT EXISTS idx_search_states_task ON search_states(task_id);
 
+-- Mọi lần tìm, giữ lại hết. search_states chỉ có MỘT dòng mỗi người mỗi câu và
+-- bị đè mỗi lần search, nên truy vấn cũ biến mất ngay khi người đó gõ câu
+-- khác — kể cả khi câu cũ mới là câu tìm ra đáp án.
+--
+-- Ghi thêm chứ không thay: search_states vẫn trả lời "ai đang tìm gì NGAY BÂY
+-- GIỜ" cho dòng tóm tắt, còn bảng này trả lời "đã từng tìm bằng gì".
+--
+-- Một dòng cho mỗi TRUY VẤN khác nhau, không phải mỗi lần bấm. Bấm mười khung
+-- trên cùng một truy vấn chỉ cập nhật khung đã chọn của dòng đó.
+CREATE TABLE IF NOT EXISTS search_history (
+  id                INTEGER PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id),
+  task_id           INTEGER NOT NULL REFERENCES tasks(id),
+  query_text        TEXT NOT NULL DEFAULT '',
+  search_type       TEXT NOT NULL DEFAULT 'ensemble',
+  params            TEXT NOT NULL DEFAULT '{}',
+  picked_frame      TEXT,
+  picked_video      TEXT,
+  picked_frame_idx  INTEGER,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_search_history_task
+  ON search_history(task_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS settings (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL

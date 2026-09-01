@@ -38,30 +38,50 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
   const translateLang = useQueryStore((state) => state.translateLang);
   const setTranslateLang = useQueryStore((state) => state.setTranslateLang);
-  const queryTranslated = useQueryStore((state) => state.queryTranslated);
+  // `queryTranslated` chỉ còn được GHI, không đọc: bản dịch giờ nằm ngay trong
+  // ô nhập nên không có gì để hiển thị riêng nữa.
   const setQueryTranslated = useQueryStore(
     (state) => state.setQueryTranslated
   );
-  const [isTranslated, setisTranslated] = useState<boolean>(false);
   // Advanced controls (Show Top, Top-M, Rerank, Language, Translate, Search
   // Type) collapse behind a toggle, closed by default — during a round the
   // user just types and hits Enter, and rarely touches these controls.
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
+  /**
+   * Dịch xong thì ghi thẳng vào ô nhập bên dưới, không hiện bảng xem trước.
+   *
+   * Cách cũ đặt bản dịch vào một ô chỉ-đọc nằm PHÍA TRÊN cụm tuỳ chọn, kèm
+   * tiêu đề "Dịch" và nút X. Bản dịch nằm ở đó thì không tìm được gì cả —
+   * nút Search vẫn đọc ô dưới, tức là vẫn câu tiếng Việt — nên vẫn phải tự
+   * bôi đen, copy, rồi dán xuống. Ba thao tác cho một việc đáng lẽ là không
+   * thao tác nào, cộng thêm hai dòng chiếm chỗ trên màn hình.
+   *
+   * Bản gốc không giữ lại được: muốn quay về thì đổi chiều dịch (en-vi) rồi
+   * bấm Translate lần nữa. Vẫn ghi vào `queryTranslated` để biết câu đang nằm
+   * trong ô là do máy dịch ra.
+   */
   const handleTranslate = async () => {
     if (!queryText) return;
     const targetLang = translateLang === "vi-en" ? "en" : "vi";
-    const res = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(
-        queryText
-      )}`
-    );
-    const data = await res.json();
-    const translated = data[0];
-    const texts = translated.map((item: string[]) => item[0]);
-    const queryTranslated = texts.join("");
-    setQueryTranslated(queryTranslated);
-    setisTranslated(true);
+    try {
+      const res = await fetch(
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(
+          queryText
+        )}`
+      );
+      const data = await res.json();
+      const translated = data[0];
+      const texts = translated.map((item: string[]) => item[0]);
+      const result = texts.join("");
+      if (!result) return;
+      setQueryTranslated(result);
+      setQueryText(result);
+    } catch (err) {
+      // Dịch hỏng thì giữ nguyên câu đang gõ. Ném ra ngoài sẽ thành lỗi
+      // không ai bắt, mà thứ người dùng vừa gõ thì biến mất.
+      console.error("Không dịch được:", err);
+    }
   };
 
   // The OCR route can go deeper: it calls no model, so 2000 rows cost only a
@@ -117,26 +137,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
   return (
     <div className="bg-white border p-5 border-proto-line rounded-xl flex flex-col gap-y-5 font-baloo">
-      <div
-        className={`w-full flex flex-row justify-between ${
-          isTranslated ? "" : "hidden"
-        }`}
-      >
-        <h1 className="font-bold">Dịch</h1>
-        <div
-          className="text-[#c64545] hover:bg-[#c64545]/15 hover:rounded-full px-2 font-bold cursor-pointer text-2xl"
-          onClick={() => setisTranslated(false)}
-        >
-          X
-        </div>
-      </div>
-      <div className={`w-full flex ${isTranslated ? "" : "hidden"}`}>
-        <input
-          value={queryTranslated}
-          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
-          readOnly
-        />
-      </div>
+      {/* Khối "Dịch" (tiêu đề + nút X + ô chỉ-đọc) đã bỏ — xem handleTranslate. */}
 
       {showAdvanced && (
       <div className="w-full flex flex-row justify-between flex-wrap gap-y-3">
@@ -279,15 +280,10 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
         </p>
       )}
 
-      {isOcr && (
-        <p className="text-xs text-proto-muted -mt-2">
-          Gõ ĐÚNG cụm chữ nhìn thấy trên hình — biển hiệu, tên người, dòng chữ
-          chạy, con số. Đừng mô tả cảnh. Gõ càng đặc trưng càng tốt:{" "}
-          <span className="font-bold">Quán ăn Chợ Lớn</span> tốt hơn{" "}
-          <span className="font-bold">quán ăn</span>. Chỉ 180 000/360 531
-          keyframe có chữ, phần còn lại tuyến này không thấy.
-        </p>
-      )}
+      {/* Đoạn hướng dẫn dài cho tuyến OCR đã bỏ. Nó chiếm bốn dòng ngay trên ô
+          nhập, mà cả nhóm đọc đúng một lần rồi thôi — từ lần thứ hai trở đi nó
+          chỉ đẩy ô nhập xuống. Phần đáng nhớ nhất vẫn còn ở chỗ gõ vào được:
+          placeholder của ô nhập nêu sẵn ví dụ có thật. */}
 
       {/* Toggle lives on the same line as the query row — closed state
           (default) is a single compact row: input + toggle + Search. */}

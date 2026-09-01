@@ -66,6 +66,20 @@ class ReorderRequest(BaseModel):
     after_id: int | None = None
 
 
+class EventRange(BaseModel):
+    """Khoảng người dùng khoanh cho MỘT sự kiện của câu TRAKE.
+
+    Người làm bài xem video, thấy hành động 1 nằm đâu đó giữa frame 90 và 120,
+    thì gõ đúng hai số đó. Chính xác hơn hẳn một "bước" chung: mỗi hành động
+    dài ngắn khác nhau, và cái người ta THẤY là hai đầu, không phải khoảng cách.
+    """
+
+    lo: int = Field(0, ge=0)
+    hi: int = Field(0, ge=0)
+    # both | up | down — chỉ lấy phía trên mốc gốc, phía dưới, hay cả hai.
+    mode: str = autofill.BOTH
+
+
 class AutofillRequest(BaseModel):
     limit: int = Field(100, ge=1, le=500)
     # One second at 25 fps for KIS and Q&A. TRAKE overrides it to 2 from the
@@ -95,6 +109,17 @@ class AutofillRequest(BaseModel):
     # rải hai phía; mốc nằm ngay đầu cảnh thì rải xuống là ném đi nửa số dòng.
     # Ép cả ba dùng chung một chiều là bắt hai mốc chịu thiệt vì mốc thứ ba.
     directions: list[str] | None = None
+
+    # ── TRAKE: khoảng của từng SỰ KIỆN ───────────────────────────────────────
+    #
+    # Có mặt thì câu TRAKE chuyển hẳn sang cách rải khác: giữ nguyên N−1 mốc
+    # của dòng neo và chỉ đổi MỘT mốc mỗi dòng, thay vì dời cả bộ đi cùng một
+    # lượng. TRAKE chấm theo từng mốc nên sai một mốc chỉ mất 1/N — giữ lại
+    # phần đúng của dòng hạng 1 đáng giá hơn nhiều so với đoán lại cả bộ.
+    #
+    # Bỏ trống thì giữ nguyên cách cũ (dời cả bộ), nên mọi lời gọi hiện có
+    # không đổi hành vi.
+    event_ranges: list[EventRange] | None = None
 
 
 def _row_with_rank(conn: sqlite3.Connection, answer_id: int) -> sqlite3.Row:
@@ -482,18 +507,96 @@ def autofill_answers(
     now = utcnow_iso()
     added = 0
 
-    # Sinh dư rồi lọc: mỗi mốc có thể va vào dòng đã có hoặc tụt xuống dưới 0,
-    # nên số lượt sinh luôn nhiều hơn số dòng thật sự thêm được.
-    for index, delta in autofill.plan(
-        len(anchors), steps, directions, needed * 8 + 64
-    ):
+    # Hai cách sinh, chọn theo việc người dùng có khoanh khoảng cho từng sự
+    # kiện hay không. Sinh dư rồi lọc ở cả hai: một dòng có thể va vào dòng đã
+    # có hoặc tụt xuống dưới 0, nên số lượt sinh luôn nhiều hơn số dòng thêm
+    # được.
+    budget = needed * 8 + 64
+    use_events = bool(payload.event_ranges) and task["type"] == "trake"
+
+    if use_events:
+        # Đổi MỘT mốc mỗi dòng, giữ nguyên phần còn lại của dòng neo.
+        ranges = payload.event_ranges or []
+        reference = anchors[0][1]
+
+        def build(want: int) -> list[list[list[int]]]:
+            out: list[list[list[int]]] = []
+            for _, anchor_frames, _ in anchors:
+                per_event: list[list[int]] = []
+                for position, base in enumerate(anchor_frames):
+                    if position >= len(ranges):
+                        # Sự kiện không được khoanh thì đứng yên. Đoán bừa một
+                        # khoảng cho nó là bịa ra thông tin chưa ai đưa.
+                        per_event.append([])
+                        continue
+                    window = ranges[position]
+                    # Khoảng người dùng gõ là số frame TUYỆT ĐỐI, đọc từ dòng
+                    # neo đầu tiên. Đem nguyên si áp lên dòng neo thứ hai ở một
+                    # video khác thì vô nghĩa — nó từng cho ra [120, 800, ...],
+                    # tức lấy khoảng của video này gán cho hành động của video
+                    # kia. Nên quy về ĐỘ LỆCH quanh mốc gốc rồi mới áp.
+                    origin = (
+                        reference[position]
+                        if position < len(reference)
+                        else base
+                    )
+                    per_event.append(
+                        autofill.event_variants(
+                            base,
+                            base + (window.lo - origin),
+                            base + (window.hi - origin),
+                            window.mode,
+                            want,
+                        )
+                    )
+                out.append(per_event)
+            return out
+
+        # Hạn mức cho TỪNG sự kiện, không phải cho cả lượt.
+        #
+        # Truyền cả `budget` vào đây là sai: nó sinh mọi frame trong khoảng rồi
+        # vòng quay chỉ lấy phần GẦN mốc gốc nhất, cắt mất đúng hai đầu người
+        # dùng vừa khoanh. Chia đều theo số dòng thật sự sẽ tới lượt mỗi sự
+        # kiện thì bộ vị trí phủ trọn khoảng.
+        slots = max(1, len(anchors) * max(1, len(ranges)))
+        quota = -(-needed // slots)
+
+        def events_source():
+            seen: set[tuple[int, int, int]] = set()
+            # Lượt một: đúng mật độ, phủ trọn khoảng.
+            for triple in autofill.trake_plan(build(quota), budget):
+                seen.add(triple)
+                yield triple
+            # Lượt hai: vét nốt nếu lượt một chưa đủ dòng — vài sự kiện có thể
+            # có khoảng quá hẹp và cạn sớm.
+            for triple in autofill.trake_plan(build(budget), budget):
+                if triple not in seen:
+                    yield triple
+
+        source = (
+            (index, list(anchors[index][1]), event, frame)
+            for index, event, frame in events_source()
+        )
+    else:
+        source = (
+            (index, None, -1, delta)
+            for index, delta in autofill.plan(
+                len(anchors), steps, directions, budget
+            )
+        )
+
+    for index, base_frames, event, value in source:
         if added >= needed:
             break
         video_id, anchor_frames, answer_text = anchors[index]
-        # TRAKE giữ nguyên cả bộ và dời đi cùng một lượng, nên khoảng cách giữa
-        # các mốc còn nguyên. Đoán lệch riêng từng mốc là bịa số, mà thang điểm
-        # thì lệch hẳn: sai video là mất trắng, còn sai một mốc chỉ mất 1/N.
-        frames = [f + delta for f in anchor_frames]
+        if base_frames is not None:
+            # Chỉ sự kiện `event` đổi; N−1 mốc kia giữ nguyên của dòng neo.
+            frames = list(base_frames)
+            frames[event] = value
+        else:
+            # Cách cũ: dời cả bộ đi cùng một lượng nên khoảng cách giữa các mốc
+            # còn nguyên. Vẫn đúng khi người dùng tin cả bộ chỉ lệch pha.
+            frames = [f + value for f in anchor_frames]
         key = (video_id, tuple(frames))
         if any(f < 0 for f in frames) or key in taken:
             continue

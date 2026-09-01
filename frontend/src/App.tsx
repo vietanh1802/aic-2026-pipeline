@@ -3,9 +3,6 @@ import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
 import ProjectDescription from "./components/ProjectDescription";
 import QueryInput from "./components/QueryInput";
-import ResultInfoAndSort, {
-  type SortType,
-} from "./components/ResultInfoAndSort";
 import TaskBrief from "./components/TaskBrief";
 import OcrCountBanner from "./components/OcrCountBanner";
 import { useIsQueryStore, useSearchStore } from "./store/useSearchStore";
@@ -15,7 +12,6 @@ import { useHealthStore } from "./store/healthStore";
 import VideoPopup from "./components/VideoPopUp";
 import TemporalSearchPanel from "./components/TemporalSearchPanel";
 import { videoSearchApi } from "./types/api";
-import { formatResultByVideoID } from "./helpers/formatResult.helper";
 import {
   TemporalCandidates,
   TrakeCandidates,
@@ -33,12 +29,9 @@ import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
 import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
-import {
-  saveSearchState,
-  type SearchState,
-  type SearchStateInput,
-} from "./api/searchState";
-import PeerSearchPanel from "./components/PeerSearchPanel";
+import { type SearchState } from "./api/searchState";
+import SearchHistory from "./components/SearchHistory";
+import { recordSearchState } from "./helpers/searchStateRecorder";
 import { usePickedFrameStore } from "./store/pickedFrameStore";
 import type {
   ModelName,
@@ -63,16 +56,22 @@ function App({
   activeTask = null,
   rowsPerQuery = 100,
   onBasketChanged,
+  view = "search",
+  onLeaveHistory,
 }: {
   /** The task claimed on the board, if any. Read-only context for the search. */
   activeTask?: BoardTask | null;
   /** From the round the task belongs to; threaded down to the popup's answer panel. */
   rowsPerQuery?: number;
   onBasketChanged?: () => void;
+  /** "history" thay lưới kết quả bằng bảng lịch sử của câu đang mở. */
+  view?: "search" | "history";
+  /** Quay về màn Search sau khi lấy một truy vấn cũ ra chạy lại. */
+  onLeaveHistory?: () => void;
 } = {}) {
   const results = useSearchStore((state) => state.results);
   const maxDistance = useSearchStore((state) => state.maxDistance);
-  const totalTime = useSearchStore((state) => state.totalTime);
+  const setSummary = useSearchStore((state) => state.setSummary);
   const focusVideos = useSearchStore((state) => state.focusVideos);
   const toggleFocusVideo = useSearchStore((state) => state.toggleFocusVideo);
   const clearFocus = useSearchStore((state) => state.clearFocus);
@@ -82,6 +81,16 @@ function App({
   // lúc đó vẫn giữ giá trị cũ và sẽ chạy sai tham số. Chỉ hai cái dưới đây còn
   // ở lại, vì phần render thật sự đọc chúng.
   const searchType = useQueryStore((state) => state.searchType);
+  /**
+   * Tuyến trả về TỪNG KHUNG ẢNH (ensemble / single / OCR), khác với
+   * temporal/TRAKE trả về từng VIDEO ứng viên.
+   *
+   * Lưới ảnh đọc `useSearchStore.results`, mà temporal/TRAKE không ghi vào đó —
+   * nên chạy TRAKE xong màn hình vẫn còn nguyên lưới ảnh của lượt tìm TRƯỚC,
+   * nằm ngay dưới danh sách ứng viên TRAKE như thể chúng là kết quả của cùng
+   * một lượt.
+   */
+  const isFrameRoute = searchType !== "temporal" && searchType !== "trake";
   // Khung đang được khoanh đỏ trong lưới, và chép từ ai (null nếu tự chọn).
   const pickedFrame = usePickedFrameStore((state) => state.frame);
   const pickedFrom = usePickedFrameStore((state) => state.from);
@@ -90,7 +99,6 @@ function App({
   const [startTime, setStartTime] = useState<number>(0);
   const [frameId, setframeId] = useState<string>("");
 
-  const [sortFrameBy, setSortFrameBy] = useState<SortType>("accuracy");
   const queryText = useQueryStore((state) => state.queryText);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -270,108 +278,14 @@ function App({
     }
   };
 
-  // Đang điền hàng loạt: khoá nút để không bấm hai lần thành hai bộ dòng.
-  const [trakeFilling, setTrakeFilling] = useState(false);
-  const [trakeFilled, setTrakeFilled] = useState<string | null>(null);
-
-  /**
-   * Đổ thẳng cả danh sách ứng viên TRAKE vào giỏ, giữ nguyên thứ hạng.
-   *
-   * Video hạng 1 thành dòng 1, hạng 2 thành dòng 2, cứ thế. Mỗi video là MỘT
-   * dòng mang đủ N mốc mà thuật toán đã chọn.
-   *
-   * Có mặt vì luồng cũ bắt bấm "Chọn ▸" trên từng thẻ, mà mỗi thẻ lại bày ra
-   * một dãy ứng viên cho từng mốc — nhìn vào không biết phải chọn cái nào
-   * trước. Mà trong đa số trường hợp thứ đúng để nộp chính là thứ thuật toán
-   * đã xếp sẵn. Nút này lấy nguyên xếp hạng đó; muốn chỉnh mốc nào thì vẫn
-   * chỉnh sau trên từng thẻ như cũ.
-   *
-   * Gửi TUẦN TỰ, không Promise.all: mỗi lần thêm lấy một sort_key mới dựa trên
-   * dòng cuối hiện có, nên chạy song song thì thứ tự về giỏ là ngẫu nhiên —
-   * đúng cái thứ tự vừa bỏ công giữ.
-   */
-  const fillTrakeFromCandidates = async () => {
-    if (!activeTask || trakeFilling) {
-      return;
-    }
-    setTrakeFilling(true);
-    let added = 0;
-    let skipped = 0;
-    try {
-      for (const candidate of trakeCandidates) {
-        const frames = (candidate.events ?? []).map((event) => event.frame_idx);
-        // Một dòng thiếu mốc là một dòng SAI, không phải một dòng chưa xong:
-        // TRAKE chấm cả bộ, nên bỏ qua còn hơn nộp thiếu.
-        if (
-          frames.length === 0 ||
-          frames.some((frame) => typeof frame !== "number")
-        ) {
-          skipped += 1;
-          continue;
-        }
-        await addAnswer(activeTask.id, {
-          video_id: candidate.video ?? "",
-          frames: frames as number[],
-        });
-        added += 1;
-      }
-      onBasketChanged?.();
-      setTrakeFilled(
-        `Đã thêm ${added} dòng vào giỏ theo đúng thứ hạng` +
-          (skipped ? `, bỏ qua ${skipped} video thiếu mốc.` : ".")
-      );
-    } catch (err) {
-      console.error("Không điền được danh sách TRAKE:", err);
-      setTrakeFilled(`Dừng ở dòng ${added + 1} — xem console.`);
-    } finally {
-      setTrakeFilling(false);
-    }
-  };
-
-  /**
-   * Trạng thái hiện tại, đóng gói để gửi đi.
-   *
-   * Đọc thẳng từ store chứ không dùng các const ở đầu component: hàm này được
-   * gọi ngay sau khi áp truy vấn của người khác vào store, mà lúc đó closure
-   * vẫn còn giữ giá trị cũ.
-   */
-  const currentStateInput = (picked?: {
-    name: string;
-    video: string;
-    frameIdx: number;
-  }): SearchStateInput => {
-    const q = useQueryStore.getState();
-    return {
-      query_text: q.queryText,
-      search_type: q.searchType,
-      params: {
-        resultLimit: q.resultLimit,
-        topM: q.topM,
-        useRerank: q.useRerank,
-        singleModel: q.singleModel,
-        ocrStripDiacritics: q.ocrStripDiacritics,
-      },
-      picked_frame: picked?.name ?? null,
-      picked_video: picked?.video ?? null,
-      picked_frame_idx: picked?.frameIdx ?? null,
-    };
-  };
-
-  // Gửi đi rồi quên. Không chờ, không báo lỗi: mất một lần ghi trạng thái thì
-  // đồng đội thấy truy vấn cũ hơn vài giây, còn chặn ô search lại vì nó thì
-  // hỏng đúng việc chính.
+  // Ghi trạng thái tìm. Thân hàm nằm ở helpers/searchStateRecorder vì màn
+  // popup video cũng phải gọi nó — chốt khung sau khi tua tới lui là một lần
+  // "tìm ra" y như bấm thẳng trên thẻ, mà đường đó nằm ở cây component khác.
   const recordState = (picked?: {
-    name: string;
+    name?: string | null;
     video: string;
     frameIdx: number;
-  }) => {
-    if (!activeTask) {
-      return;
-    }
-    void saveSearchState(activeTask.id, currentStateInput(picked)).catch(
-      () => undefined
-    );
-  };
+  }) => recordSearchState(activeTask?.id, picked);
 
   /**
    * @param options.record false khi lần chạy này là để XEM LẠI bài người khác.
@@ -402,6 +316,12 @@ function App({
       ocrStripDiacritics,
     } = useQueryStore.getState();
     setIsLoading(true);
+    // Đồng hồ cho hai tuyến temporal/TRAKE: backend chỉ trả processing_time ở
+    // các tuyến ảnh, nên ở đó đo bằng đồng hồ trình duyệt (có tính cả thời gian
+    // truyền, chênh không đáng kể so với vài giây chạy DP).
+    const startedAt = performance.now();
+    const elapsed = () => (performance.now() - startedAt) / 1000;
+    setSummary(null);
     try {
       if (searchType === "temporal") {
         // topVideos: mặc định 5 quá ít khi video ứng viên trùng lặp/gần
@@ -418,6 +338,11 @@ function App({
         } else {
           setTemporalCandidates(res.results ?? []);
         }
+        setSummary({
+          count: res.error ? 0 : (res.results ?? []).length,
+          unit: "videos",
+          seconds: elapsed(),
+        });
         return;
       }
       if (searchType === "trake") {
@@ -427,15 +352,17 @@ function App({
         const res = await videoSearchApi.trakeSearchText(queryText, {
           topVideos: 20,
         });
-        // Xoá thông báo của lượt điền trước: giữ lại thì sau khi search câu
-        // khác vẫn thấy "Đã thêm 20 dòng" và tưởng lượt này đã điền rồi.
-        setTrakeFilled(null);
         if (res.error) {
           console.error("TRAKE search text error:", res.error);
           setTrakeCandidates([]);
         } else {
           setTrakeCandidates(res.results ?? []);
         }
+        setSummary({
+          count: res.error ? 0 : (res.results ?? []).length,
+          unit: "videos",
+          seconds: elapsed(),
+        });
         return;
       }
 
@@ -455,6 +382,11 @@ function App({
           phrase: res.phrase_matches,
           allWords: res.all_word_matches,
           searched: res.searched_frames,
+        });
+        setSummary({
+          count: res.results.length,
+          unit: "frames",
+          seconds: res.processing_time,
         });
         return;
       }
@@ -477,6 +409,11 @@ function App({
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
+      setSummary({
+        count: response.results.length,
+        unit: "frames",
+        seconds: response.processing_time,
+      });
       // Backend không còn demo_mode (đã bỏ chế độ sinh dữ liệu giả); thay bằng
       // has_image để biết bộ ảnh trên máy đã phủ hết kết quả chưa.
       const missing = response.results.filter(
@@ -603,14 +540,27 @@ function App({
   // preprocess.py:_split_query_text.
   const queryParts = splitQueryParts(queryText);
 
-  const [groupedResult, setgroupedResult] = useState<
-    Record<string, SearchResult[]>
-  >({});
+
+  // Esc đóng lớp lịch sử. Đăng ký ở đây chứ không trong SearchHistory: lớp phủ
+  // do component này dựng, nên nó cũng phải là chỗ gỡ.
   useEffect(() => {
-    if (sortFrameBy == "video_id" && shownResults) {
-      setgroupedResult(formatResultByVideoID(visibleResults));
+    if (view !== "history") {
+      return;
     }
-  }, [sortFrameBy, visibleResults]);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onLeaveHistory?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, onLeaveHistory]);
+
+  const openVideoAt = (videoId: string, frameIdx: number) => {
+    setframeId(String(frameIdx));
+    setVideoUrl(videoId);
+    setStartTime(startMsAt(videoId, frameIdx));
+    setTrakeSlot(null);
+    setShowPopup(true);
+  };
 
   return (
     <div className="relative min-h-screen bg-proto-canvas p-2">
@@ -626,22 +576,10 @@ function App({
           Pin lên đỉnh khung nhìn: cuộn qua cả trăm kết quả vẫn còn thấy đề. */}
       {activeTask && <TaskBrief task={activeTask} />}
 
-      {/* Ai đang tìm câu này bằng truy vấn gì. Đặt ngay dưới đề bài: đọc đề
-          xong, thứ tiếp theo đáng biết là người bên cạnh đã thử gì rồi — trước
-          khi gõ lại đúng câu đó. Tự ẩn khi chưa ai khác đụng vào câu này. */}
-      {activeTask && (
-        <PeerSearchPanel
-          taskId={activeTask.id}
-          onOpenState={applyPeerState}
-          onOpenVideo={(videoId, frameIdx) => {
-            setframeId(String(frameIdx));
-            setVideoUrl(videoId);
-            setStartTime(startMsAt(videoId, frameIdx));
-            setTrakeSlot(null);
-            setShowPopup(true);
-          }}
-        />
-      )}
+      {/* Bảng "Cả nhóm đang tìm câu này" đã bỏ. Nó chỉ hiện truy vấn ĐANG gõ
+          của từng người, mà bảng Lịch sử trên thanh nav hiện đúng những dòng
+          đó cộng thêm mọi truy vấn cũ — hai bảng chồng nhau, bảng ở đây lại
+          ngốn một khối ngay dưới đề bài, đúng chỗ hàng kết quả đầu tiên. */}
 
       {/* Project Description (only when no results) */}
       {!hasQueried && !activeTask && (
@@ -694,7 +632,7 @@ function App({
         />
       )}
 
-      {focusVideos.length > 0 && (
+      {isFrameRoute && focusVideos.length > 0 && (
         <div className="max-w-[98%] mx-auto mb-2 flex flex-wrap items-center gap-1.5 font-baloo">
           <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
             Đang soi
@@ -725,50 +663,23 @@ function App({
         </div>
       )}
 
-      {/* ResultInfoAndSort describes the results, so it sits directly above
-          the results grid it describes rather than up in the header row —
-          it used to crowd the logo/version badge there and wrap onto a
-          second line. Condition is `hasQueried` alone (not sortFrameBy or
-          searchType) so it shows for every search type, exactly as before. */}
       {hasQueried && searchType === "ocr" && ocrCounts && (
         <div className="max-w-[98%] mx-auto mb-2">
           <OcrCountBanner counts={ocrCounts} shown={results.length} />
         </div>
       )}
 
-      {hasQueried && (
-        <div className="max-w-[98%] mx-auto mb-2">
-          <ResultInfoAndSort
-            numberOfResults={
-              searchType === "temporal"
-                ? temporalCandidates.length
-                : searchType === "trake"
-                ? trakeCandidates.length
-                : results.length
-            }
-            sortBy={sortFrameBy}
-            totalTime={totalTime}
-            onSortChange={(option) => setSortFrameBy(option)}
-            unit={
-              searchType === "temporal" || searchType === "trake"
-                ? "videos"
-                : "frames"
-            }
-            queryParts={queryParts.length}
-            filtered={
-              focusVideos.length > 0
-                ? { shown: shownResults.length, total: results.length }
-                : undefined
-            }
-          />
-        </div>
-      )}
+      {/* Dòng "50 kết quả · 1.8s" đã lên thanh điều hướng. Ở đây nó là một
+          khung riêng cao 40px nằm giữa đề bài và lưới ảnh, đẩy hàng kết quả
+          đầu tiên xuống mà chỉ để nói hai con số. Thanh nav đọc thẳng từ
+          useSearchStore nên không phải luồn state lên. */}
+
 
       {/* Tuyến OCR đọc CHỮ chứ không nhìn ảnh, nên thẻ phải rộng hơn: 240px
           vừa đủ cho ảnh nhưng không đủ cho một đoạn chữ. 360px cho khoảng gấp
           rưỡi số chữ trên mỗi dòng, mà vẫn còn 3-4 cột trên màn hình thường.
           Tuyến ảnh giữ nguyên 240px — ở đó chữ chỉ là tên file với timestamp. */}
-      {(isLoading || (hasQueried && sortFrameBy == "accuracy")) && (
+      {isFrameRoute && (isLoading || hasQueried) && (
         <div
           className={`max-w-[98%] mx-auto grid gap-6 ${
             searchType === "ocr"
@@ -788,6 +699,12 @@ function App({
             }
             onToggleFocus={toggleFocusVideo}
             focusVideos={focusVideos}
+            // Khung bạn (hoặc người bạn đang coi) đã bấm vào. Trước đây hai
+            // dòng này chỉ có ở lưới "nhóm theo Video ID", nên ở chế độ mặc
+            // định không thẻ nào được khoanh - đó là lý do vòng đỏ "không thấy
+            // đâu". Lưới kia bỏ rồi, nên chúng về đúng chỗ duy nhất còn lại.
+            highlightFrame={pickedFrame ?? undefined}
+            highlightLabel={pickedFrom ?? undefined}
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
@@ -802,7 +719,7 @@ function App({
           the same on click, so this still works if IntersectionObserver never
           fires. Both views read `visibleResults`, so the grouped list is
           bounded too. */}
-      {hasQueried && !isLoading && hasMore && (
+      {isFrameRoute && hasQueried && !isLoading && hasMore && (
         <div
           ref={moreRef}
           className="max-w-[98%] mx-auto mt-6 flex items-center justify-center"
@@ -818,83 +735,13 @@ function App({
       )}
       <div className="mb-[280px]" />
 
-      {(isLoading || (hasQueried && sortFrameBy == "video_id")) && (
-        <div className="mb-[280px]">
-          {Object.entries(groupedResult).map(([key, items]) => (
-            <div
-              key={key}
-              className="border border-proto-line bg-white m-[15px] mb-[30px] p-[10px] py-[20px] rounded-[8px] flex flex-col"
-            >
-              <div className="pl-[14px] mb-[12px] flex items-center text-lg">
-                <span className="font-bold">Video ID :</span>
-                <span className="ml-[10px]">{key}</span>
-                <button
-                  type="button"
-                  title={
-                    focusVideos.includes(key)
-                      ? "Bỏ lọc video này"
-                      : "Chỉ xem video này"
-                  }
-                  onClick={() => toggleFocusVideo(key)}
-                  className={`ml-2 flex h-10 w-10 items-center justify-center rounded-[6px] border-2 ${
-                    focusVideos.includes(key)
-                      ? "bg-proto-primary border-proto-primary"
-                      : "bg-proto-soft border-proto-line"
-                  }`}
-                >
-                  🎯
-                </button>
-              </div>
-              <div
-                className={`max-w-[98%] mx-auto grid gap-6 ${
-                  searchType === "ocr"
-                    ? "grid-cols-[repeat(auto-fill,minmax(360px,1fr))]"
-                    : "grid-cols-[repeat(auto-fill,minmax(240px,1fr))]"
-                }`}
-              >
-                <FrameDisplay
-                  results={items}
-                  maxDistance={maxDistance}
-                  isLoading={isLoading}
-                  onUseAsAnchor={handleUseAsAnchor}
-                  onAddToBasket={
-              activeTask && activeTask.type !== "trake"
-                ? handleAddToBasket
-                : undefined
-            }
-                  onToggleFocus={toggleFocusVideo}
-                  focusVideos={focusVideos}
-                  // Khung bạn đang chọn. FrameDisplay khoanh đỏ đúng thẻ
-                  // này; undefined khi chưa chọn gì thì không thẻ nào được
-                  // khoanh.
-                  highlightFrame={pickedFrame ?? undefined}
-                  highlightLabel={pickedFrom ?? undefined}
-                  onClick={(result) => {
-                    const video = videoIdFromFrame(result.frame);
-                    const frameIdx = frameIndexFromResult(result);
-                    setframeId(frameIdFromName(result.name));
-                    setVideoUrl(video);
-                    setStartTime(startMsFromResult(result));
-                    setShowPopup(true);
-                    // Bấm vào một khung là hành động đáng lưu nhất trong cả
-                    // lượt tìm: nó nói người này CHỌN khung nào, chứ không chỉ
-                    // gõ gì. Đây là thứ được khoanh đỏ, và là thứ đồng đội thấy
-                    // khi họ lấy trạng thái của bạn.
-                    recordState({
-                      name: result.name,
-                      video,
-                      frameIdx,
-                    });
-                    // Khoanh chuyển sang khung vừa bấm, và không còn "chép từ
-                    // ai" nữa vì đây là lựa chọn của chính mình.
-                    usePickedFrameStore.getState().set(result.name);
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Lưới "nhóm theo Video ID" đã bỏ cùng với ô Sorted By.
+
+          Nó dựng lại toàn bộ lưới một lần nữa, chỉ khác là bọc mỗi video trong
+          một khung riêng — gần hai trăm dòng JSX gần như trùng lặp, cho một
+          cách sắp xếp mà thứ tự theo độ khớp vốn đã tốt hơn: R@k chấm k dòng
+          đầu, mà nhóm theo video thì đẩy kết quả tốt nhất xuống giữa danh
+          sách. Nút 🎯 trên từng thẻ vẫn lọc theo video như cũ. */}
 
       {/* Temporal Search Results — Alg.4 text-query path */}
       {(isLoading || (hasQueried && searchType === "temporal")) && (
@@ -928,35 +775,13 @@ function App({
             <p className="text-sm text-proto-muted">Không tìm thấy kết quả.</p>
           ) : (
             <>
-              {/* Đường đi mặc định cho TRAKE, đặt TRƯỚC danh sách.
-                  Luồng cũ chỉ có nút "Chọn ▸" trên từng thẻ, mà mỗi thẻ lại
-                  bày dãy ứng viên cho từng mốc — mở ra không biết bấm gì
-                  trước. Nút này nhận nguyên xếp hạng thuật toán đưa; ai muốn
-                  chỉnh mốc thì vẫn chỉnh trên từng thẻ bên dưới như cũ. */}
-              {activeTask?.type === "trake" && (
-                <div className="flex items-center gap-3 flex-wrap mb-3 px-3 py-2 rounded-[10px] border border-proto-primary bg-white">
-                  <button
-                    type="button"
-                    disabled={trakeFilling}
-                    onClick={() => void fillTrakeFromCandidates()}
-                    className="text-[13px] font-bold px-3 py-1.5 rounded-[8px] bg-proto-primary text-white disabled:opacity-50"
-                  >
-                    {trakeFilling
-                      ? "Đang điền…"
-                      : `Điền ${trakeCandidates.length} video vào giỏ`}
-                  </button>
-                  <span className="text-[12.5px] text-proto-body">
-                    Video hạng 1 thành dòng 1, hạng 2 thành dòng 2… mỗi video
-                    một dòng đủ {queryParts.length || activeTask.n_events || 0}{" "}
-                    mốc.
-                  </span>
-                  {trakeFilled && (
-                    <span className="text-[12.5px] text-[#3d7a4d] font-semibold ml-auto">
-                      {trakeFilled}
-                    </span>
-                  )}
-                </div>
-              )}
+              {/* Nút "Điền N video vào giỏ" đã bỏ. Nó đổ thẳng cả danh
+                  sách ứng viên vào giỏ theo đúng thứ hạng thuật toán, nhưng
+                  TRAKE chấm theo TỪNG mốc — một dòng sai video là mất trắng cả
+                  dòng, mà đổ hàng loạt thì hai chục dòng đầu đều là hai chục
+                  video khác nhau, không dòng nào được soi trước khi nộp. Chốt
+                  từng dòng bằng nút trên mỗi thẻ, rồi rải các dòng còn lại
+                  bằng "+ Điền tự động" trong giỏ. */}
               <TrakeCandidates
                 results={trakeCandidates}
                 parts={queryParts}
@@ -970,6 +795,48 @@ function App({
               />
             </>
           )}
+        </div>
+      )}
+
+      {/* Lịch sử tìm — một lớp CHỒNG LÊN màn Search, không phải một trang
+          thay thế nó.
+
+          Trang riêng thì bấm vào là mất hết kết quả đang xem, mà lịch sử là
+          thứ người ta liếc qua để quyết định "có nên thử lại câu này không" —
+          quyết định đó dựa vào chính đám kết quả đang có. Đóng lớp này ra là
+          thấy lại nguyên trạng, không phải search lại.
+
+          Bấm nền tối hoặc phím Esc cũng đóng, vì một hộp chỉ đóng được bằng
+          đúng một nút ở góc là thứ hay làm người ta mắc kẹt. */}
+      {view === "history" && activeTask && (
+        <div
+          className="fixed inset-0 z-[999] bg-black/40 flex items-start justify-center p-4 pt-16"
+          onClick={() => onLeaveHistory?.()}
+        >
+          <div
+            className="bg-proto-canvas rounded-xl shadow-2xl w-full max-w-5xl max-h-[85vh] overflow-y-auto font-baloo relative"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => onLeaveHistory?.()}
+              title="Đóng (Esc)"
+              className="absolute top-3 right-3 z-10 flex h-9 w-9 items-center justify-center rounded-full text-[#c64545] hover:bg-[#c64545]/15 font-bold text-lg"
+            >
+              ×
+            </button>
+            <SearchHistory
+              taskId={activeTask.id}
+              taskCode={activeTask.code}
+              onOpenState={(state) => {
+                applyPeerState(state);
+                // Chạy lại xong thì kết quả nằm ở lưới phía sau, nên đóng lớp
+                // này ra cho thấy.
+                onLeaveHistory?.();
+              }}
+              onOpenVideo={openVideoAt}
+            />
+          </div>
         </div>
       )}
 

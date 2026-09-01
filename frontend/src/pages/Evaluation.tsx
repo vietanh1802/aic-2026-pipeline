@@ -11,7 +11,6 @@ import {
   type BoardTask,
   type Person,
 } from "../api/board";
-import AuditLog from "../components/AuditLog";
 import Button from "../components/Button";
 import FramePreview from "../components/FramePreview";
 import { startMsAt } from "../helpers/frameIdentity";
@@ -26,8 +25,8 @@ interface AuthorGroup {
   answers: AnswerRowLite[];
 }
 
-/** The row the pointer is on, and whose column it belongs to. */
-interface Hovered {
+/** Dòng đang được mở xem, và nó thuộc cột của ai. */
+interface Picked {
   authorId: number;
   row: AnswerRowLite;
   /**
@@ -41,21 +40,11 @@ interface Hovered {
 }
 
 /**
- * How long the pointer must rest on a row before the player follows it.
- *
- * Without this, dragging the pointer down a hundred rows fires a hundred src
- * changes, and every one of them is a video the browser starts fetching. The
- * delay is short enough to feel immediate on the row you meant and long enough
- * that rows you swept past are never loaded at all.
- */
-const HOVER_SETTLE_MS = 180;
-
-/**
  * So sánh bài của cả nhóm cho một câu, rồi chọn bài để nộp.
  *
  * Khác Export ở chỗ: Export chỉ cho xem trước file sẽ nộp, còn đây là chỗ ngồi
- * đọ bài. Mỗi người một cột, đặt cạnh nhau, trỏ vào dòng nào thì video chạy
- * đúng đoạn của dòng đó.
+ * đọ bài. Mỗi người một cột, đặt cạnh nhau, bấm vào dòng nào thì khung ảnh và
+ * đoạn video của dòng đó hiện lên ở trên.
  *
  * Không có nút xoá sạch. Ai cũng sửa được bài của CHÍNH MÌNH — kéo đổi thứ tự,
  * xoá từng dòng — và không đụng được vào bài của người khác. Ranh giới đó do
@@ -73,24 +62,15 @@ export default function EvaluationPage() {
   const [error, setError] = useState<string | null>(null);
   const [briefExpanded, setBriefExpanded] = useState(false);
 
-  // Dòng đang trỏ tới. `pending` là dòng vừa chạm, `hovered` là dòng đã đứng
-  // yên đủ lâu để video chạy theo — tách ra để cái viền sáng bám chuột ngay
-  // trong khi video thì không bị giật.
-  const [pending, setPending] = useState<Hovered | null>(null);
-  const [hovered, setHovered] = useState<Hovered | null>(null);
-
   /**
-   * Bấm vào một mốc — video nhảy TỨC THÌ, không qua độ trễ 180ms.
+   * Dòng đang mở, do BẤM mà ra — không phải do con trỏ đi ngang.
    *
-   * Rê chuột là để lướt qua nhiều mốc mà không kéo video theo từng cái; bấm là
-   * một quyết định, và bắt nó chờ thêm 180ms chỉ khiến thao tác trông đơ. Ghi
-   * cả `pending` để khi thả chuột ra hiệu ứng viền sáng vẫn ở đúng mốc vừa bấm
-   * chứ không nhảy về mốc con trỏ tình cờ đi ngang.
+   * Cách cũ chạy theo `onMouseEnter` với độ trễ 180ms. Con trỏ đi từ cột này
+   * sang cột kia là quét qua cả chục dòng, mỗi lần dừng lại quá 180ms là một
+   * video mới được tải và bắt đầu chạy — chưa kể chỉ nhích chuột lúc đọc cũng
+   * làm khung bên trên đổi mất thứ đang xem.
    */
-  const pickFrame = (target: Hovered) => {
-    setPending(target);
-    setHovered(target);
-  };
+  const [picked, setPicked] = useState<Picked | null>(null);
 
   // Kéo thả trong cột của mình: dòng đang cầm và chỗ sắp thả.
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -149,43 +129,32 @@ export default function EvaluationPage() {
     setTaskId(id);
     setGroups(null);
     setBriefExpanded(false);
-    setPending(null);
-    setHovered(null);
+    setPicked(null);
     void load(id);
   };
-
-  // Chỉ đổi video khi con trỏ đã dừng lại. Dọn hẹn giờ khi đổi dòng, nếu
-  // không thì dòng lướt qua vẫn nổ ra sau đúng HOVER_SETTLE_MS.
-  useEffect(() => {
-    if (!pending) {
-      return;
-    }
-    const timer = window.setTimeout(() => setHovered(pending), HOVER_SETTLE_MS);
-    return () => window.clearTimeout(timer);
-  }, [pending]);
 
   // Video khác thì phải đổi `src` — chính việc đổi src mới khiến trình duyệt
   // tải file mới. Cùng một video thì chỉ cần đẩy currentTime, không đụng src
   // nên khung hình không chớp và không phải tải lại.
   useEffect(() => {
-    if (!hovered) {
+    if (!picked) {
       return;
     }
     const seconds =
       startMsAt(
-        hovered.row.video_id,
-        hovered.row.frames[hovered.frameAt] ?? 0
+        picked.row.video_id,
+        picked.row.frames[picked.frameAt] ?? 0
       ) / 1000;
-    if (hovered.row.video_id !== activeVideoId) {
-      setActiveVideoId(hovered.row.video_id);
-      setVideoSrc(videoUrlAt(hovered.row.video_id, seconds));
+    if (picked.row.video_id !== activeVideoId) {
+      setActiveVideoId(picked.row.video_id);
+      setVideoSrc(videoUrlAt(picked.row.video_id, seconds));
       return;
     }
     const element = videoRef.current;
     if (element) {
       element.currentTime = seconds;
     }
-  }, [hovered, activeVideoId]);
+  }, [picked, activeVideoId]);
 
   const act = async (fn: () => Promise<unknown>) => {
     if (taskId === null) return;
@@ -246,7 +215,7 @@ export default function EvaluationPage() {
           {board?.round?.label}
         </span>
         <span className="text-sm text-proto-muted ml-auto">
-          Trỏ vào một dòng để xem đoạn video của dòng đó
+          Bấm vào một dòng để xem khung ảnh và đoạn video của dòng đó
         </span>
       </div>
 
@@ -299,10 +268,12 @@ export default function EvaluationPage() {
               `-mx-6 px-6` kéo nền ra sát mép trong của khung `p-6` bên ngoài,
               nếu không thì các dòng bên dưới sẽ lộ ra ở hai bên khi trượt qua.
               z-20 đủ để nằm trên lưới bài mà vẫn dưới popup video. */}
-          {/* Hai cột BẰNG NHAU. Trước là `[1fr_520px]`: đề bài nuốt hết chỗ
-              thừa nên trên màn rộng nó dài gấp đôi khung video, trong khi đề
-              bài chỉ có vài dòng còn video mới là thứ cần to. */}
-          <div className="sticky top-0 z-20 bg-proto-canvas -mx-6 px-6 pt-1 pb-3 grid md:grid-cols-2 gap-4 items-start">
+          {/* 40 / 60, nghiêng về phía video. Đề bài là vài dòng chữ đọc một
+              lần rồi thôi, còn khung bên phải phải chứa CẢ video lẫn ảnh
+              keyframe cạnh nhau — chia đôi thì mỗi thứ chỉ còn một phần tư
+              chiều ngang trang, nhỏ tới mức không soi được chi tiết.
+              Trước đó là `[1fr_520px]`, khi ấy đề bài còn nuốt hết chỗ thừa. */}
+          <div className="sticky top-[var(--nav-h)] z-20 bg-proto-canvas -mx-6 px-6 pt-1 pb-3 grid md:grid-cols-[2fr_3fr] gap-4 items-start">
             <div className="border border-proto-line rounded-[10px] bg-white p-3">
               <div className="flex items-center gap-2 mb-1">
                 <b className="font-mono text-proto-ink">{task.code}</b>
@@ -329,37 +300,64 @@ export default function EvaluationPage() {
             </div>
 
             <div className="border border-proto-line rounded-[10px] bg-white p-3">
-              {hovered ? (
+              {picked ? (
                 videoSrc ? (
                   <>
-                    <video
-                      ref={videoRef}
-                      key={activeVideoId}
-                      src={videoSrc}
-                      controls
-                      autoPlay
-                      muted
-                      preload="metadata"
-                      className="rounded-[8px] w-full h-[260px] object-contain bg-black"
-                      onLoadedMetadata={(event) => {
-                        event.currentTarget.currentTime =
-                          startMsAt(
-                            hovered.row.video_id,
-                            hovered.row.frames[hovered.frameAt] ?? 0
-                          ) / 1000;
-                      }}
-                    />
+                    {/* Video BÊN CẠNH khung ảnh, không phải thay cho nó.
+                        Video chạy tới một mốc thời gian tính từ số frame và
+                        fps, nên nó chỉ ở GẦN đúng chỗ; còn ảnh keyframe là
+                        đúng cái người kia đã chọn. Đối chiếu hai bài mà chỉ có
+                        video thì phải bấm dừng, dò tới lui rồi mới so được. */}
+                    <div className="flex gap-2 items-start">
+                      <video
+                        ref={videoRef}
+                        key={activeVideoId}
+                        src={videoSrc}
+                        controls
+                        autoPlay
+                        muted
+                        preload="metadata"
+                        // 300 chứ không 260: object-contain giới hạn theo cạnh
+                        // ngắn hơn, nên ở khung rộng 60% mà chiều cao vẫn 260
+                        // thì khung hình không to thêm một điểm ảnh nào, chỉ
+                        // thêm hai dải đen hai bên. 300 đủ để video chạm mép
+                        // ngang.
+                        className="rounded-[8px] flex-1 min-w-0 h-[300px] object-contain bg-black"
+                        onLoadedMetadata={(event) => {
+                          event.currentTarget.currentTime =
+                            startMsAt(
+                              picked.row.video_id,
+                              picked.row.frames[picked.frameAt] ?? 0
+                            ) / 1000;
+                        }}
+                      />
+                      <div className="w-[36%] shrink-0">
+                        {/* aspect-video chứ không phải chiều cao cố định:
+                            FramePreview cắt ảnh theo khung (object-cover), nên
+                            khung sai tỉ lệ sẽ cắt mất hai mép. */}
+                        <span className="block w-full aspect-video">
+                          <FramePreview
+                            videoId={picked.row.video_id}
+                            frameIdx={picked.row.frames[picked.frameAt] ?? 0}
+                            size="fill"
+                          />
+                        </span>
+                        <span className="block text-[10px] font-mono text-proto-muted mt-0.5 text-center">
+                          khung đã chọn
+                        </span>
+                      </div>
+                    </div>
                     <div className="text-xs font-mono text-proto-ink mt-1 flex gap-2 items-center">
                       <b>
-                        {groups?.find((g) => g.author.id === hovered.authorId)
+                        {groups?.find((g) => g.author.id === picked.authorId)
                           ?.author.display_name ?? "—"}
                       </b>
                       <span className="text-proto-muted">
-                        #{hovered.row.rank}
+                        #{picked.row.rank}
                       </span>
-                      <span>{hovered.row.video_id}</span>
+                      <span>{picked.row.video_id}</span>
                       <span className="text-proto-muted ml-auto">
-                        frame {hovered.row.frames[hovered.frameAt] ?? 0}
+                        frame {picked.row.frames[picked.frameAt] ?? 0}
                       </span>
                     </div>
 
@@ -367,28 +365,21 @@ export default function EvaluationPage() {
                         thì video nhảy tới mốc đó — chấm TRAKE là chấm cả bốn,
                         nên xem được một mốc rồi đoán ba mốc kia là vô nghĩa.
                         Ảnh to hơn ảnh trong cột vì đây là chỗ để NHÌN. */}
-                    {task.type === "trake" && hovered.row.frames.length > 1 && (
+                    {task.type === "trake" && picked.row.frames.length > 1 && (
                       <div className="flex gap-1.5 mt-2">
-                        {hovered.row.frames.map((frame, at) => (
+                        {picked.row.frames.map((frame, at) => (
                           <button
                             key={at}
                             type="button"
-                            onMouseEnter={() =>
-                              setPending({
-                                authorId: hovered.authorId,
-                                row: hovered.row,
-                                frameAt: at,
-                              })
-                            }
                             onClick={() =>
-                              pickFrame({
-                                authorId: hovered.authorId,
-                                row: hovered.row,
+                              setPicked({
+                                authorId: picked.authorId,
+                                row: picked.row,
                                 frameAt: at,
                               })
                             }
                             className={`flex-1 min-w-0 rounded-[6px] overflow-hidden border-2 cursor-pointer ${
-                              at === hovered.frameAt
+                              at === picked.frameAt
                                 ? "border-proto-primary-active"
                                 : "border-transparent hover:border-proto-line"
                             }`}
@@ -401,7 +392,7 @@ export default function EvaluationPage() {
                                 cao tự động thì ảnh sập xuống 0. */}
                             <span className="block w-full h-[72px]">
                               <FramePreview
-                                videoId={hovered.row.video_id}
+                                videoId={picked.row.video_id}
                                 frameIdx={frame}
                                 size="fill"
                               />
@@ -423,7 +414,7 @@ export default function EvaluationPage() {
                           Đáp án
                         </span>
                         <span className="text-[15px] text-proto-ink break-words">
-                          {hovered.row.answer_text?.trim() || (
+                          {picked.row.answer_text?.trim() || (
                             <i className="text-proto-line text-[13px]">
                               chưa điền đáp án
                             </i>
@@ -438,10 +429,10 @@ export default function EvaluationPage() {
                   </p>
                 )
               ) : (
-                <div className="rounded-[8px] w-full h-[260px] bg-proto-dark flex items-center justify-center">
+                <div className="rounded-[8px] w-full h-[300px] bg-proto-dark flex items-center justify-center">
                   <span className="text-[11px] text-neutral-400 px-4 text-center">
-                    Trỏ chuột vào một dòng bên dưới để xem đoạn video người đó
-                    chọn.
+                    Bấm vào một dòng bên dưới để xem khung ảnh và đoạn video
+                    người đó chọn.
                   </span>
                 </div>
               )}
@@ -578,17 +569,24 @@ export default function EvaluationPage() {
                             setDragIndex(null);
                             setOverIndex(null);
                           }}
-                          onMouseEnter={() =>
-                            setPending({
+                          onClick={(event) => {
+                            // Bấm vào nút xoá hay ô đáp án thì không phải là
+                            // "mở dòng này ra xem" — cùng cái bảo vệ mà
+                            // onDragStart đang dùng.
+                            const element = event.target as HTMLElement;
+                            if (element.closest("button,input,textarea")) {
+                              return;
+                            }
+                            setPicked({
                               authorId: group.author.id,
                               row,
                               frameAt: 0,
-                            })
-                          }
-                          className={`flex flex-col gap-0.5 px-1.5 py-1 mb-0.5 rounded-[6px] border text-[11.5px] ${
+                            });
+                          }}
+                          className={`cursor-pointer flex flex-col gap-0.5 px-1.5 py-1 mb-0.5 rounded-[6px] border text-[11.5px] ${
                             isMine ? "cursor-grab active:cursor-grabbing" : ""
                           } ${
-                            hovered?.row.id === row.id
+                            picked?.row.id === row.id
                               ? "border-proto-primary-active bg-proto-primary/10"
                               : "border-transparent hover:bg-proto-soft"
                           } ${dragIndex === index && isMine ? "opacity-40" : ""} ${
@@ -651,18 +649,12 @@ export default function EvaluationPage() {
                                 <button
                                   key={at}
                                   type="button"
-                                  onMouseEnter={() =>
-                                    setPending({
-                                      authorId: group.author.id,
-                                      row,
-                                      frameAt: at,
-                                    })
-                                  }
                                   onClick={(event) => {
-                                    // Dòng cha kéo thả được; không chặn thì cú
-                                    // bấm này cũng chạy luôn handler của dòng.
+                                    // Dòng cha cũng bắt click; không chặn thì
+                                    // handler của dòng chạy sau và kéo mốc về
+                                    // E1, đúng cái mốc vừa cố tình bỏ qua.
                                     event.stopPropagation();
-                                    pickFrame({
+                                    setPicked({
                                       authorId: group.author.id,
                                       row,
                                       frameAt: at,
@@ -672,8 +664,8 @@ export default function EvaluationPage() {
                                     task.event_labels[at] ?? `Mốc ${at + 1}`
                                   } — bấm để nhảy tới frame ${frame}`}
                                   className={`flex-1 min-w-0 rounded-[4px] overflow-hidden border cursor-pointer ${
-                                    hovered?.row.id === row.id &&
-                                    hovered.frameAt === at
+                                    picked?.row.id === row.id &&
+                                    picked.frameAt === at
                                       ? "border-proto-primary-active"
                                       : "border-transparent hover:border-proto-line"
                                   }`}
@@ -753,10 +745,10 @@ export default function EvaluationPage() {
         </>
       )}
 
-      {/* Nhật ký, gộp từ tab con của màn "Vòng" cũ. Ở đúng chỗ: người ta đối
-          chiếu bài, thấy thiếu dòng, và câu hỏi tiếp theo bao giờ cũng là "ai
-          xoá?". Chỉ admin, vì endpoint /api/admin/audit chặn ở backend. */}
-      {me?.role === "admin" && <AuditLog />}
+      {/* Nhật ký đã bỏ khỏi màn này. Nó liệt kê thao tác quản trị — nhập gói,
+          kích hoạt, xoá — trong khi chỗ này là nơi đọ bài. Thứ người ta thật
+          sự cần lần lại ở đây là LỊCH SỬ TÌM KIẾM, và cái đó nằm trong bảng
+          "Cả nhóm đang tìm câu này" ở màn Search. */}
     </div>
   );
 }

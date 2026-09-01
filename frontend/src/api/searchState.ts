@@ -53,3 +53,23 @@ export function listSearchStates(
 ): Promise<{ states: SearchState[] }> {
   return apiFetch(`/api/tasks/${taskId}/search-states`);
 }
+
+/** Một mục lịch sử: cùng hình dạng trạng thái, thêm id và lúc gõ lần đầu. */
+export interface SearchHistoryEntry extends SearchState {
+  id: number;
+  created_at: string;
+}
+
+/**
+ * MỌI truy vấn cả nhóm đã từng gõ cho câu này, mới nhất trước.
+ *
+ * Khác listSearchStates ở chỗ đó chỉ trả một dòng mỗi người — thứ họ đang gõ
+ * ngay bây giờ. Hàm này giữ cả những câu đã bỏ, nên mở lại được truy vấn Bằng
+ * thử hồi mười phút trước kể cả khi Bằng đã chuyển sang cách khác.
+ */
+export function listSearchHistory(
+  taskId: number,
+  limit = 200
+): Promise<{ entries: SearchHistoryEntry[] }> {
+  return apiFetch(`/api/tasks/${taskId}/search-history?limit=${limit}`);
+}

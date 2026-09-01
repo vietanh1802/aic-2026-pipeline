@@ -88,6 +88,14 @@
   --proto-success: #5db872;
   --proto-warning: #d4a017;
   --proto-error: #c64545;
+
+  /* Chiều cao thanh điều hướng, để những khối dính khác đậu ngay dưới nó thay
+     vì chui xuống gầm.
+
+     AppNav tự đo mình rồi ghi đè giá trị này mỗi khi kích thước đổi — thanh đó
+     có flex-wrap nên trên màn hẹp nó xuống hai dòng và cao gấp đôi. Con số ở
+     đây chỉ là giá trị đỡ cho khoảnh khắc trước lần đo đầu tiên. */
+  --nav-h: 40px;
 }
 
 body {

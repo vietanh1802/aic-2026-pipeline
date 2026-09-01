@@ -97,7 +97,12 @@ export default function BasketBody({
   // Dòng đang được rê chuột vào ẢNH NHỎ — quyết định ảnh xem trước nào bung.
   // Giữ id chứ không giữ chỉ số: id không đổi khi danh sách được sắp lại, còn
   // chỉ số thì đổi, và ảnh sẽ nhảy sang dòng khác ngay giữa lúc kéo thả.
-  const [hoverRowId, setHoverRowId] = useState<number | null>(null);
+  // Dòng đang bung ảnh lớn, do BẤM mà ra.
+  //
+  // Trước đây ảnh lớn bung theo `onMouseEnter` trên cái ảnh nhỏ: lướt chuột
+  // dọc danh sách là nó nhấp nháy theo từng dòng, mà muốn nhìn kỹ thì phải giữ
+  // chuột đứng yên đúng một ô 48×32. Bấm thì nó đứng yên tới khi bấm lần nữa.
+  const [previewRowId, setPreviewRowId] = useState<number | null>(null);
   // ── Rải quanh nhiều mốc ─────────────────────────────────────────────────
   //
   // Mốc = các dòng người dùng tự ghim (origin "manual"). Mặc định dùng HẾT.
@@ -109,6 +114,19 @@ export default function BasketBody({
   // ngay, chỉ ai cần mới phải chỉnh.
   const [dirById, setDirById] = useState<Record<number, SpreadDirection>>({});
   const [stepById, setStepById] = useState<Record<number, string>>({});
+
+  // ── TRAKE: khoảng đầu–cuối của từng hành động ────────────────────────────
+  //
+  // Câu TRAKE rải theo cách khác hẳn: giữ nguyên N−1 mốc của dòng neo và chỉ
+  // đổi MỘT mốc mỗi dòng. Vì TRAKE chấm từng mốc — sai một mốc mất 1/N chứ
+  // không mất trắng — nên khi dòng hạng 1 đã tốt, giữ lại phần đúng của nó
+  // đáng giá hơn nhiều so với đoán lại cả bộ.
+  //
+  // Người dùng xem video và thấy HAI ĐẦU của hành động, nên ô nhập là "từ …
+  // đến …" chứ không phải một con số bước.
+  const [eventLo, setEventLo] = useState<Record<number, string>>({});
+  const [eventHi, setEventHi] = useState<Record<number, string>>({});
+  const [eventDir, setEventDir] = useState<Record<number, SpreadDirection>>({});
 
   const [step, setStep] = useState(task.type === "trake" ? 2 : 25);
   // What is in the box, which may briefly be empty or half-typed. `step` only
@@ -237,8 +255,40 @@ export default function BasketBody({
   // Gửi luôn cả hai danh sách, không cần cờ bật/tắt: mốc chưa chỉnh gì thì
   // stepOf trả về `step` chung và dirOf trả "both", tức đúng hành vi mặc định.
   // Một cờ "bật riêng" chỉ thêm một trạng thái để quên bật.
+  // Số hành động của câu, và mốc gốc để điền sẵn hai ô "từ/đến".
+  const eventCount =
+    task.type === "trake"
+      ? Math.max(task.n_events ?? 0, anchors[0]?.frames.length ?? 0)
+      : 0;
+  const baseFrameAt = (position: number) =>
+    anchors[0]?.frames[position] ?? 0;
+  // Chưa gõ gì thì lo = hi = mốc gốc, tức hành động đó ĐỨNG YÊN. An toàn hơn
+  // đoán sẵn một khoảng: rải quanh một khung người dùng chưa xác nhận là bịa
+  // ra thông tin họ chưa hề đưa.
+  const loAt = (position: number) =>
+    eventLo[position] ?? String(baseFrameAt(position));
+  const hiAt = (position: number) =>
+    eventHi[position] ?? String(baseFrameAt(position));
+  const numberOr = (text: string, fallback: number) => {
+    const parsed = Number(text);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+  };
+  const eventRanges = () =>
+    Array.from({ length: eventCount }, (_, position) => ({
+      lo: numberOr(loAt(position), baseFrameAt(position)),
+      hi: numberOr(hiAt(position), baseFrameAt(position)),
+      mode: eventDir[position] ?? ("both" as SpreadDirection),
+    }));
+  // Chỉ gửi khi có ít nhất một hành động được nới rộng. Gửi toàn khoảng rỗng
+  // sẽ khiến backend chuyển sang lối rải mới rồi không sinh nổi dòng nào.
+  const anyWindowOpen = () =>
+    eventRanges().some((window) => window.hi > window.lo);
+
   const autofillArgs = () => ({
     step,
+    ...(task.type === "trake" && anyWindowOpen()
+      ? { event_ranges: eventRanges() }
+      : {}),
     // Chỉ gửi anchor_ids khi đã bỏ bớt: gửi cả danh sách đầy đủ cũng ra kết
     // quả y hệt, nhưng để trống thì backend tự lấy mọi dòng ghim tay và tính
     // năng vẫn đúng kể cả khi giao diện lệch pha với giỏ.
@@ -429,13 +479,98 @@ export default function BasketBody({
                 ))}
               </div>
 
+              {/* TRAKE: khoanh hai đầu của TỪNG HÀNH ĐỘNG.
+
+                  Thay hẳn ô "Bước" và bảng mốc bên dưới cho loại câu này. Bước
+                  là một khái niệm sai chỗ ở đây: mỗi hành động dài ngắn khác
+                  nhau, và cái người xem video thấy được là hai đầu, không phải
+                  khoảng cách giữa các mẫu.
+
+                  Ô để trống nghĩa là hành động đó ĐỨNG YÊN ở giá trị của dòng
+                  hạng 1 — an toàn hơn đoán sẵn một khoảng. */}
+              {task.type === "trake" && eventCount > 0 && (
+                <div className="mt-2 border border-proto-line rounded-[8px] bg-white divide-y divide-proto-line">
+                  <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+                    Khoảng của từng hành động
+                  </div>
+                  {Array.from({ length: eventCount }, (_, position) => (
+                    <div
+                      key={position}
+                      className="flex items-center gap-2 px-2 py-1 text-[11.5px]"
+                    >
+                      <b className="text-proto-primary-active w-6 shrink-0">
+                        E{position + 1}
+                      </b>
+                      <span className="font-mono text-proto-muted shrink-0">
+                        gốc {baseFrameAt(position)}
+                      </span>
+                      <span className="ml-auto flex items-center gap-1 shrink-0">
+                        <span className="text-proto-muted">từ</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={loAt(position)}
+                          onChange={(event) =>
+                            setEventLo((current) => ({
+                              ...current,
+                              [position]: event.target.value,
+                            }))
+                          }
+                          className="w-16 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink"
+                        />
+                        <span className="text-proto-muted">đến</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={hiAt(position)}
+                          onChange={(event) =>
+                            setEventHi((current) => ({
+                              ...current,
+                              [position]: event.target.value,
+                            }))
+                          }
+                          className="w-16 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink"
+                        />
+                      </span>
+                      <span className="flex shrink-0 rounded-[5px] overflow-hidden border border-proto-line">
+                        {DIRECTIONS.map(([id, label, glyph]) => (
+                          <button
+                            key={id}
+                            type="button"
+                            title={label}
+                            onClick={() =>
+                              setEventDir((current) => ({
+                                ...current,
+                                [position]: id,
+                              }))
+                            }
+                            className={`w-6 py-0.5 text-[12px] leading-none ${
+                              (eventDir[position] ?? "both") === id
+                                ? "bg-proto-primary text-white font-bold"
+                                : "bg-white text-proto-muted"
+                            }`}
+                          >
+                            {glyph}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="px-2 py-1 text-[11px] text-proto-muted">
+                    Mỗi dòng sinh ra chỉ đổi MỘT mốc, giữ nguyên{" "}
+                    {Math.max(eventCount - 1, 0)} mốc còn lại của dòng hạng 1.
+                    Hành động để nguyên hai ô thì đứng yên.
+                  </p>
+                </div>
+              )}
+
               {/* Mỗi mốc một hàng, mỗi hàng tự quyết bước VÀ chiều của nó.
                   Trước đây chiều là một lựa chọn dùng chung cho cả ba mốc, mà
                   ba mốc nằm ở ba chỗ khác nhau trong ba video khác nhau: cái
                   giữa cảnh cần hai phía, cái ngay đầu cảnh mà rải xuống là ném
                   đi nửa số dòng. Hiện cả khi chỉ có một mốc — đó vẫn là chỗ
                   duy nhất đặt được chiều. */}
-              {pinned.length > 0 && (
+              {pinned.length > 0 && task.type !== "trake" && (
                 <div className="mt-2 border border-proto-line rounded-[8px] bg-white divide-y divide-proto-line max-h-48 overflow-y-auto">
                   {pinned.map((row, index) => {
                     const on = !anchorOff.has(row.id);
@@ -690,7 +825,20 @@ export default function BasketBody({
                     : "border-t-2 border-t-proto-primary-active"
                   : ""
               }`}
-              onClick={() => onRowClick(row)}
+              onClick={() => {
+                // Trong hộp thoại giỏ, bấm một dòng là để NHÌN cho rõ khung đó
+                // — mở hẳn trình phát video chỉ để xem một khung tĩnh thì vừa
+                // chậm vừa che mất chính cái giỏ đang đọ. Nút ▶ bên phải vẫn
+                // mở video như cũ.
+                //
+                // Ở bảng cạnh video (variant="panel") thì giữ nguyên: ở đó
+                // bấm dòng là tua video tới khung đó, và video đang mở sẵn.
+                if (isDialog) {
+                  setPreviewRowId((cur) => (cur === row.id ? null : row.id));
+                  return;
+                }
+                onRowClick(row);
+              }}
               title={
                 row.origin === "auto"
                   ? "Dòng tự sinh"
@@ -718,28 +866,8 @@ export default function BasketBody({
                   nên cùng một dòng mã cho ra hai hành vi khác nhau ở hai chỗ —
                   kiểu sai chỉ lộ ra sau khi deploy. `onMouseEnter` chạy y hệt
                   nhau ở cả hai. */}
-              <span
-                className="relative shrink-0 leading-none"
-                onMouseEnter={() => setHoverRowId(row.id)}
-                onMouseLeave={() =>
-                  setHoverRowId((cur) => (cur === row.id ? null : cur))
-                }
-              >
+              <span className="shrink-0 leading-none">
                 <FramePreview videoId={row.video_id} frameIdx={row.frames[0]} />
-                {/* Chỉ dựng khi đang rê tới. Ảnh lớn dùng CÙNG file với ảnh
-                    nhỏ nên trình duyệt đã có sẵn, không phải tải gì thêm. Bỏ
-                    qua ở panel — nó nằm cạnh video, nên video chính là ảnh xem
-                    trước. */}
-                {isDialog && hoverRowId === row.id && (
-                  <div className="pointer-events-none absolute left-14 top-0 z-[1000]">
-                    <FramePreview
-                      videoId={row.video_id}
-                      frameIdx={row.frames[0]}
-                      size="large"
-                      className="shadow-2xl border-2 border-white"
-                    />
-                  </div>
-                )}
               </span>
               <i className="not-italic w-6 text-right font-mono font-extrabold text-proto-muted">
                 {row.rank}
@@ -782,6 +910,19 @@ export default function BasketBody({
                 </button>
               )}
               <span className="ml-auto flex gap-1" onClick={(event) => event.stopPropagation()}>
+                {/* Đường mở video, tách khỏi cú bấm vào dòng. Trước đây bấm bất
+                    kỳ đâu trên dòng đều mở trình phát; giờ dòng lo phần nhìn
+                    ảnh, còn nút này lo phần xem video. */}
+                {isDialog && (
+                  <button
+                    type="button"
+                    title="Mở video tại khung này"
+                    className="flex h-10 w-10 items-center justify-center text-proto-muted hover:text-proto-primary-active"
+                    onClick={() => onRowClick(row)}
+                  >
+                    ▶
+                  </button>
+                )}
                 {!readOnly && (
                   <>
                     {/* Chỉ còn "↑1" và "×". Việc sắp lại thứ tự đã chuyển
@@ -814,6 +955,36 @@ export default function BasketBody({
                 )}
               </span>
             </div>
+            {/* Ảnh lớn của dòng vừa bấm, chèn NGAY DƯỚI dòng đó thay vì nổi
+                đè lên như trước. Nổi đè thì nó che mất mấy dòng trên dưới —
+                đúng những dòng người ta đang muốn so sánh với nó.
+
+                Dùng cùng tệp ảnh với ảnh nhỏ nên trình duyệt đã có sẵn, không
+                phải tải thêm gì. TRAKE có nhiều mốc thì bày cả dãy: một dòng
+                TRAKE chỉ đúng khi cả bốn mốc đều đúng. */}
+            {previewRowId === row.id && (
+              <div className="flex gap-2 mb-1.5 px-2">
+                {row.frames.map((frame, at) => (
+                  <div key={at} className="flex-1 min-w-0 max-w-[520px]">
+                    <span className="block w-full aspect-video">
+                      <FramePreview
+                        videoId={row.video_id}
+                        frameIdx={frame}
+                        size="fill"
+                        className="border border-proto-line"
+                      />
+                    </span>
+                    <span className="block text-[10px] font-mono text-proto-muted text-center mt-0.5">
+                      {row.frames.length > 1 && (
+                        <b className="text-proto-primary-active">E{at + 1} </b>
+                      )}
+                      {row.video_id} · {frame}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Vạch R@k nằm SAU dòng thứ k, không phải trước.
                 R@k nghĩa là "điểm tính trên k dòng đầu", nên mọi thứ PHÍA TRÊN
                 vạch mới là phần được tính. Vẽ trước dòng thì R@1 hiện lên trên

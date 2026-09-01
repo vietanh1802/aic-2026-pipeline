@@ -32,13 +32,17 @@ export default function Login() {
 
   return (
     <main className="min-h-screen grid md:grid-cols-2 bg-proto-canvas font-baloo">
+      {/* Tên sản phẩm là thứ TO NHẤT trên màn đăng nhập, không phải một dòng
+          chữ nhỏ viết hoa nằm nép bên trên như "SCAVENGER" trước đây. Đây là
+          màn duy nhất người dùng không có việc gì để làm ngoài đọc, nên nó là
+          chỗ duy nhất tên có đất diễn. */}
       <section className="hidden md:flex flex-col justify-center gap-4 p-12 bg-proto-card">
-        <div className="text-xs font-bold tracking-[.9px] text-proto-muted">
-          SCAVENGER
-        </div>
-        <h1 className="text-3xl text-proto-ink">
-          Video moment retrieval, cả nhóm cùng làm.
+        <h1 className="text-6xl font-bold tracking-tight text-proto-primary-active leading-none">
+          Bquerium
         </h1>
+        <p className="text-2xl text-proto-ink leading-snug">
+          Video moment retrieval, cả nhóm cùng làm.
+        </p>
         <p className="text-sm text-proto-muted max-w-[46ch] leading-relaxed">
           Đăng nhập để mở bảng task, nhận truy vấn, soát khung hình và chốt danh
           sách đáp án trước khi nộp.
@@ -50,6 +54,12 @@ export default function Login() {
         className="flex flex-col justify-center gap-3 p-12 max-w-[420px] w-full mx-auto"
       >
         <div className="flex flex-col gap-1 mb-3">
+          {/* Chỉ trên màn hẹp. Cột trái mang tên sản phẩm bị `hidden md:flex`
+              giấu đi ở kích thước này, nên không có dòng này thì màn đăng nhập
+              trên điện thoại không còn tên nào cả. */}
+          <span className="md:hidden text-3xl font-bold tracking-tight text-proto-primary-active leading-none mb-1">
+            Bquerium
+          </span>
           <span className="text-xs text-proto-muted">AI Challenge HCMC 2026</span>
           <b className="text-2xl text-proto-ink">Đăng nhập</b>
         </div>

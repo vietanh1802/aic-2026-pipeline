@@ -50,6 +50,13 @@ export interface BoardResponse {
   round: BoardRound | null;
   tasks: BoardTask[];
   me: Person | null;
+  /**
+   * Số người đi thi, KHÔNG tính admin — mẫu số của cột "số người đã làm".
+   *
+   * Đếm ở backend chứ không viết cứng 5: thêm hay khoá một tài khoản là con số
+   * phải đổi theo, mà mẫu số sai thì cả cột trở thành vô nghĩa.
+   */
+  team_size: number;
 }
 
 export function getBoard(packId?: number): Promise<BoardResponse> {
@@ -238,6 +245,17 @@ export interface AuditEntry {
   restored_at: string | null;
 }
 
+/**
+ * KHÔNG màn nào gọi hai hàm dưới nữa.
+ *
+ * Bảng nhật ký từng nằm cuối màn Evaluation, đã bỏ: nó liệt kê thao tác quản
+ * trị — nhập gói, kích hoạt, xoá — trong khi màn đó là chỗ đọ bài. Thứ người
+ * ta thật sự cần lần lại ở đây là lịch sử TÌM KIẾM, và cái đó giờ nằm trong
+ * bảng "Cả nhóm đang tìm câu này" ở màn Search.
+ *
+ * Hai endpoint /api/admin/audit vẫn còn ở backend và vẫn ghi đủ; giữ hai hàm
+ * bọc này vì đó vẫn là cách đúng để gọi chúng nếu cần dựng lại màn nhật ký.
+ */
 export function getAudit(limit = 100): Promise<{ entries: AuditEntry[] }> {
   return apiFetch<{ entries: AuditEntry[] }>(`/api/admin/audit?limit=${limit}`);
 }

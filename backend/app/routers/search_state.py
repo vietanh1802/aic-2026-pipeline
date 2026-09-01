@@ -113,7 +113,76 @@ def save_search_state(
             utcnow_iso(),
         ),
     )
+    _remember(conn, user["id"], task_id, payload, params)
     return {"ok": True}
+
+
+def _remember(
+    conn: sqlite3.Connection,
+    user_id: int,
+    task_id: int,
+    payload: SearchStateRequest,
+    params: str,
+) -> None:
+    """Ghi truy vấn này vào lịch sử — hoặc cập nhật dòng cũ nếu vẫn là nó.
+
+    Gộp theo TRUY VẤN, không theo mỗi lần bấm. Giao diện gọi endpoint này hai
+    lần cho một lượt tìm — một lần khi search, một lần nữa mỗi khi bấm vào một
+    khung — nên chèn mù sẽ đẻ ra mười dòng giống hệt nhau chỉ khác cái khung,
+    và bảng lịch sử thành vô dụng.
+
+    Chỉ so với dòng MỚI NHẤT của người đó. Quay lại một truy vấn đã bỏ từ lâu
+    thì đáng là một mục mới: nó nói rằng bạn đã thử lại, và nó nổi lên đầu danh
+    sách đúng như bạn vừa làm.
+    """
+    if not payload.query_text.strip():
+        # Chưa gõ gì thì chưa có gì để nhớ. Lượt dọn dẹp cuối phiên cũng đi qua
+        # đây với chuỗi rỗng, và nó không phải một lần tìm.
+        return
+
+    now = utcnow_iso()
+    latest = conn.execute(
+        "SELECT * FROM search_history WHERE user_id = ? AND task_id = ? "
+        "ORDER BY updated_at DESC, id DESC LIMIT 1",
+        (user_id, task_id),
+    ).fetchone()
+    same = (
+        latest is not None
+        and latest["query_text"] == payload.query_text
+        and latest["search_type"] == payload.search_type
+        and latest["params"] == params
+    )
+    if same:
+        conn.execute(
+            "UPDATE search_history SET picked_frame = ?, picked_video = ?, "
+            "picked_frame_idx = ?, updated_at = ? WHERE id = ?",
+            (
+                payload.picked_frame,
+                payload.picked_video,
+                payload.picked_frame_idx,
+                now,
+                latest["id"],
+            ),
+        )
+        return
+
+    conn.execute(
+        "INSERT INTO search_history (user_id, task_id, query_text, search_type, "
+        "params, picked_frame, picked_video, picked_frame_idx, created_at, "
+        "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            task_id,
+            payload.query_text,
+            payload.search_type,
+            params,
+            payload.picked_frame,
+            payload.picked_video,
+            payload.picked_frame_idx,
+            now,
+            now,
+        ),
+    )
 
 
 @router.get("/tasks/{task_id}/search-states")
@@ -136,3 +205,33 @@ def list_search_states(
         (task_id,),
     )
     return {"states": [_state_row(row) for row in rows]}
+
+
+@router.get("/tasks/{task_id}/search-history")
+def list_search_history(
+    task_id: int,
+    _: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Mọi truy vấn cả nhóm đã từng gõ cho câu này, mới nhất trước.
+
+    Khác `/search-states` ở chỗ đó chỉ trả về MỘT dòng mỗi người — thứ họ đang
+    gõ ngay bây giờ. Bảng này giữ cả những câu đã bỏ, nên "Coi Bằng làm" mở
+    lại được truy vấn Bằng thử hồi mười phút trước, kể cả khi Bằng đã chuyển
+    sang cách khác.
+    """
+    load_task(conn, task_id)
+    rows = conn.execute(
+        "SELECT h.*, u.username, u.display_name "
+        "  FROM search_history h JOIN users u ON u.id = h.user_id "
+        " WHERE h.task_id = ? "
+        " ORDER BY h.updated_at DESC, h.id DESC LIMIT ?",
+        (task_id, max(1, min(limit, 500))),
+    )
+    return {
+        "entries": [
+            {**_state_row(row), "id": row["id"], "created_at": row["created_at"]}
+            for row in rows
+        ]
+    }

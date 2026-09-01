@@ -9,11 +9,11 @@ import {
 import type { DropdownOption } from "../DropDown";
 import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
-import { frameAt, frameRange, spreadFrames } from "../../helpers/frameRange";
+import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
+import { recordSearchState } from "../../helpers/searchStateRecorder";
 import type { BoardTask } from "../../api/board";
 import type { TrakeSlot } from "../VideoPopUp";
-import { useAuthStore } from "../../store/authStore";
 
 interface SubmitFormData {
   videoId: string;
@@ -32,11 +32,6 @@ interface SubmitFormData {
   getPlayhead?: () => number;
   /** Set when the popup was opened on one event of a TRAKE line. */
   trakeSlot?: TrakeSlot | null;
-  /** The Q&A answer already on the task's first row. A Q&A task has exactly
-   *  one answer — only the frame varies per row — so "Trải K dòng" falls back
-   *  to this when the popup's answer box is left empty, instead of writing
-   *  `null` into every new row. */
-  fallbackAnswer?: string | null;
 }
 
 export const SubmitForm: React.FC<SubmitFormData> = ({
@@ -51,11 +46,9 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   markOut = null,
   getPlayhead,
   trakeSlot = null,
-  fallbackAnswer = null,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
-  const me = useAuthStore((state) => state.user);
 
   const submitType = useSubmitStore((state) => state.submitType);
   const setSubmitType = useSubmitStore((state) => state.setSubmitType);
@@ -84,84 +77,6 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     }
     return frameRange(markIn ?? now, markOut ?? now, frame_detect)?.frame
       ?? here ?? Number.NaN;
-  };
-
-  // ── Trải K dòng ──────────────────────────────────────────────────────────
-  const [spreadK, setSpreadK] = useState<number>(5);
-  const [spreadNote, setSpreadNote] = useState<string | null>(null);
-  const [spreading, setSpreading] = useState<boolean>(false);
-
-  // Both edges marked, a real task open, and not TRAKE — a TRAKE row is N
-  // moments in one row, so K rows over an interval means nothing there. The
-  // mark strip is already disabled for TRAKE, so this can never light up.
-  const canSpread =
-    activeTask !== null &&
-    activeTask.type !== "trake" &&
-    // Same rule as the answer basket: a task with an owner who is not you is
-    // read-only at the UI layer. Boolean() first, because an unclaimed task has
-    // no owner and must not lock out the person holding it.
-    !(Boolean(activeTask.owner) && activeTask.owner?.id !== me?.id) &&
-    markIn !== null &&
-    markOut !== null &&
-    Number.isFinite(frame_detect) &&
-    frame_detect > 0;
-
-  const spreadOptions: DropdownOption[] = [
-    { id: 0, label: "3 dòng", value: "3" },
-    { id: 1, label: "5 dòng", value: "5" },
-    { id: 2, label: "7 dòng", value: "7" },
-    { id: 3, label: "9 dòng", value: "9" },
-  ];
-
-  /**
-   * Sequential on purpose, and not atomic.
-   *
-   * The rows are ranked in the order they arrive, and that order is the whole
-   * point — it is the bisection priority. Firing them together would rank them
-   * by whichever response came back first. A failure part-way leaves the rows
-   * that landed in place: they are correct rows, individually deletable, and
-   * silently rolling them back would be worse than saying how far it got.
-   */
-  const handleSpread = async () => {
-    if (!activeTask || markIn === null || markOut === null) {
-      return;
-    }
-    const range = frameRange(markIn, markOut, frame_detect);
-    if (!range) {
-      setSpreadNote(`Không tính được frame: thiếu fps cho ${videoId}`);
-      return;
-    }
-    const frames = spreadFrames(range.start, range.end, spreadK);
-    if (frames.length === 0) {
-      setSpreadNote("Khoảng đã ghim không có frame nào");
-      return;
-    }
-
-    setSpreading(true);
-    let added = 0;
-    try {
-      // An empty box must not blank out the K new rows: a Q&A task has one
-      // answer for the whole task, so the first row's answer (passed in as
-      // fallbackAnswer) is what an empty box really means here.
-      const qaAnswerText =
-        activeTask.type === "qa" ? answer || fallbackAnswer || null : null;
-      for (const frame of frames) {
-        await addAnswer(activeTask.id, {
-          video_id: videoId,
-          frames: [frame],
-          answer_text: qaAnswerText,
-        });
-        added += 1;
-        setSpreadNote(`${added}/${frames.length}…`);
-        onBasketChanged?.();
-      }
-      setSpreadNote(`Đã thêm ${added}/${frames.length} dòng`);
-    } catch (err) {
-      console.error("Trải K dòng dừng giữa chừng:", err);
-      setSpreadNote(`Đã thêm ${added}/${frames.length} dòng rồi dừng vì lỗi`);
-    } finally {
-      setSpreading(false);
-    }
   };
 
   const { addTask1, addTask2, addTask3 } = useSubmitTasks();
@@ -202,6 +117,14 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           answer_text: activeTask.type === "qa" ? answer || null : null,
         });
         onBasketChanged?.();
+        // Ghi lại khung THẬT SỰ được lấy, không phải cái thẻ đã bấm để mở
+        // popup. Bấm thẻ 3175 rồi tua tới 3180 và chốt 3180 thì thứ đáng mở
+        // lại là 3180 — mà trước đây đường này không ghi gì, nên lịch sử vẫn
+        // dừng ở 3175 và không ai biết người đó đã chỉnh đi đâu.
+        //
+        // Tên keyframe của thẻ cũ được giữ nguyên bên trong helper, vì vòng
+        // khoanh đỏ so theo tên và 3180 thường không trùng keyframe nào.
+        recordSearchState(activeTask.id, { video: videoId, frameIdx: frame });
         if (activeTask.type !== "trake") {
           setAnswer("");
         }
@@ -274,7 +197,10 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           </div>
         )}
 
-        <div className="flex flex-col gap-3 h-full">
+        {/* ml-auto: với KIS/TRAKE thì thẻ nhập bên trái không hiện, nên cột
+            này là thứ duy nhất trong hàng và nút Add Answer dạt hẳn về mép
+            trái — xa chỗ mắt đang nhìn (dải ghim và số frame nằm bên phải). */}
+        <div className="flex flex-col gap-3 h-full ml-auto">
           {/* The task-type picker is about a whole scratchpad session; a
               Board task already fixes its own type. */}
           {!activeTask && (
@@ -299,42 +225,14 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
             </Button>
           </div>
 
-          {/* Item 5 — one press instead of "add the edges, add the middle,
-              then subdivide", which is minutes of clicking per query. */}
-          {!trakeSlot && (
-            <div className="flex flex-col gap-1">
-              <div className="flex gap-2 items-stretch">
-                <Dropdown
-                  options={spreadOptions}
-                  value={String(spreadK)}
-                  onChange={(opt) => setSpreadK(Number(opt.value))}
-                  dropDownWidth={96}
-                  dropDirection="up"
-                  size="sm"
-                />
-                <Button
-                  className="bg-proto-primary hover:opacity-90 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10"
-                  size="xs"
-                  onClick={() => void handleSpread()}
-                  disabled={!canSpread || spreading}
-                  title={
-                    canSpread
-                      ? "Trải đều K dòng trên đoạn đã ghim"
-                      : activeTask &&
-                        Boolean(activeTask.owner) &&
-                        activeTask.owner?.id !== me?.id
-                      ? "Giỏ của người khác — chỉ đọc"
-                      : "Ghim cả điểm đầu và điểm cuối trước"
-                  }
-                >
-                  {spreading ? spreadNote ?? "Đang thêm…" : `Trải ${spreadK} dòng`}
-                </Button>
-              </div>
-              {!spreading && spreadNote && (
-                <span className="text-[11px] text-proto-muted">{spreadNote}</span>
-              )}
-            </div>
-          )}
+          {/* Cụm "K dòng" + nút "Trải K dòng" đã bỏ.
+
+              Nó trải K dòng chia đều trên đoạn vừa ghim, nhưng cùng việc đó
+              nút "+ Điền tự động" trong giỏ đáp án làm tốt hơn: ở đó chọn được
+              nhiều mốc, chọn bước nhảy, chọn chỉ rải lên hay xuống, và với
+              TRAKE thì rải theo từng sự kiện. Hai đường làm một việc, đường ở
+              đây lại chiếm hai dòng ngay dưới nút Add Answer. */}
+
         </div>
       </div>
     </>

@@ -33,6 +33,25 @@ class PresenceRequest(BaseModel):
     task_id: int | None = None
 
 
+def team_size(conn: sqlite3.Connection) -> int:
+    """Số người ĐI THI, không tính admin.
+
+    Mẫu số của cột "số người đã làm" trên bảng. Đếm từ CSDL chứ không viết cứng
+    5: thêm hay khoá một tài khoản là con số phải đổi theo, mà một mẫu số sai
+    thì cả cột trở thành vô nghĩa.
+
+    Tài khoản admin bị loại vì nó là tài khoản quản trị, không phải một suất
+    trong nhóm. Nếu admin có làm bài thì tử số vẫn đếm họ — thà hiện 6/5 một
+    lần còn hơn giấu công của một người.
+    """
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users "
+            "WHERE role != 'admin' AND disabled = 0"
+        ).fetchone()["n"]
+    )
+
+
 @router.get("/board")
 def board(
     user: Annotated[sqlite3.Row, Depends(active_user)],
@@ -47,7 +66,12 @@ def board(
     if pack is None:
         pack = active_pack(conn)
     if pack is None:
-        return {"round": None, "tasks": [], "me": user_out(user)}
+        return {
+            "round": None,
+            "tasks": [],
+            "me": user_out(user),
+            "team_size": team_size(conn),
+        }
 
     tasks = [
         task_payload(conn, row["id"])
@@ -71,6 +95,7 @@ def board(
         },
         "tasks": tasks,
         "me": user_out(user),
+        "team_size": team_size(conn),
     }
 
 

@@ -80,6 +80,19 @@ export function reorderAnswer(
 /** Chiều rải quanh mốc. */
 export type SpreadDirection = "both" | "up" | "down";
 
+/**
+ * Khoảng người dùng khoanh cho MỘT hành động của câu TRAKE.
+ *
+ * Xem video thấy hành động 1 nằm đâu đó giữa frame 90 và 120 thì gõ đúng hai
+ * số đó. Chính xác hơn hẳn một "bước" chung: mỗi hành động dài ngắn khác nhau,
+ * và cái người ta THẤY là hai đầu, không phải khoảng cách giữa các mẫu.
+ */
+export interface EventRange {
+  lo: number;
+  hi: number;
+  mode: SpreadDirection;
+}
+
 export function autofillAnswers(
   taskId: number,
   payload: {
@@ -98,6 +111,15 @@ export function autofillAnswers(
     /** Bước riêng cho từng mốc, cùng thứ tự với anchor_ids. Bỏ trống = dùng `step`. */
     steps?: number[];
     direction?: SpreadDirection;
+    directions?: SpreadDirection[];
+    /**
+     * TRAKE: khoảng của từng hành động.
+     *
+     * Có mặt thì backend đổi hẳn cách rải — giữ nguyên N−1 mốc của dòng neo và
+     * chỉ đổi MỘT mốc mỗi dòng. TRAKE chấm theo từng mốc nên sai một mốc chỉ
+     * mất 1/N; giữ phần đúng của dòng hạng 1 đáng giá hơn đoán lại cả bộ.
+     */
+    event_ranges?: EventRange[];
   }
 ): Promise<{ added: number; removed?: number; total: number }> {
   return apiFetch(`/api/tasks/${taskId}/answers/autofill`, {

@@ -69,6 +69,10 @@ export default function Board({
   // mở task, không ghi gì. Xoá luôn cho khỏi ai tưởng còn đường ghi ở đây.
 
   const rowsPerQuery = board?.round?.rows_per_query ?? 100;
+  // Mẫu số của cột "số người đã làm". 5 chỉ là giá trị chống đỡ cho lần
+  // render đầu khi bảng chưa về — con số thật do backend đếm từ danh sách
+  // tài khoản, nên thêm hay khoá một người là nó tự đổi theo.
+  const teamSize = board?.team_size ?? 5;
   const tasks = (board?.tasks ?? []).filter((task) => {
     // Không còn quyền sở hữu, nên lọc theo VIỆC ĐÃ LÀM: câu nào chưa ai đụng
     // tới, và câu nào chính tôi đã có đáp án.
@@ -157,7 +161,7 @@ export default function Board({
               <th className="text-left px-3 py-2 w-20">Loại</th>
               <th className="text-left px-3 py-2">Đề bài</th>
               <th className="text-left px-3 py-2 w-44">Ai đã làm</th>
-              <th className="text-left px-3 py-2 w-24">Số người</th>
+              <th className="text-left px-3 py-2 w-28">Số người đã làm</th>
               <th className="px-3 py-2 w-32"></th>
             </tr>
           </thead>
@@ -231,7 +235,9 @@ export default function Board({
                       cột bên trái. */}
                   <td className="px-3 py-2">
                     {task.contributors.length === 0 ? (
-                      <span className="text-proto-line">—</span>
+                      <span className="font-mono text-proto-line">
+                        0/{teamSize}
+                      </span>
                     ) : (
                       <button
                         type="button"
@@ -250,7 +256,9 @@ export default function Board({
                         >
                           {task.contributors.length}
                         </b>
-                        <span className="text-proto-muted"> người</span>
+                        <span className="text-proto-muted font-mono">
+                          /{teamSize}
+                        </span>
                       </button>
                     )}
                   </td>
