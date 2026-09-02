@@ -24,7 +24,12 @@ from dataclasses import dataclass, field
 
 DEFAULT_PATTERN = r"query-(?P<phase>p\d+)-(?P<code>\d+)-(?P<type>kis|qa|trake)\.txt"
 
-_EVENT = re.compile(r"^\s*E(\d+)\s*[:.]\s*(.*)$")
+# Chỉ còn tên file là được đọc theo luật. Nội dung thì không:
+#
+#     _EVENT = re.compile(r"^\s*E(\d+)\s*[:.]\s*(.*)$")
+#
+# Regex trên nhận `E1:` nhưng không nhận `Cảnh 1:` mà bộ SOTUYEN2 dùng, và
+# không có cách nào biết trước mùa sau họ viết kiểu gì.
 
 
 @dataclass
@@ -64,52 +69,77 @@ def parse_member(filename: str, text: str, pattern: str) -> ParsedTask:
     body = text.lstrip("﻿").strip()
     task.lines = len(body.splitlines())
 
-    if task.type == "trake":
-        _parse_trake(task, body)
-    else:
-        task.query_text = body
-        if task.type == "qa":
-            _parse_question(task, body)
+    # Đề bài vào NGUYÊN VĂN, mọi loại câu như nhau.
+    #
+    # Trước đây chỗ này rẽ hai nhánh và cả hai đều đoán thêm một tầng cấu trúc
+    # không có trong file:
+    #
+    #     if task.type == "trake":
+    #         _parse_trake(task, body)      # tách E1..EN ra event_labels
+    #     else:
+    #         task.query_text = body
+    #         if task.type == "qa":
+    #             _parse_question(task, body)   # đoán câu hỏi là câu cuối có "?"
+    #
+    # Bộ SOTUYEN2 cho thấy cái giá của việc đoán. `query-p2-8-trake.txt` mở đầu
+    # bằng một dòng dẫn nhập, nên `query_text` không rỗng, và
+    # `taskQueryForSearch` phía frontend lấy nhánh `query_text` trước — bốn câu
+    # tả thật (sầu riêng, măng cụt, bưởi, dâu bòn bon) không hề đi vào truy vấn.
+    # `query-p2-21-trake.txt` thì viết `Cảnh 1:` chứ không phải `E1:`, regex
+    # không khớp dòng nào, ra 0 mốc, và câu TRAKE đó lặng lẽ xuất một cột frame
+    # như câu KIS.
+    #
+    # Mỗi mùa ban tổ chức lại viết đề một kiểu, nên mọi luật tách ở đây đều là
+    # luật của mùa trước. Chép nguyên văn thì không bao giờ sai; số mốc của câu
+    # TRAKE giờ do admin gõ ở màn Import, xem CommitRequest.edits.
+    task.query_text = body
     return task
 
 
-def _parse_trake(task: ParsedTask, body: str) -> None:
-    context: list[str] = []
-    numbers: list[int] = []
-    seen_event = False
-
-    for line in body.splitlines():
-        event = _EVENT.match(line)
-        if event:
-            seen_event = True
-            numbers.append(int(event.group(1)))
-            task.event_labels.append(event.group(2).strip())
-        elif not seen_event and line.strip():
-            context.append(line.strip())
-
-    task.query_text = "\n".join(context)
-    # Counted from how many event LINES there are, never from the highest E
-    # number: query-p1-18-trake.txt carries E1, E2, E2, E4 — four events, a
-    # duplicated number, and no E3.
-    task.n_events = len(task.event_labels)
-
-    if numbers != list(range(1, len(numbers) + 1)):
-        listed = ", ".join(f"E{number}" for number in numbers)
-        task.warnings.append(
-            f"event numbers are not sequential ({listed}) — labels may be mismatched"
-        )
-
-
-def _parse_question(task: ParsedTask, body: str) -> None:
-    # The question is the last sentence ending in '?', plus whatever trails it.
-    # "Hỏi xã này có tên là gì? (tại thời điểm đó)" is one question, not a
-    # question and a stray fragment.
-    hits = list(re.finditer(r"[^.!?\n]*\?", body))
-    if not hits:
-        task.question_text = None
-        task.warnings.append("no sentence ending in '?' was found")
-        return
-    task.question_text = body[hits[-1].start():].strip()
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hai hàm đoán cấu trúc, giữ lại để đọc chứ không còn ai gọi.
+#
+#  Bỏ theo yêu cầu của chủ repo sau bộ SOTUYEN2: đề bài vào nguyên văn, số mốc
+#  TRAKE do admin gõ ở màn Import. Xem chú thích trong `parse_member`.
+#
+#  def _parse_trake(task: ParsedTask, body: str) -> None:
+#      context: list[str] = []
+#      numbers: list[int] = []
+#      seen_event = False
+#
+#      for line in body.splitlines():
+#          event = _EVENT.match(line)
+#          if event:
+#              seen_event = True
+#              numbers.append(int(event.group(1)))
+#              task.event_labels.append(event.group(2).strip())
+#          elif not seen_event and line.strip():
+#              context.append(line.strip())
+#
+#      task.query_text = "\n".join(context)
+#      # Counted from how many event LINES there are, never from the highest E
+#      # number: query-p1-18-trake.txt carries E1, E2, E2, E4 — four events, a
+#      # duplicated number, and no E3.
+#      task.n_events = len(task.event_labels)
+#
+#      if numbers != list(range(1, len(numbers) + 1)):
+#          listed = ", ".join(f"E{number}" for number in numbers)
+#          task.warnings.append(
+#              f"event numbers are not sequential ({listed}) — labels may be mismatched"
+#          )
+#
+#
+#  def _parse_question(task: ParsedTask, body: str) -> None:
+#      # The question is the last sentence ending in '?', plus whatever trails
+#      # it. "Hỏi xã này có tên là gì? (tại thời điểm đó)" is one question, not
+#      # a question and a stray fragment.
+#      hits = list(re.finditer(r"[^.!?\n]*\?", body))
+#      if not hits:
+#          task.question_text = None
+#          task.warnings.append("no sentence ending in '?' was found")
+#          return
+#      task.question_text = body[hits[-1].start():].strip()
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def parse_zip(data: bytes, pattern: str) -> list[ParsedTask]:

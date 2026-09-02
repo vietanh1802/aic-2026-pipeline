@@ -190,6 +190,21 @@ function App({
   // the video popup below writes into it: scrubbing to a frame and pressing
   // "Chốt cho E2" has to land back in that cell.
   const [trakeSwaps, setTrakeSwaps] = useState<TrakeSwapMap>({});
+  // Mốc nào đã được chốt vào giỏ, theo thẻ và theo chỉ số sự kiện.
+  //
+  // Trước đây cờ này là state cục bộ trong TrakeCard, và đúng chừng nào chỉ có
+  // một đường chốt — cái nút trên ô. Giờ có hai: nút trên ô, và "Chốt cho E1"
+  // trong popup video. Để cờ nằm trong thẻ thì đường thứ hai ghi một dòng vào
+  // giỏ mà cái ô vẫn hiện "+ Chốt" như chưa có gì xảy ra, mời người dùng bấm
+  // thêm lần nữa và tạo dòng trùng.
+  const [trakePicked, setTrakePicked] = useState<Record<string, Record<number, boolean>>>({});
+
+  const markTrakePicked = (cardKey: string, index: number) =>
+    setTrakePicked((current) => ({
+      ...current,
+      [cardKey]: { ...(current[cardKey] ?? {}), [index]: true },
+    }));
+
   // Set while the popup is open on one event, so the submit button says which
   // moment it is pinning instead of "Add Answer".
   const [trakeSlot, setTrakeSlot] = useState<{
@@ -386,6 +401,10 @@ function App({
         const res = await videoSearchApi.trakeSearchText(queryText, {
           topVideos: 20,
         });
+        // Lượt tìm mới thì dấu "đã chốt" của lượt trước hết nghĩa: thẻ được
+        // định danh bằng video + hạng, nên cùng video ở cùng hạng sẽ mang lại
+        // dấu cũ trên một mốc chưa hề vào giỏ.
+        setTrakePicked({});
         if (res.error) {
           console.error("TRAKE search text error:", res.error);
           setTrakeCandidates([]);
@@ -641,6 +660,12 @@ function App({
               index: trakeSlot.index,
               label: trakeSlot.label,
               total: trakeSlot.total,
+              // Câu TRAKE nộp cả hàng N mốc thành MỘT dòng, nên chốt một mốc ở
+              // đó mới chỉ là điền vào ô, chưa có gì để ghi. Câu KIS/Q&A thì
+              // ngược lại: một frame ĐÃ là một dòng đủ nghĩa, nên dừng lại ở
+              // việc điền ô là bắt người dùng đóng popup rồi bấm thêm một nút
+              // nữa cho cùng một quyết định họ vừa đưa ra.
+              addsToBasket: Boolean(activeTask && activeTask.type !== "trake"),
               onCommit: (frame) => {
                 // Ô mốc từng để trống ảnh ở đây (`url: ""`), và thẻ TRAKE rơi
                 // vào nhánh nền đen chỉ in con số — tức là vừa dừng video ở
@@ -661,6 +686,13 @@ function App({
                   timestamp: "",
                   byHand: true,
                 });
+                // Với KIS/Q&A, mốc này đi thẳng vào giỏ chứ không nằm chờ một
+                // cú bấm nữa. Ghi trước khi đóng popup: sau setShowPopup(false)
+                // thì `trakeSlot` bị xoá và không còn biết mốc nào vừa chốt.
+                if (activeTask && activeTask.type !== "trake") {
+                  void commitTrakeFrame(videoUrl, frame);
+                  markTrakePicked(trakeSlot.cardKey, trakeSlot.index);
+                }
                 setShowPopup(false);
                 setTrakeSlot(null);
               },
@@ -845,6 +877,8 @@ function App({
                     ? commitTrakeFrame
                     : undefined
                 }
+                picked={trakePicked}
+                onPicked={markTrakePicked}
                 qaAnswer={activeTask?.type === "qa" ? trakeQaText : undefined}
                 onQaAnswer={activeTask?.type === "qa" ? setTrakeQaText : undefined}
                 onResetSlot={resetTrakeEvent}

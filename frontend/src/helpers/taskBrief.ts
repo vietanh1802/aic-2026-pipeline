@@ -1,50 +1,43 @@
 import type { BoardTask } from "../api/board";
 
 /**
- * The text that describes a task.
+ * The text that describes a task — verbatim, exactly the bytes the organizer
+ * wrote.
  *
- * TRAKE briefs have no prose: the query file is a list of E1..EN event lines
- * and the parser keeps only what precedes them, which is nothing. The events
- * ARE the brief, so they are what gets shown.
+ * Cách cũ có thêm một nhánh dựng lại đề bài từ `event_labels` khi `query_text`
+ * rỗng:
+ *
+ *     if (task.type === "trake" && task.event_labels.length > 0) {
+ *       return task.event_labels.map((l, i) => `E${i + 1} · ${l}`).join(" → ");
+ *     }
+ *
+ * Nhánh đó chỉ tồn tại vì trình đọc gói tách E1..EN ra khỏi đề bài rồi để lại
+ * một `query_text` rỗng. Giờ nó chép nguyên văn, nên không còn gì để dựng lại.
  */
 export function taskBriefText(
   task: Pick<BoardTask, "type" | "query_text" | "event_labels">
 ): string {
-  if (task.query_text) {
-    return task.query_text;
-  }
-  if (task.type === "trake" && task.event_labels.length > 0) {
-    return task.event_labels
-      .map((label, index) => `E${index + 1} · ${label}`)
-      .join(" → ");
-  }
-  return "";
+  return task.query_text ?? "";
 }
 
 /**
- * The same brief, shaped for the search box rather than for reading.
+ * The same brief, for the search box.
  *
- * These cannot be the same string. TRAKE search splits the query on `.\s+` —
- * `splitQueryParts`, which matches preprocess.py:_split_query_text character
- * for character — and the number of parts it yields has to equal `n_events`,
- * or the E1..EN labels line up against the wrong events. The display form's
- * " → " separator contains no period, so pasting it into the box would give
- * one part instead of N and search a single merged event.
+ * Giống hệt `taskBriefText`, chỉ gộp khoảng trắng cho vừa một dòng input.
  *
- * Joining with ". " is what the splitter expects. Trailing periods are dropped
- * first so a label already ending in one does not produce an empty part.
+ * Cách cũ ghép `event_labels` lại bằng ". " để số đoạn sau khi tách bằng
+ * `splitQueryParts` khớp đúng `n_events`, nhưng chỉ khi `query_text` rỗng — và
+ * nó im lặng thua ngay khi không rỗng. Bộ SOTUYEN2 làm lộ chuyện đó: mọi file
+ * TRAKE ở đó mở đầu bằng một dòng dẫn nhập, nên nhánh `query_text` ăn trước và
+ * bốn câu tả thật của câu 8 (sầu riêng, măng cụt, bưởi, dâu bòn bon) không hề
+ * đi vào truy vấn — thứ được đem đi tìm là hai câu dẫn nhập không tả một hình
+ * ảnh nào.
+ *
+ * Không cố sửa cho thông minh hơn nữa. Chép đúng chữ ban tổ chức viết rồi để
+ * người dùng tự cắt phần thừa: họ đọc được đề, còn hàm này thì không.
  */
 export function taskQueryForSearch(
   task: Pick<BoardTask, "type" | "query_text" | "event_labels">
 ): string {
-  if (task.query_text) {
-    return task.query_text.replace(/\s+/g, " ").trim();
-  }
-  if (task.type === "trake" && task.event_labels.length > 0) {
-    return task.event_labels
-      .map((label) => label.replace(/\s+/g, " ").trim().replace(/\.+$/, ""))
-      .filter((label) => label.length > 0)
-      .join(". ");
-  }
-  return "";
+  return (task.query_text ?? "").replace(/\s+/g, " ").trim();
 }

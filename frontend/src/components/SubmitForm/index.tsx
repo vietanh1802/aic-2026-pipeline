@@ -221,7 +221,11 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               // NaN. It used to submit that; now it says so and stops.
               disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
-              {trakeSlot ? `Chốt cho E${trakeSlot.index + 1}` : "Add Answer"}
+              {trakeSlot
+                ? trakeSlot.addsToBasket
+                  ? `Chốt E${trakeSlot.index + 1} → vào giỏ`
+                  : `Chốt cho E${trakeSlot.index + 1}`
+                : "Add Answer"}
             </Button>
           </div>
 

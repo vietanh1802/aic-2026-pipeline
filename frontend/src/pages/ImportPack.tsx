@@ -61,9 +61,9 @@ export default function ImportPack() {
         round_label: label,
         filename_pattern: pattern,
         source_filename: preview.source_filename,
-        edits: Object.entries(edits).map(([filename, question_text]) => ({
+        edits: Object.entries(edits).map(([filename, count]) => ({
           filename,
-          question_text,
+          n_events: Number(count) >= 1 ? Number(count) : null,
         })),
       });
       // No automatic jump to the board any more. The new round is not active,
@@ -85,6 +85,13 @@ export default function ImportPack() {
 
   const matched = preview?.files.filter((f) => f.matched) ?? [];
   const skipped = preview?.files.filter((f) => !f.matched) ?? [];
+
+  // Câu TRAKE chưa gõ số mốc. Backend cũng từ chối, nhưng để nó từ chối thì
+  // người dùng bấm xong mới biết, và thông báo lỗi chỉ nêu tên file — còn ở
+  // đây khoanh đỏ được đúng ô phải điền.
+  const missingEvents = matched.filter(
+    (file) => file.type === "trake" && !(Number(edits[file.filename]) >= 1)
+  );
 
   return (
     <div className="max-w-[1200px] mx-auto p-6 font-baloo">
@@ -161,8 +168,19 @@ export default function ImportPack() {
                 {skipped.length} file bỏ qua
               </span>
             )}
+            {missingEvents.length > 0 && (
+              <span className="text-sm text-[#c64545]">
+                Còn {missingEvents.length} câu TRAKE chưa có số mốc
+              </span>
+            )}
             <span className="ml-auto">
-              <Button onClick={() => void commit()} disabled={busy || !matched.length}>
+              {/* Chặn ở đây thay vì để lỗi nổ sau khi bấm: một câu TRAKE
+                  không có số mốc sẽ xuất ra đúng một cột frame như câu KIS,
+                  bốn mốc thành một, không cảnh báo nào. */}
+              <Button
+                onClick={() => void commit()}
+                disabled={busy || !matched.length || missingEvents.length > 0}
+              >
                 Tạo {matched.length} task
               </Button>
             </span>
@@ -175,7 +193,9 @@ export default function ImportPack() {
                   <th className="text-left px-3 py-2 w-16">Mã</th>
                   <th className="text-left px-3 py-2 w-20">Loại</th>
                   <th className="text-left px-3 py-2">Đề bài</th>
-                  <th className="text-left px-3 py-2 w-[280px]">Suy ra</th>
+                  {/* Tiêu đề cũ là "Suy ra" — đúng khi cột đó bày thứ trình
+                      đọc đoán ra. Giờ nó là chỗ người nhập điền. */}
+                  <th className="text-left px-3 py-2 w-[180px]">Cần điền</th>
                 </tr>
               </thead>
               <tbody>
@@ -221,6 +241,7 @@ function Row({
   onEdit,
 }: {
   file: PreviewedFile;
+  /** Số mốc đang gõ, dạng chữ vì ô có thể trống giữa chừng. */
   edited?: string;
   onEdit: (value: string) => void;
 }) {
@@ -232,8 +253,12 @@ function Row({
           {file.type === "qa" ? "Q&A" : file.type?.toUpperCase()}
         </span>
       </td>
+      {/* Nguyên văn, xuống dòng giữ nguyên: các mốc của câu TRAKE nằm ở đây
+          chứ không còn ở cột bên phải, nên gộp chúng thành một đoạn liền là
+          làm khó chính người đang phải đếm chúng. Không kẹp `line-clamp` nữa
+          vì lý do đó. */}
       <td className="px-3 py-2 text-proto-body">
-        <span className="line-clamp-2">{file.query_text}</span>
+        <span className="whitespace-pre-wrap">{file.query_text}</span>
         {file.warnings.map((warning) => (
           <span
             key={warning}
@@ -243,28 +268,33 @@ function Row({
           </span>
         ))}
       </td>
+      {/* Ô sửa câu hỏi Q&A đã bỏ. Nó sửa lại thứ trình đọc ĐOÁN ra — câu cuối
+          có dấu "?" — mà giờ không còn ai đoán: đề bài Q&A vào nguyên văn và
+          nằm trọn ở cột bên trái.
+
+          Cột này giờ chỉ còn một việc, và là việc duy nhất không đọc được từ
+          chữ: câu TRAKE có mấy mốc. */}
       <td className="px-3 py-2 text-xs text-proto-muted">
-        {file.type === "qa" ? (
-          <>
-            <span className="block mb-1">Câu hỏi (sửa được):</span>
+        {file.type === "trake" ? (
+          <label className="flex flex-col gap-1">
+            <span className="font-bold text-proto-ink">Số mốc *</span>
             <input
-              className="w-full p-1.5 rounded-[6px] bg-proto-soft border border-proto-line text-proto-ink"
-              value={edited ?? file.question_text ?? ""}
-              placeholder="không tách được câu hỏi"
+              type="number"
+              min={1}
+              max={20}
+              className={`w-20 p-1.5 rounded-[6px] bg-proto-soft border text-proto-ink font-mono text-right ${
+                edited && Number(edited) >= 1
+                  ? "border-proto-line"
+                  : "border-[#c64545]"
+              }`}
+              value={edited ?? ""}
+              placeholder="?"
               onChange={(e) => onEdit(e.target.value)}
             />
-          </>
-        ) : file.type === "trake" ? (
-          <>
-            <b className="text-proto-ink">{file.n_events} mốc</b>
-            <ol className="list-none mt-1 space-y-0.5">
-              {file.event_labels.map((label, index) => (
-                <li key={index} className="truncate">
-                  <b className="text-proto-primary-active">E{index + 1}</b> {label}
-                </li>
-              ))}
-            </ol>
-          </>
+            <span className="text-[10.5px] leading-tight">
+              Đếm trong đề bài bên trái
+            </span>
+          </label>
         ) : (
           <span>{file.lines} dòng</span>
         )}

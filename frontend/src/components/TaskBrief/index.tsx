@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { BoardTask } from "../../api/board";
 import { taskQueryForSearch } from "../../helpers/taskBrief";
@@ -23,9 +23,20 @@ import { useQueryStore } from "../../store/queryStore";
 export default function TaskBrief({
   task,
   variant = "page",
+  trailing,
 }: {
   task: BoardTask;
   variant?: "page" | "popup";
+  /**
+   * Thêm vào cuối khối, BÊN TRONG phần dính.
+   *
+   * Có mặt vì popup video cần thẻ "đang chốt mốc E mấy" đi theo khi cuộn, mà
+   * khối này đã dính sẵn ở `top-0`. Cách còn lại là cho thẻ đó tự dính với
+   * `top` bằng đúng chiều cao khối này — một con số phải đo bằng ref và đo
+   * lại mỗi lần bấm "Mở rộng". Cho nó vào chung thì không có con số nào để
+   * sai.
+   */
+  trailing?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isPopup = variant === "popup";
@@ -82,24 +93,17 @@ export default function TaskBrief({
         {task.query_text}
       </div>
 
-      {task.event_labels.length > 0 && (
-        <div
-          className={
-            isPopup ? "flex flex-wrap gap-1 mt-1.5" : "flex flex-col gap-1 mt-2"
-          }
-        >
-          {task.event_labels.map((label, index) => (
-            <div
-              key={index}
-              className={`bg-proto-canvas border border-proto-line rounded-[6px] px-2 py-1 ${
-                isPopup ? "text-[13px]" : "text-[13.5px]"
-              }`}
-            >
-              <b className="text-proto-primary-active">E{index + 1}</b> {label}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Dãy chip E1..EN đã bỏ.
+
+          Nó vẽ `task.event_labels`, mà cột đó do trình đọc gói tách ra từ đề
+          bài bằng regex `^E(\d+)[:.]`. Trình đọc thôi tách — đề bài giờ vào
+          nguyên văn và nằm trọn trong khối chữ ngay trên — nên `event_labels`
+          luôn rỗng và khối này không bao giờ vẽ gì.
+
+          Các mốc vẫn đọc được: chúng nằm nguyên trong đề bài. Bấm "Mở rộng"
+          để thấy đủ thay vì hai dòng bị cắt. */}
+
+      {trailing && <div className="mt-2">{trailing}</div>}
     </div>
   );
 }

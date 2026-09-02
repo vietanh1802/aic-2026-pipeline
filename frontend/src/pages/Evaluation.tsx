@@ -268,12 +268,13 @@ export default function EvaluationPage() {
               `-mx-6 px-6` kéo nền ra sát mép trong của khung `p-6` bên ngoài,
               nếu không thì các dòng bên dưới sẽ lộ ra ở hai bên khi trượt qua.
               z-20 đủ để nằm trên lưới bài mà vẫn dưới popup video. */}
-          {/* 40 / 60, nghiêng về phía video. Đề bài là vài dòng chữ đọc một
-              lần rồi thôi, còn khung bên phải phải chứa CẢ video lẫn ảnh
-              keyframe cạnh nhau — chia đôi thì mỗi thứ chỉ còn một phần tư
-              chiều ngang trang, nhỏ tới mức không soi được chi tiết.
-              Trước đó là `[1fr_520px]`, khi ấy đề bài còn nuốt hết chỗ thừa. */}
-          <div className="sticky top-[var(--nav-h)] z-20 bg-proto-canvas -mx-6 px-6 pt-1 pb-3 grid md:grid-cols-[2fr_3fr] gap-4 items-start">
+          {/* 25 / 75, nghiêng hẳn về phía video.
+              Trước đó lần lượt là `[1fr_520px]` rồi `[2fr_3fr]` (40/60).
+              Cùng một lý do đẩy tỉ lệ đi mỗi lần: đề bài là vài dòng chữ đọc
+              một lần rồi thôi, còn khung bên phải phải chứa CẢ video lẫn ảnh
+              keyframe cạnh nhau — mỗi phần trăm lấy được của cột trái thì bên
+              phải chia đôi, nên nó đáng giá gấp đôi ở đó. */}
+          <div className="sticky top-[var(--nav-h)] z-20 bg-proto-canvas -mx-6 px-6 pt-1 pb-3 grid md:grid-cols-[1fr_3fr] gap-4 items-start">
             <div className="border border-proto-line rounded-[10px] bg-white p-3">
               <div className="flex items-center gap-2 mb-1">
                 <b className="font-mono text-proto-ink">{task.code}</b>
@@ -308,30 +309,48 @@ export default function EvaluationPage() {
                         fps, nên nó chỉ ở GẦN đúng chỗ; còn ảnh keyframe là
                         đúng cái người kia đã chọn. Đối chiếu hai bài mà chỉ có
                         video thì phải bấm dừng, dò tới lui rồi mới so được. */}
+                    {/* Hai ô BẰNG NHAU: `flex-1 basis-0` chia đôi chỗ bất kể
+                        nội dung bên trong rộng bao nhiêu, và cùng `aspect-video`
+                        nên hai khung khớp nhau từng điểm ảnh.
+
+                        Trước đây video chiếm phần còn lại còn ảnh bị ép vào
+                        `w-[36%]`, tức ảnh nhỏ hơn video khoảng ba lần. Nhưng
+                        việc ở màn này là SO hai thứ đó với nhau, mà so hai ảnh
+                        lệch cỡ nhau thì mắt không làm được — nhất là khi ảnh
+                        keyframe mới là cái đúng, còn video chỉ chạy tới gần
+                        đúng chỗ.
+
+                        `aspect-video` thay cho `h-[300px]` cũ: chiều cao cố
+                        định thì hai ô cao bằng nhau nhưng rộng khác nhau, và
+                        cái nào cũng thừa dải đen. */}
                     <div className="flex gap-2 items-start">
-                      <video
-                        ref={videoRef}
-                        key={activeVideoId}
-                        src={videoSrc}
-                        controls
-                        autoPlay
-                        muted
-                        preload="metadata"
-                        // 300 chứ không 260: object-contain giới hạn theo cạnh
-                        // ngắn hơn, nên ở khung rộng 60% mà chiều cao vẫn 260
-                        // thì khung hình không to thêm một điểm ảnh nào, chỉ
-                        // thêm hai dải đen hai bên. 300 đủ để video chạm mép
-                        // ngang.
-                        className="rounded-[8px] flex-1 min-w-0 h-[300px] object-contain bg-black"
-                        onLoadedMetadata={(event) => {
-                          event.currentTarget.currentTime =
-                            startMsAt(
-                              picked.row.video_id,
-                              picked.row.frames[picked.frameAt] ?? 0
-                            ) / 1000;
-                        }}
-                      />
-                      <div className="w-[36%] shrink-0">
+                      <div className="flex-1 basis-0 min-w-0">
+                        <video
+                          ref={videoRef}
+                          key={activeVideoId}
+                          src={videoSrc}
+                          controls
+                          autoPlay
+                          muted
+                          preload="metadata"
+                          className="rounded-[8px] w-full aspect-video object-contain bg-black"
+                          onLoadedMetadata={(event) => {
+                            event.currentTarget.currentTime =
+                              startMsAt(
+                                picked.row.video_id,
+                                picked.row.frames[picked.frameAt] ?? 0
+                              ) / 1000;
+                          }}
+                        />
+                        {/* Nhãn cho cả hai ô, không chỉ ô ảnh. Hai khung giờ
+                            giống hệt nhau nên phải nói cái nào là cái nào — và
+                            nói luôn cái khác biệt đáng nhớ: video tua theo mốc
+                            thời gian tính từ fps nên chỉ ở GẦN đúng chỗ. */}
+                        <span className="block text-[10px] font-mono text-proto-muted mt-0.5 text-center">
+                          video quanh mốc
+                        </span>
+                      </div>
+                      <div className="flex-1 basis-0 min-w-0">
                         {/* aspect-video chứ không phải chiều cao cố định:
                             FramePreview cắt ảnh theo khung (object-cover), nên
                             khung sai tỉ lệ sẽ cắt mất hai mép. */}

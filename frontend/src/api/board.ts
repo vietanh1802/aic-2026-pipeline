@@ -162,7 +162,10 @@ export function commitPack(payload: {
   round_label: string;
   filename_pattern: string;
   source_filename: string;
-  edits: { filename: string; question_text: string | null }[];
+  // Số mốc của câu TRAKE, do người nhập gõ. Trước đây trường này là
+  // `question_text` — câu hỏi Q&A mà trình đọc đoán ra rồi cho sửa lại; cả
+  // việc đoán lẫn việc sửa đều đã bỏ, đề bài giờ vào nguyên văn.
+  edits: { filename: string; n_events: number | null }[];
 }): Promise<{
   pack_id: number;
   round_label: string;

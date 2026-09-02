@@ -126,6 +126,10 @@ data_raw/ocr_clean_report.json
 # 25 câu vòng sơ tuyển + toàn bộ bài đã nộp, dựng từ aic2026-sotuyen/round1/.
 data_raw/round1_queries.json
 
+# Bộ đề sơ tuyển 2 do BTC phát, 30 file .txt. Cùng lý do với dòng trên: đề bài
+# là của ban tổ chức, không phải nguồn của repo — repo chỉ giữ công cụ đọc nó.
+data_raw/SOTUYEN2-bo-de-thi/
+
 # Bài nộp vòng sơ tuyển do BTC/đội giữ, không phải nguồn của repo.
 aic2026-sotuyen/
 

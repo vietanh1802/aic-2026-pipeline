@@ -31,6 +31,15 @@ export interface TrakeSlot {
   index: number;
   label: string;
   total: number;
+  /**
+   * True khi cú chốt này ghi luôn một dòng vào giỏ — câu KIS/Q&A, nơi một
+   * frame đã là một đáp án đủ nghĩa. Câu TRAKE thì false: ở đó chốt một mốc
+   * mới chỉ là điền vào ô, cả hàng N mốc mới thành một dòng.
+   *
+   * Chỉ để nút nói đúng việc nó làm. "Chốt cho E1" mà lại đẻ ra một dòng trong
+   * giỏ là một tác dụng phụ không ai đọc được từ cái nhãn.
+   */
+  addsToBasket?: boolean;
   onCommit: (frame: number) => void;
 }
 
@@ -153,6 +162,21 @@ export default function VideoPopup({
     }
   };
 
+  // Which moment this popup is pinning. Without it the player looks the same
+  // for E1 and E3 and the frame lands in whichever cell was last clicked, with
+  // nothing on screen saying which.
+  //
+  // Tách ra thành một biến vì nó được đặt vào hai chỗ khác nhau tuỳ có task
+  // đang mở hay không — xem chỗ dùng bên dưới.
+  const slotChip = trakeSlot ? (
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full w-fit border border-proto-primary bg-proto-primary/10 font-baloo">
+      <b className="font-mono text-[12.5px] text-proto-primary-active">
+        E{trakeSlot.index + 1}/{trakeSlot.total}
+      </b>
+      <span className="text-[12.5px] text-proto-body">{trakeSlot.label}</span>
+    </div>
+  ) : null;
+
   return (
     <div className="fixed inset-0 z-[1000] bg-black/60 flex items-center justify-center p-4">
       <div className="relative bg-white rounded-xl shadow-lg w-full max-w-[1320px] max-h-[94vh] flex overflow-hidden font-baloo">
@@ -165,20 +189,24 @@ export default function VideoPopup({
 
         <div className="flex-1 min-w-0 overflow-y-auto p-6">
           {/* Đề bài đi theo popup. Banner pin trên trang không cứu được ở đây:
-              popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất. */}
-          {activeTask && <TaskBrief task={activeTask} variant="popup" />}
-          {/* Which moment this popup is pinning. Without it the player looks the
-              same for E1 and E3 and the frame lands in whichever cell was last
-              clicked, with nothing on screen saying which. */}
-          {trakeSlot && (
-            <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-full w-fit border border-proto-primary bg-proto-primary/10 font-baloo">
-              <b className="font-mono text-[12.5px] text-proto-primary-active">
-                E{trakeSlot.index + 1}/{trakeSlot.total}
-              </b>
-              <span className="text-[12.5px] text-proto-body">
-                {trakeSlot.label}
-              </span>
-            </div>
+              popup là overlay phủ kín khung nhìn nên mọi thứ phía sau đều khuất.
+
+              Thẻ "đang chốt mốc nào" đi CHUNG vào khối đề bài thay vì nằm rời
+              bên dưới. Nằm rời thì nó cuộn mất ngay khi kéo xuống dải điều
+              khiển dưới video — đúng lúc cần nó nhất, vì tới đó màn hình không
+              còn gì nói frame sắp chốt sẽ rơi vào ô nào. Khối đề bài vốn đã
+              dính ở `top-0`, nên đi nhờ vào đó là hết chuyện, không phải đo
+              chiều cao của nó (mà chiều cao ấy còn đổi khi bấm "Mở rộng"). */}
+          {activeTask ? (
+            <TaskBrief task={activeTask} variant="popup" trailing={slotChip} />
+          ) : (
+            // Không có task đang mở thì không có khối đề bài để đi nhờ — tự
+            // dựng phần dính cho riêng nó, cùng kiểu để nhìn không lệch.
+            slotChip && (
+              <div className="sticky top-0 z-20 -mx-6 -mt-6 mb-3 px-6 py-3 bg-white border-b-2 border-proto-primary/40">
+                {slotChip}
+              </div>
+            )
           )}
           <div className="flex justify-between items-center mb-[15px]">
             <div className="flex items-center gap-4">

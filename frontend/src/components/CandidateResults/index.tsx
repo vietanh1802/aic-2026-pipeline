@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import KeyframeImg from "../KeyframeImg";
 import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
@@ -512,6 +512,8 @@ function TrakeCard({
   onOpenEvent,
   onCommit,
   onPickOne,
+  picked = {},
+  onPicked,
   onResetSlot,
 }: {
   result: TrakeCandidateResult;
@@ -528,22 +530,20 @@ function TrakeCard({
    * row has. Undefined hides the per-cell button.
    */
   onPickOne?: (video: string, frameIdx: number) => void | Promise<void>;
+  /**
+   * Mốc nào đã vào giỏ. Chỉ để báo đã bấm — dòng thật nằm trong giỏ, và giỏ
+   * mới là chỗ đếm. Không chặn bấm lại: cùng một frame ở hai hạng khác nhau là
+   * chuyện hợp lệ, người dùng có thể cố ý.
+   *
+   * Do App giữ chứ không phải state ở đây, vì popup video cũng chốt được vào
+   * giỏ và nó phải bật được cùng cái dấu này.
+   */
+  picked?: Record<number, boolean>;
+  onPicked?: (eventIndex: number) => void;
   /** Bỏ mốc do người dùng tự đổi, trả về khung thuật toán đã chọn ban đầu. */
   onResetSlot?: (eventIndex: number) => void;
 }) {
   const [lightboxAt, setLightboxAt] = useState<number | null>(null);
-  // Mốc nào vừa được chốt vào giỏ. Chỉ để báo đã bấm — dòng thật nằm trong giỏ,
-  // và giỏ mới là chỗ đếm. Không chặn bấm lại: cùng một frame ở hai hạng khác
-  // nhau là chuyện hợp lệ, người dùng có thể cố ý.
-  const [picked, setPicked] = useState<Record<number, boolean>>({});
-
-  // Thẻ được định danh bằng video + hạng, nên lượt tìm sau mà cùng video ở cùng
-  // hạng thì React dùng lại đúng component này — và dấu "đã chốt" của lượt
-  // trước ở lại trên một mốc chưa hề vào giỏ. `result` là object mới mỗi lần
-  // tìm, nên nó là thứ nói đúng "đây là dữ liệu khác".
-  useEffect(() => {
-    setPicked({});
-  }, [result]);
 
   const events = result.events ?? [];
   const count = Math.max(parts.length, events.length);
@@ -684,7 +684,7 @@ function TrakeCard({
                       title={`Thêm riêng mốc E${index + 1} vào giỏ thành một dòng`}
                       onClick={() => {
                         void onPickOne(result.video ?? "", pick.frame_idx as number);
-                        setPicked((current) => ({ ...current, [index]: true }));
+                        onPicked?.(index);
                       }}
                       className={`absolute bottom-0 left-0 ml-1 mb-1 px-2 py-1 rounded-[4px] border-2 text-[11px] font-bold leading-none ${
                         picked[index]
@@ -776,6 +776,8 @@ export function TrakeCandidates({
   onOpenEvent,
   onCommit,
   onPickOne,
+  picked,
+  onPicked,
   qaAnswer,
   onQaAnswer,
   onResetSlot,
@@ -793,6 +795,9 @@ export function TrakeCandidates({
   onCommit?: (video: string, frames: number[]) => void;
   /** Set for KIS/Q&A tasks: every cell becomes its own one-frame answer. */
   onPickOne?: (video: string, frameIdx: number) => void | Promise<void>;
+  /** Đã chốt vào giỏ, theo khoá thẻ rồi tới chỉ số sự kiện. */
+  picked?: Record<string, Record<number, boolean>>;
+  onPicked?: (cardKey: string, eventIndex: number) => void;
   /** Set for Q&A only — one answer for the whole question, so one box. */
   qaAnswer?: string;
   onQaAnswer?: (text: string) => void;
@@ -839,6 +844,10 @@ export function TrakeCandidates({
             }
             onCommit={onCommit}
             onPickOne={onPickOne}
+            picked={picked?.[key]}
+            onPicked={
+              onPicked ? (eventIndex) => onPicked(key, eventIndex) : undefined
+            }
             onResetSlot={
               onResetSlot
                 ? (eventIndex) => onResetSlot(key, eventIndex)
