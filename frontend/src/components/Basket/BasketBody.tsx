@@ -132,6 +132,10 @@ export default function BasketBody({
   // What is in the box, which may briefly be empty or half-typed. `step` only
   // ever holds a value the server would accept.
   const [stepText, setStepText] = useState(String(task.type === "trake" ? 2 : 25));
+  // Người dùng đã tự gõ vào ô "Bước" chưa. Chưa gõ thì con số là của giao diện
+  // và nó tự tính lại mỗi khi có thêm dữ liệu; gõ rồi thì đứng yên cho tới khi
+  // ghim lại hai đầu — ghim lại là một ý định mới, không phải một lần render.
+  const [stepEdited, setStepEdited] = useState(false);
   // The dialog has the room to show autofill outright; the panel sits beside
   // the video where space is scarce, so it starts tucked behind a toggle.
   const [autofillOpen, setAutofillOpen] = useState(isDialog);
@@ -163,6 +167,8 @@ export default function BasketBody({
     const next = task.type === "trake" ? 2 : 25;
     setStep(next);
     setStepText(String(next));
+    // Câu khác thì con số cũ không còn là lựa chọn của ai cả.
+    setStepEdited(false);
   }, [task.type]);
 
   // Giỏ này LUÔN sửa được. Trước đây readOnly bật khi câu đã bị người khác
@@ -350,16 +356,33 @@ export default function BasketBody({
       ? suggestStep(anchor.frames[0], markedRange, needed)
       : null;
 
-  // Applied only when the marks themselves change, not on every render this
-  // recomputes on — `needed` drops by one after every added row, so keying
-  // this effect on it would overwrite the number the user just typed on
-  // every single add.
+  // Cách cũ chỉ chạy khi HAI ĐẦU đổi:
+  //
+  //     useEffect(() => { if (suggestion !== null) { setStep(suggestion) } },
+  //               [markedRange?.start, markedRange?.end]);
+  //
+  // Nó tránh được chuyện ghi đè số người dùng vừa gõ, nhưng lại tắt đúng ở
+  // trình tự làm việc thật: ghim đầu → ghim cuối → tua tới giữa → Add Answer.
+  // Ba bước đầu chưa có dòng nào nên `anchor` còn null và `suggestion` là null;
+  // tới bước thứ tư mới đủ dữ liệu để tính, mà lúc đó hai đầu không đổi nữa nên
+  // effect không chạy lại lần nào. Kết quả: ô "Bước" nằm nguyên ở 25 mặc định
+  // đúng lúc nó đã tính được.
+  //
+  // Giờ chạy lại mỗi khi con số gợi ý đổi — thêm dòng neo, đổi mốc, đổi hai
+  // đầu — và thứ giữ tay người dùng lại là `stepEdited` chứ không phải danh
+  // sách phụ thuộc.
   useEffect(() => {
-    if (suggestion !== null) {
-      setStep(suggestion);
-      setStepText(String(suggestion));
+    if (stepEdited || suggestion === null) {
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setStep(suggestion);
+    setStepText(String(suggestion));
+  }, [suggestion, stepEdited]);
+
+  // Ghim lại hai đầu = khoanh một khoảnh khắc khác, nên trả quyền tính về cho
+  // giao diện. Không có nó thì gõ tay một lần là tắt tự tính đến hết phiên.
+  useEffect(() => {
+    setStepEdited(false);
   }, [markedRange?.start, markedRange?.end]);
 
   const stripe = (row: AnswerRow) => {
@@ -425,6 +448,9 @@ export default function BasketBody({
                     onChange={(event) => {
                       const raw = event.target.value;
                       setStepText(raw);
+                      // Gõ vào đây là giành lấy con số: từ giờ giao diện thôi
+                      // tính giùm, kể cả khi thêm dòng neo làm gợi ý đổi.
+                      setStepEdited(true);
                       const parsed = Number(raw);
                       // Commit only a usable value, so clearing the field to
                       // retype does not snap it to 1 under the cursor.
@@ -437,13 +463,28 @@ export default function BasketBody({
                   />
                   <span className="text-[10px] text-proto-muted">frame</span>
                 </label>
+                {/* Con số này do giao diện đặt, không phải do người dùng gõ —
+                    nói ra thì mới biết là có thể sửa đè, và biết vì sao nó vừa
+                    tự đổi sau khi thêm một dòng neo. */}
+                {!isDialog && !stepEdited && suggestion !== null && (
+                  <span
+                    title={`Chia đều ${needed} dòng phủ hết đoạn đã ghim. Gõ số khác để tự quyết.`}
+                    className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-[4px] bg-proto-teal/20 text-[#2f6b60]"
+                  >
+                    tự tính
+                  </span>
+                )}
                 {/* Only when the step differs from what the marked interval
                     calls for — hidden the moment they agree, so it never
                     fights the field the user is actively editing. */}
-                {!isDialog && suggestion !== null && suggestion !== step && (
+                {!isDialog && stepEdited && suggestion !== null && suggestion !== step && (
                   <button
                     type="button"
                     onClick={() => {
+                      // Bấm gợi ý là nhường lại cho giao diện, nên bật tự tính
+                      // trở lại — nếu không, số này đứng yên trong khi mọi thứ
+                      // quanh nó còn đổi.
+                      setStepEdited(false);
                       setStep(suggestion);
                       setStepText(String(suggestion));
                     }}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import KeyframeImg from "../KeyframeImg";
 import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
@@ -511,6 +511,7 @@ function TrakeCard({
   onSwap,
   onOpenEvent,
   onCommit,
+  onPickOne,
   onResetSlot,
 }: {
   result: TrakeCandidateResult;
@@ -522,10 +523,27 @@ function TrakeCard({
   onOpenEvent?: (eventIndex: number, pick: EventPick) => void;
   /** Write the whole line as one answer. Undefined hides the button. */
   onCommit?: (video: string, frames: number[]) => void;
+  /**
+   * Write ONE moment as its own single-frame answer — the shape a KIS or Q&A
+   * row has. Undefined hides the per-cell button.
+   */
+  onPickOne?: (video: string, frameIdx: number) => void | Promise<void>;
   /** Bỏ mốc do người dùng tự đổi, trả về khung thuật toán đã chọn ban đầu. */
   onResetSlot?: (eventIndex: number) => void;
 }) {
   const [lightboxAt, setLightboxAt] = useState<number | null>(null);
+  // Mốc nào vừa được chốt vào giỏ. Chỉ để báo đã bấm — dòng thật nằm trong giỏ,
+  // và giỏ mới là chỗ đếm. Không chặn bấm lại: cùng một frame ở hai hạng khác
+  // nhau là chuyện hợp lệ, người dùng có thể cố ý.
+  const [picked, setPicked] = useState<Record<number, boolean>>({});
+
+  // Thẻ được định danh bằng video + hạng, nên lượt tìm sau mà cùng video ở cùng
+  // hạng thì React dùng lại đúng component này — và dấu "đã chốt" của lượt
+  // trước ở lại trên một mốc chưa hề vào giỏ. `result` là object mới mỗi lần
+  // tìm, nên nó là thứ nói đúng "đây là dữ liệu khác".
+  useEffect(() => {
+    setPicked({});
+  }, [result]);
 
   const events = result.events ?? [];
   const count = Math.max(parts.length, events.length);
@@ -613,6 +631,11 @@ function TrakeCard({
                       className="w-full h-full object-cover"
                     />
                   ) : (
+                    // Nhánh này từng là thứ mọi mốc chốt tay rơi vào, vì App
+                    // ghi `url: ""` cho chúng. Giờ App lấy keyframe gần nhất
+                    // làm ảnh, nên chỉ còn video KHÔNG có keyframe nào mới tới
+                    // đây — giữ lại vì đó vẫn là trạng thái có thật, và một ô
+                    // trắng trơn thì không nói được là đang thiếu gì.
                     <div className="w-full h-full flex flex-col items-center justify-center text-center px-2 gap-1">
                       {pick ? (
                         <>
@@ -620,7 +643,7 @@ function TrakeCard({
                             {pick.frame_idx}
                           </span>
                           <span className="text-[10px] text-neutral-400">
-                            chốt tay — không có ảnh keyframe
+                            không có keyframe nào trong video này
                           </span>
                         </>
                       ) : (
@@ -644,9 +667,33 @@ function TrakeCard({
                   )}
 
                   {pick?.byHand && (
-                    <span className="absolute top-0 left-0 ml-1 mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-[4px] bg-proto-mate text-white">
+                    <span
+                      title="Frame chốt tay trên video. Ảnh là keyframe gần nhất; số frame ở chân thẻ mới là số sẽ nộp."
+                      className="absolute top-0 left-0 ml-1 mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-[4px] bg-proto-mate text-white"
+                    >
                       tay
                     </span>
+                  )}
+
+                  {/* Đường vào giỏ cho câu KIS/Q&A. Nằm ngay trên ảnh vì thứ
+                      người dùng vừa quyết định là ẢNH này, không phải cả hàng
+                      — góc đối diện cái kính lúp để không phải ngắm. */}
+                  {pick && onPickOne && typeof pick.frame_idx === "number" && (
+                    <button
+                      type="button"
+                      title={`Thêm riêng mốc E${index + 1} vào giỏ thành một dòng`}
+                      onClick={() => {
+                        void onPickOne(result.video ?? "", pick.frame_idx as number);
+                        setPicked((current) => ({ ...current, [index]: true }));
+                      }}
+                      className={`absolute bottom-0 left-0 ml-1 mb-1 px-2 py-1 rounded-[4px] border-2 text-[11px] font-bold leading-none ${
+                        picked[index]
+                          ? "bg-proto-teal text-white border-proto-teal"
+                          : "bg-proto-soft hover:bg-white border-proto-line text-proto-ink"
+                      }`}
+                    >
+                      {picked[index] ? "✓ đã chốt" : "+ Chốt"}
+                    </button>
                   )}
 
                   {/* Đổi mốc từng là một chiều: thử một ứng viên khác là mất
@@ -728,6 +775,9 @@ export function TrakeCandidates({
   onSwap,
   onOpenEvent,
   onCommit,
+  onPickOne,
+  qaAnswer,
+  onQaAnswer,
   onResetSlot,
 }: {
   results: TrakeCandidateResult[];
@@ -741,10 +791,36 @@ export function TrakeCandidates({
     video: string
   ) => void;
   onCommit?: (video: string, frames: number[]) => void;
+  /** Set for KIS/Q&A tasks: every cell becomes its own one-frame answer. */
+  onPickOne?: (video: string, frameIdx: number) => void | Promise<void>;
+  /** Set for Q&A only — one answer for the whole question, so one box. */
+  qaAnswer?: string;
+  onQaAnswer?: (text: string) => void;
   onResetSlot?: (cardKey: string, eventIndex: number) => void;
 }) {
   return (
     <div>
+      {/* Một đáp án cho cả câu, nên một ô cho cả danh sách. Đặt trên từng thẻ
+          thì gõ lại chừng ấy lần, mà chữ vẫn y hệt nhau. */}
+      {onQaAnswer && (
+        <div className="mb-2 flex items-center gap-2 rounded-[10px] border border-proto-line bg-white px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted shrink-0">
+            Đáp án Q&A
+          </span>
+          <input
+            value={qaAnswer ?? ""}
+            onChange={(event) => onQaAnswer(event.target.value)}
+            placeholder="Chữ này mới là thứ được chấm — chốt mốc nào cũng mang theo nó"
+            className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-proto-soft px-2 py-1 text-[12.5px] text-proto-ink"
+          />
+        </div>
+      )}
+      {onPickOne && (
+        <p className="mb-2 text-[11.5px] text-proto-muted">
+          Câu này nộp một frame mỗi dòng, nên nút "+ Chốt" trên từng ô thêm
+          riêng mốc đó vào giỏ. Thứ tự bấm chính là thứ hạng.
+        </p>
+      )}
       {results.map((result, index) => {
         const key = trakeCardKey(result.video, index);
         return (
@@ -762,6 +838,7 @@ export function TrakeCandidates({
                 : undefined
             }
             onCommit={onCommit}
+            onPickOne={onPickOne}
             onResetSlot={
               onResetSlot
                 ? (eventIndex) => onResetSlot(key, eventIndex)

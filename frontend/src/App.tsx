@@ -27,6 +27,8 @@ import {
 } from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
+import { nearestKeyframeFor } from "./helpers/keyframes";
+import { keyframeUrl } from "./helpers/videoSource";
 import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
 import { type SearchState } from "./api/searchState";
@@ -262,6 +264,38 @@ function App({
       total: activeTask?.n_events ?? labels.length,
     });
     setShowPopup(true);
+  };
+
+  // ── TRAKE search dùng cho câu KIS / Q&A ─────────────────────────────────
+  //
+  // Tuyến TRAKE trả về VIDEO ứng viên kèm N mốc, và nó là cách mô tả mạnh nhất
+  // đang có: kể một chuỗi hành động thì lọc ra đúng video, trong khi một câu tả
+  // tĩnh thì không. Nhưng nút duy nhất trên thẻ lại nộp cả hàng N mốc thành một
+  // dòng — chỉ hợp lệ với câu TRAKE — nên với câu KIS/Q&A cả màn kết quả không
+  // có đường nào vào giỏ, dù người dùng đã nhìn thấy đúng khoảnh khắc cần.
+  //
+  // Ở đây mỗi mốc là MỘT ứng viên độc lập: chốt mốc nào thì mốc đó thành một
+  // dòng một frame, đúng hình dạng đáp án KIS/Q&A.
+  const [trakeQaText, setTrakeQaText] = useState<string>("");
+
+  const commitTrakeFrame = async (video: string, frameIdx: number) => {
+    if (!activeTask) {
+      console.warn("[basket] Chưa mở task nào từ bảng Board.");
+      return;
+    }
+    try {
+      await addAnswer(activeTask.id, {
+        video_id: video,
+        frames: [frameIdx],
+        // Q&A chấm bằng ĐÁP ÁN CHỮ, nên một dòng chốt frame mà bỏ trống chữ là
+        // một dòng chắc chắn không được điểm. Ô chữ nằm trên đầu danh sách ứng
+        // viên vì cả câu chỉ có một đáp án — chỉ khung hình là thay đổi.
+        answer_text: activeTask.type === "qa" ? trakeQaText.trim() || null : null,
+      });
+      onBasketChanged?.();
+    } catch (err) {
+      console.error("Không thêm được mốc TRAKE vào giỏ:", err);
+    }
   };
 
   // The whole line, as one row. Fires only when every event has a frame.
@@ -608,9 +642,21 @@ function App({
               label: trakeSlot.label,
               total: trakeSlot.total,
               onCommit: (frame) => {
+                // Ô mốc từng để trống ảnh ở đây (`url: ""`), và thẻ TRAKE rơi
+                // vào nhánh nền đen chỉ in con số — tức là vừa dừng video ở
+                // đúng khoảnh khắc mình muốn thì ô đó lại là chỗ DUY NHẤT trên
+                // màn hình không cho nhìn thấy nó.
+                //
+                // Một frame bất kỳ không có file ảnh riêng, nên lấy keyframe
+                // gần nhất làm ảnh đại diện — đúng thứ FramePreview và giỏ đã
+                // làm cho mọi dòng đáp án. `frame_idx` vẫn là số đã chốt, và
+                // `name` vẫn là nhãn chốt tay chứ không phải tên keyframe: đặt
+                // tên keyframe vào đây sẽ khiến dải "cách khớp khác" khoanh
+                // nhầm một ứng viên mà người dùng không hề chọn.
+                const near = nearestKeyframeFor(videoUrl, frame);
                 swapTrakeEvent(trakeSlot.cardKey, trakeSlot.index, {
                   name: `${videoUrl} · frame ${frame}`,
-                  url: "",
+                  url: near ? keyframeUrl(near.name) : "",
                   frame_idx: frame,
                   timestamp: "",
                   byHand: true,
@@ -791,6 +837,16 @@ function App({
                 onCommit={
                   activeTask?.type === "trake" ? commitTrakeRow : undefined
                 }
+                // Chốt từng mốc chỉ có nghĩa khi dòng đáp án mang MỘT frame.
+                // Câu TRAKE thì một dòng thiếu mốc là một dòng sai, nên ở đó
+                // vẫn chỉ có nút nộp cả hàng phía trên.
+                onPickOne={
+                  activeTask && activeTask.type !== "trake"
+                    ? commitTrakeFrame
+                    : undefined
+                }
+                qaAnswer={activeTask?.type === "qa" ? trakeQaText : undefined}
+                onQaAnswer={activeTask?.type === "qa" ? setTrakeQaText : undefined}
                 onResetSlot={resetTrakeEvent}
               />
             </>
