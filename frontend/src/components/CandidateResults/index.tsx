@@ -792,7 +792,12 @@ export function TrakeCandidates({
     pick: EventPick,
     video: string
   ) => void;
-  onCommit?: (video: string, frames: number[]) => void;
+  /**
+   * `cardKey` để người nhận tra lại những gì đã ghim cho riêng hàng này — hai
+   * đầu của từng mốc chẳng hạn. Không suy ra được từ `video`: hai thẻ khác
+   * hạng có thể trỏ cùng một video.
+   */
+  onCommit?: (video: string, frames: number[], cardKey: string) => void;
   /** Set for KIS/Q&A tasks: every cell becomes its own one-frame answer. */
   onPickOne?: (video: string, frameIdx: number) => void | Promise<void>;
   /** Đã chốt vào giỏ, theo khoá thẻ rồi tới chỉ số sự kiện. */
@@ -842,7 +847,11 @@ export function TrakeCandidates({
                     onOpenEvent(key, eventIndex, pick, result.video ?? "")
                 : undefined
             }
-            onCommit={onCommit}
+            onCommit={
+              onCommit
+                ? (video, frames) => onCommit(video, frames, key)
+                : undefined
+            }
             onPickOne={onPickOne}
             picked={picked?.[key]}
             onPicked={

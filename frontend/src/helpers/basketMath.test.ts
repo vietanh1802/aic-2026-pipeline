@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { autofillPlan, rangeOwner, suggestStep } from "./basketMath";
+import {
+  autofillPlan,
+  eventWindowFields,
+  rangeOwner,
+  suggestStep,
+} from "./basketMath";
 import type { AnswerRow } from "../api/answers";
 
 // Minimal rows: only `origin` and `frames[0]` matter to this arithmetic. The
@@ -215,5 +220,54 @@ describe("rangeOwner", () => {
   it("ignores a row with no frames rather than treating it as frame 0", () => {
     const rows = [row({ id: 1, frames: [] }), row({ id: 2, frames: [50] })];
     expect(rangeOwner(rows, { start: 0, end: 100 })?.id).toBe(2);
+  });
+});
+
+describe("eventWindowFields", () => {
+  it("turns each pinned event into a from/to pair of strings", () => {
+    // Chuỗi vì đó là value của <input>: người dùng còn gõ đè lên được.
+    const fields = eventWindowFields({
+      0: { start: 3670, end: 3943 },
+      2: { start: 5100, end: 5337 },
+    });
+    expect(fields.eventLo).toEqual({ 0: "3670", 2: "5100" });
+    expect(fields.eventHi).toEqual({ 0: "3943", 2: "5337" });
+  });
+
+  it("reads an interval pinned backwards as the same interval", () => {
+    // Bấm "Cuối" trước rồi mới bấm "Đầu" vẫn là cùng một đoạn video.
+    const fields = eventWindowFields({ 0: { start: 3943, end: 3670 } });
+    expect(fields.eventLo[0]).toBe("3670");
+    expect(fields.eventHi[0]).toBe("3943");
+  });
+
+  it("drops an event whose two edges land on the same frame", () => {
+    // Cửa sổ đóng ghi vào cũng chỉ ra đúng cái mặc định "hành động đứng yên",
+    // nhưng lại làm ô đó trông như đã được xác nhận bằng tay.
+    const fields = eventWindowFields({
+      0: { start: 3670, end: 3943 },
+      1: { start: 4200, end: 4200 },
+    });
+    expect(Object.keys(fields.eventLo)).toEqual(["0"]);
+    expect(fields.eventHi[1]).toBeUndefined();
+  });
+
+  it("leaves unmarked events out entirely rather than inventing a window", () => {
+    // Ghim E1 và E3, bỏ qua E2 và E4: hai mốc kia phải rơi về khung gốc trong
+    // giỏ, không phải một khoảng do giao diện bịa ra.
+    const fields = eventWindowFields({
+      0: { start: 100, end: 200 },
+      2: { start: 900, end: 950 },
+    });
+    expect(Object.keys(fields.eventLo).sort()).toEqual(["0", "2"]);
+  });
+
+  it("has nothing to say about a card where nothing was pinned", () => {
+    expect(eventWindowFields({})).toEqual({ eventLo: {}, eventHi: {} });
+  });
+
+  it("skips a non-finite edge instead of writing NaN into the box", () => {
+    const fields = eventWindowFields({ 0: { start: Number.NaN, end: 300 } });
+    expect(fields.eventLo).toEqual({});
   });
 });

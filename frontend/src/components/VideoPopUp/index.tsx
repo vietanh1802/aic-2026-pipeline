@@ -27,6 +27,12 @@ import type { MarkedRange } from "../../helpers/basketMath";
  * not a TRAKE row.
  */
 export interface TrakeSlot {
+  /**
+   * Thẻ ứng viên mà mốc này thuộc về. Chỉ dùng để nhận ra "đã chuyển sang mốc
+   * khác" — cả N mốc của một thẻ nằm trên CÙNG một video, nên `videoId` không
+   * phân biệt được E1 với E2.
+   */
+  cardKey: string;
   /** 0-based event index. */
   index: number;
   label: string;
@@ -40,7 +46,12 @@ export interface TrakeSlot {
    * giỏ là một tác dụng phụ không ai đọc được từ cái nhãn.
    */
   addsToBasket?: boolean;
-  onCommit: (frame: number) => void;
+  /**
+   * @param range Hai đầu đã ghim cho riêng mốc này, null khi chưa ghim đủ cả
+   *   hai. Câu TRAKE dùng nó để điền ô "từ/đến" của Điền tự động trong giỏ;
+   *   nó KHÔNG quyết định `frame` — xem `submits` của FrameMarkStrip.
+   */
+  onCommit: (frame: number, range?: MarkedRange | null) => void;
 }
 
 interface VideoPopupProps {
@@ -118,6 +129,25 @@ export default function VideoPopup({
     setMarkIn(null);
     setMarkOut(null);
   }, [videoId]);
+
+  // Và một mốc khác cũng là một khoảnh khắc khác.
+  //
+  // Chỉ `[videoId]` là không đủ: cả N mốc của một hàng TRAKE nằm trên CÙNG một
+  // video, nên bấm từ E1 sang E2 không đổi `videoId` và popup cũng không gắn
+  // lại — E2 thừa hưởng nguyên đoạn vừa ghim cho E1, rồi đoạn đó đi thẳng vào
+  // ô "từ/đến" của E2 như thể người dùng đã xem và xác nhận nó.
+  //
+  // Bỏ qua khi `slotKey` null: lúc đó không phải chuyển mốc mà là vừa chốt
+  // xong một dòng KIS/Q&A (App dọn `trakeSlot` nhưng giữ popup mở), và xoá
+  // ghim ở đó là giật mất đoạn người dùng còn đang nhìn.
+  const slotKey = trakeSlot ? `${trakeSlot.cardKey}:${trakeSlot.index}` : null;
+  useEffect(() => {
+    if (slotKey === null) {
+      return;
+    }
+    setMarkIn(null);
+    setMarkOut(null);
+  }, [slotKey]);
 
   // 0 = metadata not loaded yet. Previously this was 1 and the form below was
   // gated on `duration !== 1`, which silently tied the submission form to the
@@ -263,7 +293,10 @@ export default function VideoPopup({
               setMarkOut(null);
             }}
             onSeek={(seconds) => setStartAt(seconds * 1000)}
-            disabled={activeTask?.type === "trake"}
+            // TRAKE nộp đúng khung đang dừng; KIS/Q&A nộp khung giữa hai đầu.
+            // Hai đầu vẫn ghim được ở cả hai — với TRAKE chúng chảy vào ô
+            // "từ/đến" của Điền tự động thay vì quyết định khung nộp.
+            submits={activeTask?.type === "trake" ? "playhead" : "midpoint"}
           />
 
           {duration > 0 && (
@@ -281,6 +314,10 @@ export default function VideoPopup({
                 frame_detect={frame_detect}
                 markIn={markIn}
                 markOut={markOut}
+                // Cùng hai đầu đó, đã quy ra số frame. Truyền sẵn thay vì để
+                // SubmitForm tính lại: hai chỗ tính rời nhau là hai chỗ có thể
+                // lệch nhau, mà đây là con số sẽ nằm lại trong giỏ.
+                markedRange={markedRange}
                 getPlayhead={livePosition}
                 trakeSlot={trakeSlot}
               />

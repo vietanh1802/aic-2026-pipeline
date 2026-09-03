@@ -13,6 +13,7 @@ import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
 import { recordSearchState } from "../../helpers/searchStateRecorder";
 import type { BoardTask } from "../../api/board";
+import type { MarkedRange } from "../../helpers/basketMath";
 import type { TrakeSlot } from "../VideoPopUp";
 
 interface SubmitFormData {
@@ -28,6 +29,12 @@ interface SubmitFormData {
    *  ghim, và chưa ghim cả hai thì nộp đúng frame như trước. */
   markIn?: number | null;
   markOut?: number | null;
+  /**
+   * Hai đầu đó đã quy ra số frame, null khi chưa ghim đủ cả hai. Chỉ để chuyển
+   * tiếp cho `trakeSlot.onCommit` — khung được nộp vẫn do `frameToSubmit()`
+   * quyết định.
+   */
+  markedRange?: MarkedRange | null;
   /** The player's exact position, read at the moment of submitting. */
   getPlayhead?: () => number;
   /** Set when the popup was opened on one event of a TRAKE line. */
@@ -44,6 +51,7 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   onBasketChanged,
   markIn = null,
   markOut = null,
+  markedRange = null,
   getPlayhead,
   trakeSlot = null,
 }) => {
@@ -105,7 +113,10 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     // here — the line becomes an answer only once all N cells are filled and
     // the row's own button is pressed.
     if (trakeSlot) {
-      trakeSlot.onCommit(frame);
+      // Kèm hai đầu đã ghim. Với câu TRAKE chúng không đụng tới `frame` —
+      // frameToSubmit() ở trên đã trả về khung đang dừng — mà đi tiếp vào ô
+      // "từ/đến" của mốc này trong bảng Điền tự động.
+      trakeSlot.onCommit(frame, markedRange);
       return;
     }
 

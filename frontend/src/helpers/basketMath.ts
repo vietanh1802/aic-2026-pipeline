@@ -104,6 +104,38 @@ export function rangeOwner(
   return owner;
 }
 
+/**
+ * Hai đầu đã ghim cho từng mốc TRAKE, quy về đúng hình dạng hai ô "từ … đến …"
+ * của bảng Điền tự động (`AutofillTuning.eventLo` / `eventHi`).
+ *
+ * Chuỗi chứ không phải số vì đó là giá trị của một `<input>`: người dùng còn
+ * gõ đè lên được, và một ô đang xoá dở là chuỗi rỗng chứ không phải NaN.
+ *
+ * Bỏ qua mốc có hai đầu TRÙNG nhau. Cửa sổ đóng ghi vào cũng chỉ ra đúng cái
+ * mặc định — "hành động này đứng yên" — nhưng lại làm ô đó trông như đã được
+ * xác nhận bằng tay. `anyWindowOpen()` trong giỏ cũng đọc theo luật `hi > lo`
+ * ấy để quyết định có gửi `event_ranges` hay không.
+ */
+export function eventWindowFields(marks: Record<number, MarkedRange>): {
+  eventLo: Record<number, string>;
+  eventHi: Record<number, string>;
+} {
+  const eventLo: Record<number, string> = {};
+  const eventHi: Record<number, string> = {};
+  for (const [key, mark] of Object.entries(marks)) {
+    const position = Number(key);
+    const low = Math.min(mark.start, mark.end);
+    const high = Math.max(mark.start, mark.end);
+    // Ghim ngược — bấm Cuối trước rồi mới bấm Đầu — vẫn là cùng một đoạn.
+    if (!Number.isFinite(low) || !Number.isFinite(high) || low === high) {
+      continue;
+    }
+    eventLo[position] = String(low);
+    eventHi[position] = String(high);
+  }
+  return { eventLo, eventHi };
+}
+
 export function autofillPlan(
   rows: AnswerRow[],
   rowsPerQuery: number,

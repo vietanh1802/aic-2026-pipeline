@@ -35,7 +35,7 @@ export default function FrameMarkStrip({
   onMarkOut,
   onClear,
   onSeek,
-  disabled = false,
+  submits = "midpoint",
 }: {
   /** Để tra keyframe gần nhất cho ba ô xem trước. */
   videoId: string;
@@ -49,8 +49,16 @@ export default function FrameMarkStrip({
   onMarkOut: () => void;
   onClear: () => void;
   onSeek: (seconds: number) => void;
-  /** TRAKE submits one frame per event, so a midpoint has nowhere to go. */
-  disabled?: boolean;
+  /**
+   * Khung nào sẽ được nộp — thứ duy nhất khác nhau giữa hai loại câu.
+   *
+   * "midpoint": KIS/Q&A, nộp khung GIỮA hai đầu đã ghim.
+   * "playhead": TRAKE, nộp đúng khung đang dừng. TRAKE chấm từng mốc trong một
+   * cửa sổ hẹp, nên lấy trung bình của một đoạn dài là tự đẩy mình ra khỏi cửa
+   * sổ đó. Hai đầu vẫn ghim được — chúng đi vào ô "từ/đến" của Điền tự động
+   * trong giỏ, để rải các dòng sau nằm trong đúng đoạn đã xem.
+   */
+  submits?: "midpoint" | "playhead";
 }) {
   // Ba ô ảnh đầu/giữa/cuối, mở bằng nút. Mặc định đóng: phần lớn thời gian
   // người dùng đang nhìn chính cái video ngay trên, ba ô này chỉ có việc vào
@@ -60,7 +68,6 @@ export default function FrameMarkStrip({
   // I and O are what every video editor binds these to. Guarded on the target
   // so typing an answer into a field does not drop marks behind the dialog.
   useEffect(() => {
-    if (disabled) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -74,7 +81,7 @@ export default function FrameMarkStrip({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [disabled, onMarkIn, onMarkOut]);
+  }, [onMarkIn, onMarkOut]);
 
   const range = frameRange(
     markIn ?? currentSeconds,
@@ -94,18 +101,20 @@ export default function FrameMarkStrip({
   // chiếu. `range` cũng null khi thiếu fps, và lúc đó không có số frame nào.
   const canCompare = range !== null && range.start !== range.end;
 
-  if (disabled) {
-    return (
-      <div className="mt-2 px-3 py-2 rounded-[8px] bg-proto-soft border border-proto-line font-baloo text-[12px] text-proto-muted">
-        Khung hiện tại{" "}
-        <b className="font-mono text-proto-ink text-[14px]">
-          {currentFrame ?? "—"}
-        </b>{" "}
-        · {clock(currentSeconds)} — TRAKE nộp một frame cho mỗi mốc, không lấy
-        trung bình.
-      </div>
-    );
-  }
+  // Khung sẽ được nộp, và cái nhãn nói nó là khung nào. Phải khớp đúng
+  // SubmitForm.frameToSubmit() — dải này in ra con số, còn cái nút mới thật sự
+  // gửi nó đi, và hai chỗ nói khác nhau là kiểu sai không ai phát hiện ra cho
+  // tới lúc đọc bảng điểm.
+  const onPlayhead = submits === "playhead";
+  const submitFrame = onPlayhead ? currentFrame : range?.frame ?? null;
+  const middleLabel = onPlayhead ? "đang đứng — sẽ nộp" : "giữa — sẽ nộp";
+
+  // Nhánh `disabled` cho câu TRAKE đã bỏ. Nó thay cả dải điều khiển bằng một
+  // dòng chữ "TRAKE nộp một frame cho mỗi mốc, không lấy trung bình" — đúng về
+  // khung được nộp, nhưng vì thế mà câu TRAKE cũng mất luôn đường ghim hai
+  // đầu, trong khi hai đầu đó còn một việc khác hẳn: chúng đi vào ô "từ/đến"
+  // của Điền tự động trong giỏ. Giờ dải hiện đủ cho mọi loại câu, chỉ con số
+  // "Nộp" là đổi theo `submits`.
 
   return (
     <div className="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
@@ -202,14 +211,24 @@ export default function FrameMarkStrip({
           </button>
         )}
 
-        {range ? (
+        {submitFrame !== null ? (
           <span className="ml-auto flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
               Nộp
             </span>
             <b className="font-mono text-[18px] leading-none text-proto-primary-active">
-              {range.frame}
+              {submitFrame}
             </b>
+            {/* Nói ra vì với TRAKE con số này KHÔNG đổi khi ghim hai đầu —
+                không có dòng này thì trông như dải ghim bị hỏng. */}
+            {onPlayhead && (
+              <span
+                className="text-[10.5px] text-proto-muted"
+                title="TRAKE chấm từng mốc trong một cửa sổ hẹp. Hai đầu ghim ở đây đi vào ô từ/đến của Điền tự động trong giỏ."
+              >
+                khung đang đứng
+              </span>
+            )}
           </span>
         ) : (
           <span className="ml-auto text-[#c64545]">
@@ -228,12 +247,15 @@ export default function FrameMarkStrip({
 
           Ảnh là keyframe GẦN NHẤT, không phải đúng khung đó — số frame dưới
           mỗi ô mới là số thật. Bấm vào ô nào thì tua video tới đó. */}
-      {canCompare && showFrames && range && (
+      {canCompare && showFrames && range && submitFrame !== null && (
         <div className="mt-2 pt-2 border-t border-dashed border-proto-line grid grid-cols-3 gap-2">
           {(
             [
               ["đầu", range.start],
-              ["giữa — sẽ nộp", range.frame],
+              // Với TRAKE đây là khung đang dừng, không phải điểm giữa — ô này
+              // phải bày đúng thứ sắp được nộp, nếu không nó khoe một khung
+              // khác với khung thật.
+              [middleLabel, submitFrame],
               ["cuối", range.end],
             ] as const
           ).map(([label, frame], index) => (

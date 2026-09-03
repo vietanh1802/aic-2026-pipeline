@@ -27,6 +27,7 @@ import {
 } from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
+import { eventWindowFields, type MarkedRange } from "./helpers/basketMath";
 import { nearestKeyframeFor } from "./helpers/keyframes";
 import { keyframeUrl } from "./helpers/videoSource";
 import { addAnswer } from "./api/answers";
@@ -35,6 +36,7 @@ import { type SearchState } from "./api/searchState";
 import SearchHistory from "./components/SearchHistory";
 import { recordSearchState } from "./helpers/searchStateRecorder";
 import { usePickedFrameStore } from "./store/pickedFrameStore";
+import { useAutofillStore } from "./store/autofillStore";
 import type {
   ModelName,
   SearchResult,
@@ -205,6 +207,20 @@ function App({
       [cardKey]: { ...(current[cardKey] ?? {}), [index]: true },
     }));
 
+  // Hai đầu người dùng ghim cho từng mốc, theo thẻ rồi tới chỉ số sự kiện.
+  //
+  // Dòng đáp án TRAKE chỉ chở được `video` + `frame_1..frame_N` — bảng answers
+  // không có cột nào cho một khoảng, và file nộp cũng chỉ có từng ấy cột. Nên
+  // khoảng không đi vào dòng; nó đi vào ô "từ … đến …" của bảng Điền tự động,
+  // nơi nó quyết định các dòng rải sau nằm ở đâu.
+  //
+  // Giữ ở App chứ không ở popup: popup đóng lại giữa hai mốc, mà bốn khoảng
+  // của bốn mốc chỉ được dùng tới lúc bấm "Chọn" — sau cả bốn lần đóng.
+  const [trakeEventRanges, setTrakeEventRanges] = useState<
+    Record<string, Record<number, MarkedRange>>
+  >({});
+  const patchTuning = useAutofillStore((state) => state.patch);
+
   // Set while the popup is open on one event, so the submit button says which
   // moment it is pinning instead of "Add Answer".
   const [trakeSlot, setTrakeSlot] = useState<{
@@ -314,13 +330,32 @@ function App({
   };
 
   // The whole line, as one row. Fires only when every event has a frame.
-  const commitTrakeRow = async (video: string, frames: number[]) => {
+  const commitTrakeRow = async (
+    video: string,
+    frames: number[],
+    cardKey?: string
+  ) => {
     if (!activeTask) {
       console.warn("[basket] Chưa mở task nào từ bảng Board.");
       return;
     }
     try {
       await addAnswer(activeTask.id, { video_id: video, frames });
+      // Đổ hai đầu đã ghim của từng mốc vào ô "từ/đến" của Điền tự động, ngay
+      // sau khi dòng đã nằm trong giỏ. Sau chứ không trước: hàng chưa vào giỏ
+      // thì chưa có mốc gốc nào để rải quanh, và ghi sẵn vào bảng đó chỉ tạo
+      // ra một cấu hình trỏ vào chỗ trống.
+      //
+      // Mốc nào người dùng không ghim thì KHÔNG ghi gì: ô đó tự rơi về "lo =
+      // hi = khung gốc", tức hành động đứng yên. Điền một khoảng bịa vào chỗ
+      // họ chưa xem là dựng ra thông tin họ chưa hề đưa.
+      const marks = cardKey ? trakeEventRanges[cardKey] : undefined;
+      if (marks) {
+        const { eventLo, eventHi } = eventWindowFields(marks);
+        if (Object.keys(eventLo).length > 0) {
+          patchTuning(activeTask.id, activeTask.type, { eventLo, eventHi });
+        }
+      }
       onBasketChanged?.();
     } catch (err) {
       console.error("Không thêm được dòng TRAKE vào giỏ:", err);
@@ -660,6 +695,7 @@ function App({
           setStartAt={setStartTime}
           trakeSlot={
             trakeSlot && {
+              cardKey: trakeSlot.cardKey,
               index: trakeSlot.index,
               label: trakeSlot.label,
               total: trakeSlot.total,
@@ -669,7 +705,7 @@ function App({
               // việc điền ô là bắt người dùng đóng popup rồi bấm thêm một nút
               // nữa cho cùng một quyết định họ vừa đưa ra.
               addsToBasket: Boolean(activeTask && activeTask.type !== "trake"),
-              onCommit: (frame) => {
+              onCommit: (frame, range) => {
                 // Ô mốc từng để trống ảnh ở đây (`url: ""`), và thẻ TRAKE rơi
                 // vào nhánh nền đen chỉ in con số — tức là vừa dừng video ở
                 // đúng khoảnh khắc mình muốn thì ô đó lại là chỗ DUY NHẤT trên
@@ -690,13 +726,55 @@ function App({
                   byHand: true,
                 });
                 // Với KIS/Q&A, mốc này đi thẳng vào giỏ chứ không nằm chờ một
-                // cú bấm nữa. Ghi trước khi đóng popup: sau setShowPopup(false)
-                // thì `trakeSlot` bị xoá và không còn biết mốc nào vừa chốt.
-                if (activeTask && activeTask.type !== "trake") {
+                // cú bấm nữa. Ghi trước khi dọn `trakeSlot`: sau đó thì không
+                // còn biết mốc nào vừa chốt.
+                // Hai đầu vừa ghim cho riêng mốc này, cất nguyên như đã ghim.
+                // Việc sắp thứ tự và loại bỏ cửa sổ đóng để `eventWindowFields`
+                // làm một chỗ, lúc đổ vào giỏ — chia đôi luật ra hai nơi là
+                // cách chắc chắn để hai nơi lệch nhau.
+                if (range) {
+                  const slot = trakeSlot;
+                  setTrakeEventRanges((current) => ({
+                    ...current,
+                    [slot.cardKey]: {
+                      ...(current[slot.cardKey] ?? {}),
+                      [slot.index]: range,
+                    },
+                  }));
+                }
+
+                const goesToBasket = Boolean(
+                  activeTask && activeTask.type !== "trake"
+                );
+                if (goesToBasket) {
                   void commitTrakeFrame(videoUrl, frame);
                   markTrakePicked(trakeSlot.cardKey, trakeSlot.index);
                 }
-                setShowPopup(false);
+
+                // Trước đây luôn `setShowPopup(false)` ở đây, cả hai nhánh.
+                //
+                // Đúng với câu TRAKE: chốt xong một ô thì việc kế tiếp là mở ô
+                // E2, mà ô đó nằm trên thẻ phía sau — popup đứng chắn đúng
+                // đường đi tiếp.
+                //
+                // Sai với KIS/Q&A. Ở đó dòng đã vào giỏ rồi, không còn ô nào
+                // phải quay lại điền, mà khung hình vừa xem thì thường vẫn còn
+                // việc: soi lại cho chắc, tua vài chục frame quanh đó, chốt
+                // thêm một dòng nữa. Đóng popup là bắt người dùng dò lại từ
+                // đầu đúng khoảnh khắc họ đang đứng.
+                if (!goesToBasket) {
+                  setShowPopup(false);
+                }
+
+                // Dọn `trakeSlot` kể cả khi ở lại, và đó là chủ ý: ô E1 chốt
+                // xong rồi thì cái nút phải thôi mời chốt lại chính nó. Bấm
+                // lần nữa sẽ đẻ một dòng trùng trong giỏ — mà thứ hạng là dữ
+                // liệu, một dòng trùng ăn mất một chỗ trong R@k — đồng thời
+                // ghi đè lại ô E1 trên thẻ lần thứ hai mà chẳng để làm gì.
+                //
+                // Popup vì vậy trở về đúng trạng thái một khung KIS/Q&A mở
+                // bình thường: dải ghim đầu/cuối và nút "Add Answer". Đổi lại,
+                // chip "E1/4" biến mất ngay sau cú bấm.
                 setTrakeSlot(null);
               },
             }
