@@ -76,6 +76,7 @@ def test_batch2_migration_and_run_creation(tmp_path : Path) -> None :
             "top_k" : 100,
             "top_m" : 50,
             "use_rerank" : True,
+            "translation_policy" : "visual_faithful",
         }
         results = get_results(conn, run_id)
         assert len(results) == 25

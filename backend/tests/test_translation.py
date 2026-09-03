@@ -126,7 +126,12 @@ def test_translate_vi_to_en_sends_correct_gemini_request(monkeypatch) -> None :
     prompt = body["contents"][0]["parts"][0]["text"]
 
     assert source_text in prompt
-    assert "Translate the following Vietnamese text into English." in prompt
+    assert (
+        "Translate the following Vietnamese query into English for visual video retrieval."
+        in prompt
+    )
+    assert "Remove video-narration boilerplate" in prompt
+    assert body["generationConfig"]["temperature"] == 0.0
     assert "Return only the English translation." in prompt
     assert "Preserve the original meaning precisely." in prompt
     assert "Do not explain or add information." in prompt
