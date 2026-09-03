@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { autofillPlan, suggestStep } from "./basketMath";
+import { autofillPlan, rangeOwner, suggestStep } from "./basketMath";
 import type { AnswerRow } from "../api/answers";
 
 // Minimal rows: only `origin` and `frames[0]` matter to this arithmetic. The
@@ -152,5 +152,68 @@ describe("suggestStep", () => {
   it("returns null for a non-finite input", () => {
     expect(suggestStep(Number.NaN, { start: 0, end: 100 }, 9)).toBeNull();
     expect(suggestStep(50, { start: 0, end: 100 }, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
+describe("rangeOwner", () => {
+  it("picks the row the marked interval was pinned around, not rank 1", () => {
+    // Đúng cảnh trong báo cáo: mốc 1 ở khung 1939, mốc 2 ở 6916, và đoạn vừa
+    // ghim là 5176→8657 — đoạn của mốc 2. Cách cũ luôn đo từ rows[0].
+    const rows = [
+      row({ id: 1, frames: [1939] }),
+      row({ id: 2, frames: [6916] }),
+    ];
+    expect(rangeOwner(rows, { start: 5176, end: 8657 })?.id).toBe(2);
+  });
+
+  it("picks rank 1 back when the interval is the one pinned around it", () => {
+    const rows = [
+      row({ id: 1, frames: [1939] }),
+      row({ id: 2, frames: [6916] }),
+    ];
+    expect(rangeOwner(rows, { start: 1410, end: 2469 })?.id).toBe(1);
+  });
+
+  it("returns null when no row sits inside the interval", () => {
+    // Hai đầu vừa ghim nhưng chưa bấm Add Answer: chưa có dòng nào của đoạn
+    // này. Thà không gợi ý còn hơn đo từ một mốc chẳng liên quan rồi ghi đè.
+    const rows = [row({ id: 1, frames: [1939] })];
+    expect(rangeOwner(rows, { start: 5176, end: 8657 })).toBeNull();
+  });
+
+  it("prefers the row nearest the middle when several sit inside", () => {
+    // Điểm giữa là 3000. 2900 gần hơn 1200, dù 1200 đứng trước trong danh sách.
+    const rows = [
+      row({ id: 1, frames: [1200] }),
+      row({ id: 2, frames: [2900] }),
+    ];
+    expect(rangeOwner(rows, { start: 1000, end: 5000 })?.id).toBe(2);
+  });
+
+  it("keeps the higher-ranked row when two are equally close", () => {
+    const rows = [
+      row({ id: 1, frames: [900] }),
+      row({ id: 2, frames: [1100] }),
+    ];
+    expect(rangeOwner(rows, { start: 0, end: 2000 })?.id).toBe(1);
+  });
+
+  it("counts a row sitting exactly on an edge as inside", () => {
+    const rows = [row({ id: 1, frames: [5176] })];
+    expect(rangeOwner(rows, { start: 5176, end: 8657 })?.id).toBe(1);
+  });
+
+  it("reads the interval the same way whether it was pinned forwards or back", () => {
+    const rows = [row({ id: 1, frames: [6916] })];
+    expect(rangeOwner(rows, { start: 8657, end: 5176 })?.id).toBe(1);
+  });
+
+  it("has no owner for an empty basket", () => {
+    expect(rangeOwner([], { start: 0, end: 100 })).toBeNull();
+  });
+
+  it("ignores a row with no frames rather than treating it as frame 0", () => {
+    const rows = [row({ id: 1, frames: [] }), row({ id: 2, frames: [50] })];
+    expect(rangeOwner(rows, { start: 0, end: 100 })?.id).toBe(2);
   });
 });

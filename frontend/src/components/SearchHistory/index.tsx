@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
 import {
+  clearSearchHistory,
   listSearchHistory,
+  type ClearHistoryScope,
   type SearchHistoryEntry,
   type SearchState,
 } from "../../api/searchState";
@@ -54,6 +56,14 @@ export default function SearchHistory({
   // id của người đang được lọc, null là xem hết. Một người một lúc: câu hỏi
   // thật sự là "Bằng đã thử những gì rồi", chứ không phải "Bằng hoặc Nam".
   const [onlyUser, setOnlyUser] = useState<number | null>(null);
+  // Phạm vi đang chờ xác nhận, null là không có thẻ nào mở. Giữ chính phạm vi
+  // chứ không phải một cờ bật/tắt: admin có hai nút xoá, và thẻ phải nói đúng
+  // cái nào vừa được bấm.
+  const [confirming, setConfirming] = useState<ClearHistoryScope | null>(null);
+  const [clearing, setClearing] = useState(false);
+  // Tăng lên một là useEffect chạy lại. Xoá xong mà chỉ chờ nhịp poll 5 giây
+  // thì bảng còn nguyên các dòng vừa bỏ, trông y như cú bấm không ăn.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +85,7 @@ export default function SearchHistory({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [taskId]);
+  }, [taskId, refreshTick]);
 
   const shown = (entries ?? []).filter(
     (entry) => onlyUser === null || entry.user.id === onlyUser
@@ -97,6 +107,42 @@ export default function SearchHistory({
     });
   }
   people.sort((a, b) => (a.label === "tôi" ? -1 : b.label === "tôi" ? 1 : 0));
+
+  // Hai con số này đi vào thẻ xác nhận. Nói "xoá 3 dòng" thay vì "xoá lịch sử"
+  // là khác biệt giữa một cú bấm biết mình đang bỏ gì và một cú bấm mù.
+  const mineCount = (entries ?? []).filter(
+    (entry) => entry.user.id === me?.id
+  ).length;
+  const allCount = (entries ?? []).length;
+  const isAdmin = me?.role === "admin";
+  const pendingCount = confirming === "all" ? allCount : mineCount;
+
+  const runClear = async (scope: ClearHistoryScope) => {
+    setClearing(true);
+    try {
+      await clearSearchHistory(taskId, scope);
+      setConfirming(null);
+      // Bộ lọc "Chỉ của X" có thể đang trỏ vào một người vừa bị xoá sạch; bỏ
+      // lọc để bảng không hiện ra rỗng và trông như xoá nhầm ai đó.
+      setOnlyUser(null);
+      setRefreshTick((tick) => tick + 1);
+    } catch {
+      setError("Không xoá được lịch sử");
+      setConfirming(null);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const clearButton = (scope: ClearHistoryScope, label: string) => (
+    <button
+      type="button"
+      onClick={() => setConfirming(scope)}
+      className="text-[12.5px] px-3 py-1 rounded-[7px] border border-[#c64545]/50 text-[#c64545] hover:bg-[#c64545]/10"
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="max-w-[1400px] mx-auto p-6 font-baloo">
@@ -134,7 +180,69 @@ export default function SearchHistory({
             Chỉ của {person.label}
           </button>
         ))}
+
+        {/* Đặt ở hàng bộ lọc chứ không phải hàng tiêu đề: nút × đóng lớp phủ
+            nằm absolute ở góc trên bên phải, thêm nút vào đó là hai thứ chồng
+            nhau và bấm nhầm "xoá" khi định đóng.
+
+            Admin có HAI nút. Nếu chỉ để nút xoá cả nhóm thì admin — cũng là
+            một người ngồi thi, cũng có dòng trong bảng — mất mất việc dọn
+            riêng phần mình mà mọi thành viên khác đều làm được. */}
+        <div className="ml-auto flex gap-1">
+          {mineCount > 0 && clearButton("mine", `Xoá ${mineCount} dòng của tôi`)}
+          {isAdmin &&
+            allCount > 0 &&
+            clearButton("all", `Xoá hết (${allCount})`)}
+        </div>
       </div>
+
+      {/* Thẻ xác nhận. `fixed` chứ không phải chèn thẳng vào bảng: lớp lịch sử
+          cuộn được, một thẻ nằm trong dòng chảy sẽ trôi khỏi tầm nhìn ngay khi
+          người ta lỡ lăn chuột, và câu hỏi "có chắc không" mà không nhìn thấy
+          thì vô nghĩa.
+
+          Esc ở đây đóng cả lớp lịch sử (handler đăng ký trong App.tsx) chứ
+          không riêng thẻ này. Để nguyên: kết quả vẫn là không xoá gì. */}
+      {confirming !== null && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl border border-proto-line shadow-2xl w-full max-w-md p-5">
+            <h3 className="text-lg text-proto-ink mb-2">
+              {confirming === "all"
+                ? "Xoá lịch sử tìm của cả nhóm?"
+                : "Xoá lịch sử tìm của bạn?"}
+            </h3>
+            <p className="text-[13px] text-proto-body mb-1">
+              Bỏ đi <b>{pendingCount}</b> truy vấn trên câu{" "}
+              <b className="font-mono">{taskCode}</b>
+              {confirming === "all" ? ", kể cả của người khác" : ""}. Không lấy
+              lại được.
+            </p>
+            {/* Nói trước, để không ai tưởng cú bấm bị trôi mất. */}
+            <p className="text-[12.5px] text-proto-muted mb-4">
+              Khung đang chọn và truy vấn đang gõ vẫn còn — chỉ danh sách các
+              lần tìm cũ bị xoá.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirming(null)}
+                disabled={clearing}
+                className="text-[13px] px-3 py-1.5 rounded-[7px] border border-proto-line text-proto-ink disabled:opacity-50"
+              >
+                Huỷ
+              </button>
+              <button
+                type="button"
+                onClick={() => void runClear(confirming)}
+                disabled={clearing}
+                className="text-[13px] px-3 py-1.5 rounded-[7px] bg-[#c64545] text-white font-semibold disabled:opacity-50"
+              >
+                {clearing ? "Đang xoá…" : `Xoá ${pendingCount} dòng`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="text-[#c64545] text-sm mb-2">{error}</p>}
 

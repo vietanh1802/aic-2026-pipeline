@@ -14,7 +14,17 @@ import { ApiRequestError } from "../../api/base";
 import type { BoardTask } from "../../api/board";
 import Button from "../Button";
 import FramePreview from "../FramePreview";
-import { autofillPlan, suggestStep, type MarkedRange } from "../../helpers/basketMath";
+import {
+  autofillPlan,
+  rangeOwner,
+  suggestStep,
+  type MarkedRange,
+} from "../../helpers/basketMath";
+import {
+  defaultTuning,
+  useAutofillStore,
+  type AutofillTuning,
+} from "../../store/autofillStore";
 import { parseManualFrames } from "../../helpers/manualAnswer";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import { useAuthStore } from "../../store/authStore";
@@ -106,14 +116,35 @@ export default function BasketBody({
   // ── Rải quanh nhiều mốc ─────────────────────────────────────────────────
   //
   // Mốc = các dòng người dùng tự ghim (origin "manual"). Mặc định dùng HẾT.
-  // `anchorOff` giữ những dòng bị bỏ tick — giữ mặt trái thay vì giữ mặt phải
+  //
+  // Tất cả phần chỉnh dưới đây trước là `useState` ngay tại đây. Nhưng giỏ
+  // được dựng ở HAI chỗ — hộp thoại nút "Giỏ" và cột bên video — nên đó là hai
+  // instance, mỗi cái một bộ state, và hộp thoại thì dựng lại từ đầu mỗi lần
+  // mở. Bước tự tính 11/137 vừa tính bên cột video, bấm "Giỏ" ra là về 25.
+  //
+  // Giờ chúng nằm trong `autofillStore`, khoá theo `task.id`: hai chỗ dựng
+  // cùng đọc một bản ghi, và bản ghi sống lâu hơn cái hộp thoại.
+  const savedTuning = useAutofillStore((state) => state.byTask[task.id]);
+  const patchTuning = useAutofillStore((state) => state.patch);
+  // Câu chưa ai đụng tới thì chưa có bản ghi. Không tạo sẵn ở đây — ghi vào
+  // store lúc đang render là một vòng cập nhật thừa, mà mặc định thì tính lại
+  // rẻ hơn nhiều so với việc giữ.
+  const tuning = savedTuning ?? defaultTuning(task.type);
+  const tune = (change: Partial<AutofillTuning>) =>
+    patchTuning(task.id, task.type, change);
+
+  // `anchorOff` giữ những dòng bị BỎ tick — giữ mặt trái thay vì giữ mặt phải
   // để một dòng vừa thêm vào giỏ tự động được tính là mốc, không phải tick lại.
-  const [anchorOff, setAnchorOff] = useState<Set<number>>(new Set());
+  const anchorOff = tuning.anchorOff;
   // Chiều và bước RIÊNG theo id dòng. Mốc nào chưa đặt thì rơi về mặc định
   // ("hai phía", và ô "Bước" chung bên trên) — nên mở bảng ra là dùng được
   // ngay, chỉ ai cần mới phải chỉnh.
-  const [dirById, setDirById] = useState<Record<number, SpreadDirection>>({});
-  const [stepById, setStepById] = useState<Record<number, string>>({});
+  //
+  // Ba con số bước khác nhau về CHỦ SỞ HỮU: `stepById` là người dùng gõ,
+  // `autoStepById` là giao diện tính cho ĐÚNG mốc đó, `step` là mặc định chung
+  // cho mốc chưa có cả hai. Gộp vào một map thì không phân biệt được "máy tính
+  // ra" với "người gõ", mà `stepEdited` lại dựa vào đúng sự phân biệt ấy.
+  const { dirById, stepById, autoStepById } = tuning;
 
   // ── TRAKE: khoảng đầu–cuối của từng hành động ────────────────────────────
   //
@@ -124,18 +155,13 @@ export default function BasketBody({
   //
   // Người dùng xem video và thấy HAI ĐẦU của hành động, nên ô nhập là "từ …
   // đến …" chứ không phải một con số bước.
-  const [eventLo, setEventLo] = useState<Record<number, string>>({});
-  const [eventHi, setEventHi] = useState<Record<number, string>>({});
-  const [eventDir, setEventDir] = useState<Record<number, SpreadDirection>>({});
+  const { eventLo, eventHi, eventDir } = tuning;
 
-  const [step, setStep] = useState(task.type === "trake" ? 2 : 25);
-  // What is in the box, which may briefly be empty or half-typed. `step` only
-  // ever holds a value the server would accept.
-  const [stepText, setStepText] = useState(String(task.type === "trake" ? 2 : 25));
-  // Người dùng đã tự gõ vào ô "Bước" chưa. Chưa gõ thì con số là của giao diện
-  // và nó tự tính lại mỗi khi có thêm dữ liệu; gõ rồi thì đứng yên cho tới khi
-  // ghim lại hai đầu — ghim lại là một ý định mới, không phải một lần render.
-  const [stepEdited, setStepEdited] = useState(false);
+  // `stepText` là chữ đang nằm trong ô, có thể rỗng hoặc gõ dở; `step` chỉ
+  // bao giờ giữ giá trị server chịu nhận. `stepEdited` = người dùng đã tự gõ
+  // chưa — chưa thì con số là của giao diện và nó tự tính lại mỗi khi có thêm
+  // dữ liệu; gõ rồi thì đứng yên cho tới khi ghim lại hai đầu.
+  const { step, stepText, stepEdited } = tuning;
   // The dialog has the room to show autofill outright; the panel sits beside
   // the video where space is scarce, so it starts tucked behind a toggle.
   const [autofillOpen, setAutofillOpen] = useState(isDialog);
@@ -161,15 +187,18 @@ export default function BasketBody({
     void reload();
   }, [reload, reloadKey]);
 
-  // TRAKE is graded inside a window the rules put at "usually under 10 frames",
-  // so a one-second step would jump clean over it.
-  useEffect(() => {
-    const next = task.type === "trake" ? 2 : 25;
-    setStep(next);
-    setStepText(String(next));
-    // Câu khác thì con số cũ không còn là lựa chọn của ai cả.
-    setStepEdited(false);
-  }, [task.type]);
+  // Effect đặt bước mặc định theo loại câu đã bỏ:
+  //
+  //     useEffect(() => {
+  //       const next = task.type === "trake" ? 2 : 25;
+  //       setStep(next); setStepText(String(next)); setStepEdited(false);
+  //     }, [task.type]);
+  //
+  // `task.type` không bao giờ đổi trong một bản ghi — cùng `task.id` thì luôn
+  // cùng loại — nên effect này chỉ còn tác dụng duy nhất là dội lại mặc định
+  // mỗi lần component GẮN, tức xoá sạch thứ store vừa được lập ra để giữ.
+  // Mặc định giờ nằm ở `defaultTuning(task.type)`, đặt đúng một lần khi bản
+  // ghi của câu được tạo. Lý do 2 cho TRAKE vẫn ghi ở đó.
 
   // Giỏ này LUÔN sửa được. Trước đây readOnly bật khi câu đã bị người khác
   // "Nhận", nhưng giờ mỗi người có danh sách riêng cho mỗi câu, và backend chỉ
@@ -252,11 +281,20 @@ export default function BasketBody({
   // Dòng auto không bao giờ làm mốc: bấm điền lần hai mà rải quanh thứ mình
   // vừa sinh ra thì tâm rải trôi xa dần khỏi khung thật.
   const pinned = rows.filter((row) => row.origin !== "auto");
-  const anchors = pinned.filter((row) => !anchorOff.has(row.id));
+  const anchors = pinned.filter((row) => !anchorOff.includes(row.id));
+  // Ba tầng, người gõ thắng máy tính, máy tính thắng mặc định chung.
   const stepOf = (id: number) => {
-    const parsed = Number(stepById[id]);
-    return Number.isInteger(parsed) && inStepRange(parsed) ? parsed : step;
+    const typed = Number(stepById[id]);
+    if (Number.isInteger(typed) && inStepRange(typed)) {
+      return typed;
+    }
+    const auto = autoStepById[id];
+    return auto !== undefined && inStepRange(auto) ? auto : step;
   };
+  // Cùng thứ tự ưu tiên, dùng cho ô số trên mỗi hàng mốc. Phải khớp `stepOf`:
+  // hàng hiện một số mà lúc điền lại gửi số khác là lỗi im lặng tệ nhất ở đây.
+  const stepTextOf = (id: number) =>
+    stepById[id] ?? String(autoStepById[id] ?? step);
   const dirOf = (id: number): SpreadDirection => dirById[id] ?? "both";
   // Gửi luôn cả hai danh sách, không cần cờ bật/tắt: mốc chưa chỉnh gì thì
   // stepOf trả về `step` chung và dirOf trả "both", tức đúng hành vi mặc định.
@@ -306,14 +344,13 @@ export default function BasketBody({
   });
 
   /** Đặt cùng một chiều cho mọi mốc đang tick — lối tắt cho trường hợp thường. */
-  const setAllDirections = (value: SpreadDirection) =>
-    setDirById((current) => {
-      const next = { ...current };
-      anchors.forEach((row) => {
-        next[row.id] = value;
-      });
-      return next;
+  const setAllDirections = (value: SpreadDirection) => {
+    const next = { ...dirById };
+    anchors.forEach((row) => {
+      next[row.id] = value;
     });
+    tune({ dirById: next });
+  };
 
   // ── Áp đáp án cho tất cả dòng ────────────────────────────────────────────
   // A Q&A task has one answer; only the frame varies per row. The anchor
@@ -351,9 +388,20 @@ export default function BasketBody({
 
   // The step that would make the fill exactly blanket the marked interval.
   // Panel-only: the dialog basket (opened from the Board) has no marks.
+  //
+  // Đo từ khung của CHÍNH mốc mà đoạn ghim này thuộc về, không phải từ dòng
+  // hạng 1 như trước. Cách cũ:
+  //
+  //     suggestStep(anchor.frames[0], markedRange, needed)   // anchor = rows[0]
+  //
+  // Ghim đoạn 5176→8657 quanh khung 6916 của mốc thứ hai, nó vẫn đo từ 1939
+  // của mốc thứ nhất: 6718/49 ≈ 137 thay vì 1741/49 ≈ 36. Rải ±49×137 quanh
+  // 6916 phủ 203→13629, tức trượt xa khỏi đoạn người dùng vừa khoanh.
+  const suggestionTarget =
+    !isDialog && markedRange ? rangeOwner(pinned, markedRange) : null;
   const suggestion =
-    !isDialog && markedRange && anchor
-      ? suggestStep(anchor.frames[0], markedRange, needed)
+    suggestionTarget && markedRange
+      ? suggestStep(suggestionTarget.frames[0], markedRange, needed)
       : null;
 
   // Cách cũ chỉ chạy khi HAI ĐẦU đổi:
@@ -371,19 +419,65 @@ export default function BasketBody({
   // Giờ chạy lại mỗi khi con số gợi ý đổi — thêm dòng neo, đổi mốc, đổi hai
   // đầu — và thứ giữ tay người dùng lại là `stepEdited` chứ không phải danh
   // sách phụ thuộc.
+  //
+  // Con số tính ra được ghi vào HAI chỗ: ô "Bước" chung (để badge "tự tính" và
+  // dòng "phủ … → …" nói đúng thứ vừa xảy ra) và `autoStepById` của riêng mốc
+  // đó. Chỗ thứ hai mới là chỗ giữ nó lại: lần ghim sau đổi ô chung sang con
+  // số của mốc mới, còn mốc cũ đọc bản đã đóng băng của mình.
+  const suggestionTargetId = suggestionTarget?.id ?? null;
   useEffect(() => {
-    if (stepEdited || suggestion === null) {
+    if (stepEdited || suggestion === null || suggestionTargetId === null) {
       return;
     }
-    setStep(suggestion);
-    setStepText(String(suggestion));
-  }, [suggestion, stepEdited]);
+    // Đã đúng rồi thì đừng ghi: effect này chạy lại sau mỗi lần store đổi, mà
+    // `patch` luôn tạo object mới nên ghi vô điều kiện là một vòng lặp vô tận.
+    if (
+      step === suggestion &&
+      autoStepById[suggestionTargetId] === suggestion
+    ) {
+      return;
+    }
+    // Gọi thẳng `patchTuning` chứ không qua `tune`: `tune` được tạo lại mỗi
+    // lần render nên đưa vào danh sách phụ thuộc là effect chạy mọi render.
+    patchTuning(task.id, task.type, {
+      step: suggestion,
+      stepText: String(suggestion),
+      autoStepById: { ...autoStepById, [suggestionTargetId]: suggestion },
+    });
+  }, [
+    suggestion,
+    suggestionTargetId,
+    stepEdited,
+    step,
+    autoStepById,
+    patchTuning,
+    task.id,
+    task.type,
+  ]);
 
   // Ghim lại hai đầu = khoanh một khoảnh khắc khác, nên trả quyền tính về cho
   // giao diện. Không có nó thì gõ tay một lần là tắt tự tính đến hết phiên.
+  //
+  // Cách cũ chỉ có hai đầu trong danh sách phụ thuộc:
+  //
+  //     useEffect(() => { setStepEdited(false) },
+  //               [markedRange?.start, markedRange?.end]);
+  //
+  // Effect thì chạy cả lúc MỚI GẮN. Hồi state còn nằm trong component, mới gắn
+  // cũng là mới tinh nên không ai để ý. Giờ state sống lâu hơn component: mở
+  // hộp thoại "Giỏ" ra là gắn thêm một instance, và nó xoá mất cờ người dùng
+  // vừa giành lấy bằng cách gõ tay — lần render sau giao diện tính đè lên số
+  // họ gõ. So với `markKey` đã xử lý thì phân biệt được "đoạn đổi thật" với
+  // "vừa mở lại giỏ".
+  const markKey = markedRange
+    ? `${markedRange.start}:${markedRange.end}`
+    : null;
   useEffect(() => {
-    setStepEdited(false);
-  }, [markedRange?.start, markedRange?.end]);
+    if (markKey === null || markKey === tuning.markKey) {
+      return;
+    }
+    patchTuning(task.id, task.type, { markKey, stepEdited: false });
+  }, [markKey, tuning.markKey, patchTuning, task.id, task.type]);
 
   const stripe = (row: AnswerRow) => {
     if (row.origin === "auto") return ORIGIN_STRIPE.auto;
@@ -447,18 +541,23 @@ export default function BasketBody({
                     value={stepText}
                     onChange={(event) => {
                       const raw = event.target.value;
-                      setStepText(raw);
-                      // Gõ vào đây là giành lấy con số: từ giờ giao diện thôi
-                      // tính giùm, kể cả khi thêm dòng neo làm gợi ý đổi.
-                      setStepEdited(true);
                       const parsed = Number(raw);
                       // Commit only a usable value, so clearing the field to
                       // retype does not snap it to 1 under the cursor.
-                      if (raw !== "" && Number.isInteger(parsed) && inStepRange(parsed)) {
-                        setStep(parsed);
-                      }
+                      const usable =
+                        raw !== "" &&
+                        Number.isInteger(parsed) &&
+                        inStepRange(parsed);
+                      tune({
+                        stepText: raw,
+                        // Gõ vào đây là giành lấy con số: từ giờ giao diện
+                        // thôi tính giùm, kể cả khi thêm dòng neo làm gợi ý
+                        // đổi.
+                        stepEdited: true,
+                        ...(usable ? { step: parsed } : {}),
+                      });
                     }}
-                    onBlur={() => setStepText(String(step))}
+                    onBlur={() => tune({ stepText: String(step) })}
                     className="w-16 px-2 py-0.5 rounded-[6px] border border-proto-line bg-white font-mono font-bold text-sm text-right text-proto-ink"
                   />
                   <span className="text-[10px] text-proto-muted">frame</span>
@@ -484,9 +583,11 @@ export default function BasketBody({
                       // Bấm gợi ý là nhường lại cho giao diện, nên bật tự tính
                       // trở lại — nếu không, số này đứng yên trong khi mọi thứ
                       // quanh nó còn đổi.
-                      setStepEdited(false);
-                      setStep(suggestion);
-                      setStepText(String(suggestion));
+                      tune({
+                        stepEdited: false,
+                        step: suggestion,
+                        stepText: String(suggestion),
+                      });
                     }}
                     className="text-[10px] font-semibold text-proto-primary-active underline decoration-dotted"
                   >
@@ -552,10 +653,12 @@ export default function BasketBody({
                           min={0}
                           value={loAt(position)}
                           onChange={(event) =>
-                            setEventLo((current) => ({
-                              ...current,
-                              [position]: event.target.value,
-                            }))
+                            tune({
+                              eventLo: {
+                                ...eventLo,
+                                [position]: event.target.value,
+                              },
+                            })
                           }
                           className="w-16 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink"
                         />
@@ -565,10 +668,12 @@ export default function BasketBody({
                           min={0}
                           value={hiAt(position)}
                           onChange={(event) =>
-                            setEventHi((current) => ({
-                              ...current,
-                              [position]: event.target.value,
-                            }))
+                            tune({
+                              eventHi: {
+                                ...eventHi,
+                                [position]: event.target.value,
+                              },
+                            })
                           }
                           className="w-16 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink"
                         />
@@ -580,10 +685,7 @@ export default function BasketBody({
                             type="button"
                             title={label}
                             onClick={() =>
-                              setEventDir((current) => ({
-                                ...current,
-                                [position]: id,
-                              }))
+                              tune({ eventDir: { ...eventDir, [position]: id } })
                             }
                             className={`w-6 py-0.5 text-[12px] leading-none ${
                               (eventDir[position] ?? "both") === id
@@ -614,7 +716,7 @@ export default function BasketBody({
               {pinned.length > 0 && task.type !== "trake" && (
                 <div className="mt-2 border border-proto-line rounded-[8px] bg-white divide-y divide-proto-line max-h-48 overflow-y-auto">
                   {pinned.map((row, index) => {
-                    const on = !anchorOff.has(row.id);
+                    const on = !anchorOff.includes(row.id);
                     return (
                       <div
                         key={row.id}
@@ -627,11 +729,10 @@ export default function BasketBody({
                           checked={on}
                           title="Dùng dòng này làm mốc"
                           onChange={() =>
-                            setAnchorOff((current) => {
-                              const next = new Set(current);
-                              if (next.has(row.id)) next.delete(row.id);
-                              else next.add(row.id);
-                              return next;
+                            tune({
+                              anchorOff: anchorOff.includes(row.id)
+                                ? anchorOff.filter((id) => id !== row.id)
+                                : [...anchorOff, row.id],
                             })
                           }
                         />
@@ -656,10 +757,7 @@ export default function BasketBody({
                               disabled={!on}
                               title={label}
                               onClick={() =>
-                                setDirById((current) => ({
-                                  ...current,
-                                  [row.id]: id,
-                                }))
+                                tune({ dirById: { ...dirById, [row.id]: id } })
                               }
                               className={`w-6 py-0.5 text-[12px] leading-none ${
                                 dirOf(row.id) === id
@@ -677,12 +775,14 @@ export default function BasketBody({
                           min={STEP_MIN}
                           max={STEP_MAX}
                           disabled={!on}
-                          value={stepById[row.id] ?? String(step)}
+                          value={stepTextOf(row.id)}
                           onChange={(event) =>
-                            setStepById((current) => ({
-                              ...current,
-                              [row.id]: event.target.value,
-                            }))
+                            tune({
+                              stepById: {
+                                ...stepById,
+                                [row.id]: event.target.value,
+                              },
+                            })
                           }
                           title="Bước riêng cho mốc này"
                           className="w-14 px-1 py-0.5 rounded-[5px] border border-proto-line bg-white font-mono text-[11px] text-right text-proto-ink shrink-0"

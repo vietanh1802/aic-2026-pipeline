@@ -73,3 +73,23 @@ export function listSearchHistory(
 ): Promise<{ entries: SearchHistoryEntry[] }> {
   return apiFetch(`/api/tasks/${taskId}/search-history?limit=${limit}`);
 }
+
+/** "mine" = chỉ dòng của mình; "all" = cả nhóm, backend đòi quyền admin. */
+export type ClearHistoryScope = "mine" | "all";
+
+/**
+ * Dọn lịch sử tìm của một câu. Trả về SỐ DÒNG đã xoá.
+ *
+ * Không đụng tới search-state: bảng "cả nhóm đang tìm câu này" là thứ khác, và
+ * người vừa xoá vẫn còn nguyên truy vấn trên màn hình. Nghĩa là bấm tiếp một
+ * khung trên chính truy vấn đó sẽ ghi lại một mục mới — đúng, vì họ vẫn đang
+ * tìm nó.
+ */
+export function clearSearchHistory(
+  taskId: number,
+  scope: ClearHistoryScope
+): Promise<{ removed: number }> {
+  return apiFetch(`/api/tasks/${taskId}/search-history?scope=${scope}`, {
+    method: "DELETE",
+  });
+}

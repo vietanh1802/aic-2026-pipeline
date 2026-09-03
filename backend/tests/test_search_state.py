@@ -6,17 +6,19 @@ from fastapi import HTTPException
 from app.db.connection import utcnow_iso
 from app.routers.search_state import (
     SearchStateRequest,
+    clear_search_history,
+    list_search_history,
     list_search_states,
     save_search_state,
 )
 
 
-def _user(conn, username="an"):
+def _user(conn, username="an", role="member"):
     cursor = conn.execute(
         "INSERT INTO users (username, display_name, role, password_hash, "
         "must_change_password, disabled, created_at) "
-        "VALUES (?, ?, 'member', 'x', 0, 0, ?)",
-        (username, username.upper(), utcnow_iso()),
+        "VALUES (?, ?, ?, 'x', 0, 0, ?)",
+        (username, username.upper(), role, utcnow_iso()),
     )
     return conn.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
@@ -158,3 +160,102 @@ def test_params_too_large_fall_back_to_empty_rather_than_being_stored(conn):
     )
 
     assert list_search_states(task, an, conn)["states"][0]["params"] == {}
+
+
+# --- Dọn lịch sử tìm -------------------------------------------------------
+
+
+def _history(conn, task, user, *queries):
+    for query in queries:
+        save_search_state(task, _state(query_text=query), user, conn)
+
+
+def test_clearing_my_history_leaves_everyone_elses_alone(conn):
+    """Luật author_id của repo, áp cho bảng lịch sử.
+
+    Đường tìm của người khác là dữ liệu của họ; một người bấm dọn bàn mình
+    không được kéo theo đường đi mà cả nhóm còn đang dựa vào.
+    """
+    an = _user(conn, "an")
+    vanh = _user(conn, "vanh")
+    task = _task(conn, an["id"])
+    _history(conn, task, an, "của An một", "của An hai")
+    _history(conn, task, vanh, "của Vanh")
+
+    assert clear_search_history(task, an, conn, scope="mine") == {"removed": 2}
+
+    left = list_search_history(task, an, conn)["entries"]
+    assert [entry["query_text"] for entry in left] == ["của Vanh"]
+
+
+def test_a_member_cannot_clear_the_whole_task(conn):
+    an = _user(conn, "an")
+    vanh = _user(conn, "vanh")
+    task = _task(conn, an["id"])
+    _history(conn, task, vanh, "của Vanh")
+
+    with pytest.raises(HTTPException) as raised:
+        clear_search_history(task, an, conn, scope="all")
+    assert raised.value.status_code == 403
+    assert len(list_search_history(task, an, conn)["entries"]) == 1
+
+
+def test_admin_clearing_all_wipes_the_task_for_everyone(conn):
+    admin = _user(conn, "admin", role="admin")
+    vanh = _user(conn, "vanh")
+    task = _task(conn, admin["id"])
+    _history(conn, task, admin, "của Admin")
+    _history(conn, task, vanh, "của Vanh")
+
+    assert clear_search_history(task, admin, conn, scope="all") == {"removed": 2}
+    assert list_search_history(task, admin, conn)["entries"] == []
+
+
+def test_clearing_one_task_keeps_the_other_task_history(conn):
+    """Nút nằm trong màn của MỘT câu, nên nó chỉ được dọn đúng câu đó."""
+    an = _user(conn, "an")
+    first = _task(conn, an["id"], code="07")
+    second = _task(conn, an["id"], code="12")
+    _history(conn, first, an, "câu bảy")
+    _history(conn, second, an, "câu mười hai")
+
+    clear_search_history(first, an, conn, scope="mine")
+
+    assert list_search_history(first, an, conn)["entries"] == []
+    assert len(list_search_history(second, an, conn)["entries"]) == 1
+
+
+def test_clearing_does_not_touch_the_live_search_state(conn):
+    """Lịch sử và "đang tìm gì" là hai bảng, và chỉ một cái bị dọn.
+
+    Xoá cả hai thì bảng "cả nhóm đang tìm câu này" trống trơn trong khi mọi
+    người vẫn đang gõ — nhìn như cả nhóm vừa bỏ câu.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    _history(conn, task, an, "vẫn đang tìm")
+
+    clear_search_history(task, an, conn, scope="mine")
+
+    states = list_search_states(task, an, conn)["states"]
+    assert len(states) == 1
+    assert states[0]["query_text"] == "vẫn đang tìm"
+
+
+def test_an_unknown_scope_is_refused_rather_than_treated_as_mine(conn):
+    """Gõ sai `scope` không được âm thầm xoá thứ khác với thứ người ta định."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    _history(conn, task, an, "giữ nguyên")
+
+    with pytest.raises(HTTPException) as raised:
+        clear_search_history(task, an, conn, scope="everything")
+    assert raised.value.status_code == 400
+    assert len(list_search_history(task, an, conn)["entries"]) == 1
+
+
+def test_clearing_a_task_that_does_not_exist_is_refused(conn):
+    an = _user(conn, "an")
+    with pytest.raises(HTTPException) as raised:
+        clear_search_history(999999, an, conn, scope="mine")
+    assert raised.value.status_code == 404

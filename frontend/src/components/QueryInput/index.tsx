@@ -7,7 +7,6 @@ import {
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
-import { useState } from "react";
 
 interface QueryInputProps {
   doSearch: () => void;
@@ -43,10 +42,15 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const setQueryTranslated = useQueryStore(
     (state) => state.setQueryTranslated
   );
-  // Advanced controls (Show Top, Top-M, Rerank, Language, Translate, Search
-  // Type) collapse behind a toggle, closed by default — during a round the
-  // user just types and hits Enter, and rarely touches these controls.
-  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+  // Cụm tuỳ chọn (Show Top, Top-M, Rerank, Language, Translate, Search Type)
+  // trước đây gấp sau nút "Tuỳ chọn", đóng sẵn. Bỏ nút, để hiện thường trực:
+  // Search Type nằm trong cụm đó, mà chuyển sang TRAKE hay OCR là việc làm
+  // nhiều lần một vòng — "đóng sẵn" nghĩa là mỗi lần đổi tuyến tìm mất thêm
+  // một cú bấm mở ra và một cú bấm đóng lại.
+  //
+  // Hồi cụm này còn là thanh ngang ở đáy màn hình thì mở ra là nó che mất
+  // hàng kết quả cuối, nên đóng sẵn có lý. Từ 4.2.0 nó là cột trái, không đè
+  // lên gì nữa, nên lý do đó hết hiệu lực.
 
   /**
    * Dịch xong thì ghi thẳng vào ô nhập bên dưới, không hiện bảng xem trước.
@@ -145,7 +149,6 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           ngang rộng 900px ở đáy màn hình. Trong cột 360px, `justify-between`
           đẩy hai cụm ra hai mép rồi bỏ lại một khoảng trống ở giữa, còn từng
           ô thì bị bóp cho tới lúc rớt dòng lung tung. */}
-      {showAdvanced && (
       <div className="w-full flex flex-col gap-3">
         <div className="flex flex-wrap items-end gap-x-3 gap-y-2 font-baloo">
           <div className="items-center">
@@ -274,17 +277,16 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           </div>
         </div>
       </div>
-      )}
 
-      {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
-          text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}
-      {(searchType === "temporal" || searchType === "trake") && (
-        <p className="text-xs text-proto-muted -mt-2">
-          {searchType === "temporal"
-            ? "Nhập đúng 2 đoạn, cách nhau bằng dấu \".\" — vd: \"người bước lên sân khấu. khán giả vỗ tay\""
-            : "Nhập từ 2 đoạn trở lên, theo thứ tự thời gian, cách nhau bằng dấu \".\" — vd: \"cắt nấm. cắt đậu hũ. bật bếp\""}
-        </p>
-      )}
+      {/* Hai dòng gợi ý cú pháp cho Temporal/TRAKE đã bỏ ("Nhập đúng 2 đoạn,
+          cách nhau bằng dấu ." và bản N đoạn của TRAKE). Cùng lý do với đoạn
+          hướng dẫn OCR bên dưới: đọc một lần là thuộc, từ lần thứ hai trở đi
+          nó chỉ đẩy ô nhập xuống thấp.
+
+          Luật tách đoạn vẫn còn nói ở chỗ gõ vào được: `placeholder` của ô
+          nhập đổi theo searchType và nêu thẳng ví dụ có dấu chấm phân đoạn
+          ("vd: cắt nấm. cắt đậu hũ. bật bếp"). Tách đoạn thật sự làm ở
+          backend — preprocess.py:_split_query_text. */}
 
       {/* Đoạn hướng dẫn dài cho tuyến OCR đã bỏ. Nó chiếm bốn dòng ngay trên ô
           nhập, mà cả nhóm đọc đúng một lần rồi thôi — từ lần thứ hai trở đi nó
@@ -325,18 +327,13 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               : "Enter your query"
           }
         />
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((prev) => !prev)}
-            className="shrink-0 whitespace-nowrap rounded-[8px] border border-proto-line px-3 py-2 text-xs font-bold text-proto-muted hover:bg-proto-soft"
-          >
-            {showAdvanced ? "Ẩn tuỳ chọn" : "Tuỳ chọn"}
-          </button>
-          <Button onClick={doSearch} disabled={disabled} className="flex-1">
-            Search
-          </Button>
-        </div>
+        {/* Nút "Tuỳ chọn / Ẩn tuỳ chọn" đứng cạnh Search ở đây đã bỏ — cụm
+            tuỳ chọn giờ hiện thường trực, xem chú thích chỗ khai báo. Search
+            còn một mình nên bỏ luôn thẻ bọc `flex` và `flex-1`: một nút duy
+            nhất không cần chia phần ngang với ai. */}
+        <Button onClick={doSearch} disabled={disabled} className="w-full">
+          Search
+        </Button>
       </div>
     </div>
   );

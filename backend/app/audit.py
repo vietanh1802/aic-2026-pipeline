@@ -41,6 +41,12 @@ TASK_CHOOSE_AUTHOR = "task.choose_author"
 # file của gói, và đặt sai thì bài bị chấm hỏng mà không có dấu hiệu gì trên
 # giao diện — nên phải biết ai đổi, đổi lúc nào, từ giá trị nào.
 PACK_SET_PHASE = "pack.set_phase"
+# Dọn lịch sử tìm của một câu. KHÔNG nằm trong RESTORABLE và `detail` không chép
+# các dòng bị xoá: đường khôi phục duy nhất trong file này (`restore_entry`) chỉ
+# biết chèn lại vào bảng `answers`, nên chép lịch sử vào đây cũng không ai lấy
+# ra được. Ghi lại vì bản `scope="all"` của admin xoá cả đường tìm của người
+# khác — cần biết ai đã bấm, chứ không cần lấy lại.
+SEARCH_HISTORY_CLEAR = "search_history.clear"
 
 # Which actions put answer rows in `detail`, and so can be undone.
 RESTORABLE = (ANSWER_DELETE, ANSWERS_CLEAR, ANSWERS_AUTOFILL_CLEAR)

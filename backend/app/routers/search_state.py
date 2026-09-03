@@ -17,9 +17,10 @@ import json
 import sqlite3
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app import audit
 from app.auth.deps import active_user
 from app.db.connection import get_db, utcnow_iso
 from app.routers._shared import load_task
@@ -235,3 +236,66 @@ def list_search_history(
             for row in rows
         ]
     }
+
+
+# Hai phạm vi xoá, và chỉ hai. Không có "xoá của Nam": bảng này là đường tìm của
+# người ta, người duy nhất được quyết định bỏ nó đi là chính họ — hoặc admin khi
+# cần dọn sạch cả câu trước một vòng thi mới.
+CLEAR_MINE = "mine"
+CLEAR_ALL = "all"
+
+
+@router.delete("/tasks/{task_id}/search-history")
+def clear_search_history(
+    task_id: int,
+    user: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    scope: str = CLEAR_MINE,
+) -> dict[str, Any]:
+    """Dọn lịch sử tìm của một câu.
+
+    `scope="mine"` xoá các dòng của chính người gọi, `scope="all"` xoá của cả
+    nhóm và đòi quyền admin. Khoá theo user_id lấy từ token, cùng luật với
+    `save_search_state`: nếu không thì một người xoá được đường tìm của người
+    khác giữa lúc đang thi.
+
+    KHÔNG đụng vào `search_states`. Đó là "cả nhóm đang tìm gì ngay bây giờ",
+    một thứ khác hẳn — xoá nó đi thì bảng trạng thái trống trơn trong khi mọi
+    người vẫn đang gõ. Hệ quả: người vừa xoá mà còn nguyên truy vấn trên màn
+    hình, bấm tiếp một khung là `_remember` chèn lại một dòng mới. Đúng như vậy
+    — họ vẫn đang tìm truy vấn đó, và dòng mới mang giờ mới.
+
+    Trả về `removed` chứ không phải một `ok` trơn, để màn hình nói được nó vừa
+    bỏ đi bao nhiêu thay vì để người bấm đoán xem cú bấm có ăn không.
+    """
+    if scope not in (CLEAR_MINE, CLEAR_ALL):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"scope phải là '{CLEAR_MINE}' hoặc '{CLEAR_ALL}'",
+        )
+    if scope == CLEAR_ALL and user["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chỉ admin xoá được lịch sử của cả nhóm",
+        )
+
+    task = load_task(conn, task_id)
+    if scope == CLEAR_ALL:
+        removed = conn.execute(
+            "DELETE FROM search_history WHERE task_id = ?", (task_id,)
+        ).rowcount
+    else:
+        removed = conn.execute(
+            "DELETE FROM search_history WHERE task_id = ? AND user_id = ?",
+            (task_id, user["id"]),
+        ).rowcount
+
+    if removed:
+        audit.record(
+            conn,
+            user["id"],
+            audit.SEARCH_HISTORY_CLEAR,
+            f"task:{task_id}",
+            f"Xoá {removed} dòng lịch sử tìm của câu {task['code']} (scope={scope})",
+        )
+    return {"removed": removed}

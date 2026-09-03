@@ -61,6 +61,49 @@ export function suggestStep(
   return Math.min(2000, Math.max(1, Math.round(halfWidth / steps)));
 }
 
+/**
+ * Mốc mà một đoạn ghim đầu–cuối đang nói tới.
+ *
+ * Chỉ có MỘT `markedRange` tại một thời điểm — nó là dải ghim của video đang
+ * mở — nhưng giỏ thì có nhiều mốc. Trước đây bước tự tính luôn đo từ khung của
+ * dòng HẠNG 1, nên ghim đoạn thứ hai quanh khung 6916 lại đo khoảng cách từ
+ * 1939 tới mép đoạn: ra một con số không phủ đúng đoạn nào cả, rồi con số đó
+ * đè lên mọi mốc.
+ *
+ * Chủ của đoạn là dòng ghim tay có khung nằm TRONG đoạn — người dùng ghim hai
+ * đầu rồi mới bấm Add Answer, nên dòng vừa sinh ra chắc chắn nằm trong đó.
+ * Nhiều dòng cùng nằm trong thì lấy dòng gần GIỮA đoạn nhất: khung "sẽ nộp"
+ * của dải ghim chính là điểm giữa, nên dòng sinh ra từ đoạn này gần nó nhất.
+ *
+ * Trả null khi không dòng nào nằm trong đoạn — lúc đó thà không gợi ý gì còn
+ * hơn gợi ý một con số đo từ một mốc chẳng liên quan.
+ */
+export function rangeOwner(
+  rows: AnswerRow[],
+  range: MarkedRange
+): AnswerRow | null {
+  const low = Math.min(range.start, range.end);
+  const high = Math.max(range.start, range.end);
+  const middle = (low + high) / 2;
+
+  let owner: AnswerRow | null = null;
+  let bestGap = Infinity;
+  for (const row of rows) {
+    const frame = row.frames[0];
+    if (!Number.isFinite(frame) || frame < low || frame > high) {
+      continue;
+    }
+    const gap = Math.abs(frame - middle);
+    // `<` chứ không phải `<=`: hoà thì giữ dòng đứng trước, tức thứ hạng cao
+    // hơn — một luật cố định để cùng một giỏ luôn ra cùng một chủ.
+    if (gap < bestGap) {
+      owner = row;
+      bestGap = gap;
+    }
+  }
+  return owner;
+}
+
 export function autofillPlan(
   rows: AnswerRow[],
   rowsPerQuery: number,
