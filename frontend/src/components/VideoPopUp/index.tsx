@@ -250,6 +250,7 @@ export default function VideoPopup({
           </div>
 
           <FrameMarkStrip
+            videoId={videoId}
             currentSeconds={playhead}
             duration={duration}
             fps={frame_detect}

@@ -75,7 +75,16 @@ export const useQueryStore = create<QueryStore>((set) => ({
   ocrStripDiacritics: true,
   setOcrStripDiacritics: (value) => set({ ocrStripDiacritics: value }),
 
-  translateLang: "en-vi",
+  // vi-en, không phải en-vi.
+  //
+  // Cả nhóm gõ tiếng Việt, còn BEiT3 và CLIP chỉ hiểu tiếng Anh — nên chiều
+  // duy nhất giúp tìm được gì là Việt sang Anh. Chiều ngược lại chỉ để đọc
+  // lại một câu vừa dịch, việc hiếm khi làm giữa lúc thi.
+  //
+  // Mặc định cũ là "en-vi", và store này không lưu xuống localStorage: đổi
+  // sang vi-en xong tải lại trang là nó quay về, nên mỗi phiên lại phải đổi
+  // tay một lần trước khi bấm Translate được.
+  translateLang: "vi-en",
   setTranslateLang: (lang) => set({ translateLang: lang }),
   queryTranslated: "",
   setQueryTranslated: (text) => set({ queryTranslated: text }),

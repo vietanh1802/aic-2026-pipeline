@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
+import FramePreview from "../FramePreview";
 import { frameAt, frameRange } from "../../helpers/frameRange";
 
 /**
@@ -24,6 +25,7 @@ function clock(seconds: number): string {
 }
 
 export default function FrameMarkStrip({
+  videoId,
   currentSeconds,
   duration,
   fps,
@@ -35,6 +37,8 @@ export default function FrameMarkStrip({
   onSeek,
   disabled = false,
 }: {
+  /** Để tra keyframe gần nhất cho ba ô xem trước. */
+  videoId: string;
   currentSeconds: number;
   duration: number;
   fps: number;
@@ -48,6 +52,11 @@ export default function FrameMarkStrip({
   /** TRAKE submits one frame per event, so a midpoint has nowhere to go. */
   disabled?: boolean;
 }) {
+  // Ba ô ảnh đầu/giữa/cuối, mở bằng nút. Mặc định đóng: phần lớn thời gian
+  // người dùng đang nhìn chính cái video ngay trên, ba ô này chỉ có việc vào
+  // đúng lúc chốt — khi cần biết khung giữa mà máy tính ra có rơi vào cảnh
+  // mình muốn không, mà cái đó thì video không trả lời được nếu không tua về.
+  const [showFrames, setShowFrames] = useState(false);
   // I and O are what every video editor binds these to. Guarded on the target
   // so typing an answer into a field does not drop marks behind the dialog.
   useEffect(() => {
@@ -81,6 +90,9 @@ export default function FrameMarkStrip({
   const low = Math.min(markIn ?? currentSeconds, markOut ?? currentSeconds);
   const high = Math.max(markIn ?? currentSeconds, markOut ?? currentSeconds);
   const marked = markIn !== null || markOut !== null;
+  // Hai đầu trùng nhau thì khung giữa CHÍNH LÀ hai đầu — không có gì để đối
+  // chiếu. `range` cũng null khi thiếu fps, và lúc đó không có số frame nào.
+  const canCompare = range !== null && range.start !== range.end;
 
   if (disabled) {
     return (
@@ -177,6 +189,19 @@ export default function FrameMarkStrip({
           </b>
         </span>
 
+        {/* Chỉ hiện khi hai đầu KHÁC nhau. Ghim trùng một chỗ thì ba ô ra ba
+            ảnh giống hệt, và một cái nút mở ra ba bản sao thì tệ hơn là không
+            có nút. */}
+        {canCompare && (
+          <button
+            type="button"
+            onClick={() => setShowFrames((open) => !open)}
+            className="text-[11.5px] font-semibold text-proto-primary-active underline decoration-dotted"
+          >
+            {showFrames ? "ẩn 3 khung" : "xem 3 khung"}
+          </button>
+        )}
+
         {range ? (
           <span className="ml-auto flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
@@ -192,6 +217,60 @@ export default function FrameMarkStrip({
           </span>
         )}
       </div>
+
+      {/* Ba khung: hai đầu người dùng ghim, và khung GIỮA do frameRange tính
+          ra — chính là khung sẽ được nộp.
+
+          Cái đáng xem là khung giữa: hai đầu thì vừa tua qua nên còn nhớ,
+          còn `floor((start + end) / 2)` là một con số máy tính ra, và không
+          có gì bảo đảm nó rơi vào đúng cảnh mình muốn. Trước đây muốn biết
+          thì phải tua ngược video về đó rồi tua lại.
+
+          Ảnh là keyframe GẦN NHẤT, không phải đúng khung đó — số frame dưới
+          mỗi ô mới là số thật. Bấm vào ô nào thì tua video tới đó. */}
+      {canCompare && showFrames && range && (
+        <div className="mt-2 pt-2 border-t border-dashed border-proto-line grid grid-cols-3 gap-2">
+          {(
+            [
+              ["đầu", range.start],
+              ["giữa — sẽ nộp", range.frame],
+              ["cuối", range.end],
+            ] as const
+          ).map(([label, frame], index) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => onSeek(frame / fps)}
+              title={`Tua video tới frame ${frame}`}
+              className="text-left"
+            >
+              <span
+                className={`block w-full aspect-video rounded-[6px] overflow-hidden border-2 ${
+                  index === 1 ? "border-proto-primary" : "border-proto-line"
+                }`}
+              >
+                <FramePreview
+                  videoId={videoId}
+                  frameIdx={frame}
+                  size="fill"
+                />
+              </span>
+              <span className="flex items-baseline justify-between gap-1 mt-0.5">
+                <span
+                  className={`text-[10px] truncate ${
+                    index === 1
+                      ? "font-bold text-proto-primary-active"
+                      : "text-proto-muted"
+                  }`}
+                >
+                  {label}
+                </span>
+                <b className="font-mono text-[11px] text-proto-ink">{frame}</b>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -616,7 +616,10 @@ function App({
   };
 
   return (
-    <div className="relative min-h-screen bg-proto-canvas p-2">
+    // pl-[368px] chừa chỗ cho cột nhập truy vấn cố định bên trái (360px + p-2).
+    // Hai con số này phải đi cùng nhau; đổi một cái mà quên cái kia thì hoặc
+    // cột đè lên ảnh, hoặc thừa một dải trắng dọc suốt trang.
+    <div className="relative min-h-screen bg-proto-canvas p-2 pl-[368px]">
       {/* Khối header cũ — logo "Scavenger", chữ VQF, badge phiên bản, ô "Tới
           frame" và badge trạng thái API — đã tháo khỏi đây.
 
@@ -811,7 +814,10 @@ function App({
           </button>
         </div>
       )}
-      <div className="mb-[280px]" />
+      {/* mb-[280px] → mb-10. Khoảng trống đó chừa chỗ cho thanh nhập nổi ở
+          đáy màn hình; thanh đó chuyển sang cột trái nên không còn gì che
+          hàng kết quả cuối. Vẫn để một khoảng thở cuối trang. */}
+      <div className="mb-10" />
 
       {/* Lưới "nhóm theo Video ID" đã bỏ cùng với ô Sorted By.
 
@@ -823,7 +829,7 @@ function App({
 
       {/* Temporal Search Results — Alg.4 text-query path */}
       {(isLoading || (hasQueried && searchType === "temporal")) && (
-        <div className="max-w-[98%] mx-auto mb-[280px] px-4">
+        <div className="max-w-[98%] mx-auto mb-10 px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
               Đang tìm kiếm…
@@ -844,7 +850,7 @@ function App({
 
       {/* TRAKE Search Results */}
       {(isLoading || (hasQueried && searchType === "trake")) && (
-        <div className="max-w-[98%] mx-auto mb-[280px] px-4">
+        <div className="max-w-[98%] mx-auto mb-10 px-4">
           {isLoading ? (
             <p className="text-sm text-proto-muted animate-pulse">
               Đang tìm kiếm…
@@ -930,8 +936,19 @@ function App({
         </div>
       )}
 
-      {/* Sticky Query Input */}
-      <div className="w-full max-w-[900px] fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white border border-proto-line shadow-xl rounded-xl z-40">
+      {/* Ô nhập truy vấn — cột trái cố định.
+          Bề rộng phải khớp `pl-[368px]` ở thẻ bọc ngoài cùng (360 + p-2).
+
+          Trước đây nó là một thanh nổi giữa đáy màn hình
+          (`max-w-[900px] fixed bottom-6 left-1/2 -translate-x-1/2`). Thanh đó
+          nằm ĐÈ lên lưới kết quả, nên mỗi khối kết quả phải chừa `mb-[280px]`
+          để hàng cuối không bị nó che — 280px trống dưới mọi trang, và mở cụm
+          "Tuỳ chọn" ra thì thanh cao thêm và che nhiều hơn nữa.
+
+          Cột trái thì không đè lên gì: nó chiếm chỗ của chính nó, ảnh nằm
+          trọn phần còn lại. Đổi lại ô nhập hẹp hơn, và đó là lý do ô chữ
+          thành nhiều dòng — xem QueryInput. */}
+      <div className="fixed left-0 top-[var(--nav-h)] bottom-0 w-[360px] z-40 overflow-y-auto bg-white border-r border-proto-line shadow-lg">
         <QueryInput
           doSearch={doSearch}
           disabled={isSearchDisabled || isLoading}

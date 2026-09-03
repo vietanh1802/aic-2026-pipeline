@@ -755,12 +755,11 @@ export default function EvaluationPage() {
             </div>
           )}
 
-          {/* Ai cũng chỉnh được bài của mình, nên phải nói rõ vì sao cột người
-              khác không kéo được — nếu không thì trông như trang bị lỗi. */}
-          <p className="text-[11.5px] text-proto-muted mt-2">
-            Bạn kéo thả và xoá dòng được trên cột của mình. Cột của người khác
-            chỉ để xem — bài của họ do họ sửa.
-          </p>
+          {/* Dòng "Bạn kéo thả và xoá dòng được trên cột của mình. Cột của
+              người khác chỉ để xem" đã bỏ. Nó giải thích một luật mà giao
+              diện đã tự nói: cột của mình có tay kéo và nút ×, cột người khác
+              thì không. Cả nhóm đọc đúng một lần rồi thôi, từ lần sau nó chỉ
+              là một dòng chữ nằm cuối trang. */}
         </>
       )}
 

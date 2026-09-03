@@ -136,12 +136,18 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   ];
 
   return (
-    <div className="bg-white border p-5 border-proto-line rounded-xl flex flex-col gap-y-5 font-baloo">
+    // Không còn `border rounded-xl`: khung bao ngoài giờ là cột trái cố định
+    // trong App.tsx, nó đã có viền phải và nền trắng của riêng nó.
+    <div className="p-4 flex flex-col gap-y-4 font-baloo">
       {/* Khối "Dịch" (tiêu đề + nút X + ô chỉ-đọc) đã bỏ — xem handleTranslate. */}
 
+      {/* Xếp DỌC, không phải `flex-row justify-between` như hồi còn là thanh
+          ngang rộng 900px ở đáy màn hình. Trong cột 360px, `justify-between`
+          đẩy hai cụm ra hai mép rồi bỏ lại một khoảng trống ở giữa, còn từng
+          ô thì bị bóp cho tới lúc rớt dòng lung tung. */}
       {showAdvanced && (
-      <div className="w-full flex flex-row justify-between flex-wrap gap-y-3">
-        <div className="flex flex-row gap-x-4 items-center font-baloo flex-wrap gap-y-2">
+      <div className="w-full flex flex-col gap-3">
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2 font-baloo">
           <div className="items-center">
             <p className="font-bold">Show Top:</p>
             <Dropdown
@@ -149,7 +155,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               value={resultLimit}
               onChange={(opt) => setResultLimit(opt.value)}
               dropDownWidth={100}
-              dropDirection="up"
+              dropDirection="down"
             />
           </div>
 
@@ -165,7 +171,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                   value={String(topM)}
                   onChange={(opt) => setTopM(Number(opt.value))}
                   dropDownWidth={90}
-                  dropDirection="up"
+                  dropDirection="down"
                 />
               </div>
 
@@ -222,12 +228,12 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                 value={singleModel}
                 onChange={(opt) => setSingleModel(opt.value as ModelName)}
                 dropDownWidth={100}
-                dropDirection="up"
+                dropDirection="down"
               />
             </div>
           )}
         </div>
-        <div className="flex flex-row items-center gap-x-3">
+        <div className="flex flex-wrap items-end gap-2">
           {/* Translation exists for BEiT3/CLIP, which only understand English.
               Text on screen is native Vietnamese - translating the query into
               English would stop it matching the corpus at all. */}
@@ -242,7 +248,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                     setTranslateLang(opt.value as TranslateLanguage)
                   }
                   dropDownWidth={100}
-                  dropDirection="up"
+                  dropDirection="down"
                 />
               </div>
               <div>
@@ -263,7 +269,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               value={searchType}
               onChange={(opt) => setSearchType(opt.value as SearchType)}
               dropDownWidth={194}
-              dropDirection="up"
+              dropDirection="down"
             />
           </div>
         </div>
@@ -285,15 +291,29 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           chỉ đẩy ô nhập xuống. Phần đáng nhớ nhất vẫn còn ở chỗ gõ vào được:
           placeholder của ô nhập nêu sẵn ví dụ có thật. */}
 
-      {/* Toggle lives on the same line as the query row — closed state
-          (default) is a single compact row: input + toggle + Search. */}
-      <div className="w-full flex flex-row gap-x-3">
-        <input
+      {/* Ô chữ NHIỀU DÒNG, không phải `<input>` một dòng.
+          Cột nhập rộng 360px, mà một truy vấn TRAKE là bốn câu tả nối nhau —
+          trên một dòng thì thấy được chừng năm chữ đầu, phần còn lại phải rê
+          con trỏ sang mới đọc được. Đúng lúc cần đọc lại nó nhất: trước khi
+          bấm Search. `resize-y` để ai cần thì kéo cao thêm.
+
+          Enter vẫn là Search như cũ, nên `preventDefault` — nếu không nó chèn
+          một dòng trống rồi mới tìm. Shift+Enter mới xuống dòng. */}
+      <div className="w-full flex flex-col gap-2">
+        <textarea
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
-          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
+          rows={6}
+          // Dòng chú thích "Enter để tìm · Shift+Enter xuống dòng" đã bỏ khỏi
+          // màn hình — nó chiếm một dòng vĩnh viễn cho một câu đọc một lần.
+          // Chuyển vào tooltip: vẫn tra được, không nằm choán chỗ.
+          title="Enter để tìm · Shift+Enter xuống dòng"
+          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line resize-y min-h-[120px] leading-snug"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !disabled) doSearch();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!disabled) doSearch();
+            }
           }}
           placeholder={
             searchType === "temporal"
@@ -305,16 +325,18 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               : "Enter your query"
           }
         />
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((prev) => !prev)}
-          className="shrink-0 whitespace-nowrap rounded-[8px] border border-proto-line px-3 py-2 text-xs font-bold text-proto-muted hover:bg-proto-soft"
-        >
-          {showAdvanced ? "Ẩn tuỳ chọn" : "Tuỳ chọn"}
-        </button>
-        <Button onClick={doSearch} disabled={disabled}>
-          Search
-        </Button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((prev) => !prev)}
+            className="shrink-0 whitespace-nowrap rounded-[8px] border border-proto-line px-3 py-2 text-xs font-bold text-proto-muted hover:bg-proto-soft"
+          >
+            {showAdvanced ? "Ẩn tuỳ chọn" : "Tuỳ chọn"}
+          </button>
+          <Button onClick={doSearch} disabled={disabled} className="flex-1">
+            Search
+          </Button>
+        </div>
       </div>
     </div>
   );
