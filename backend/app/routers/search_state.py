@@ -49,15 +49,6 @@ class SearchStateRequest(BaseModel):
     picked_frame: str | None = Field(None, max_length=255)
     picked_video: str | None = Field(None, max_length=64)
     picked_frame_idx: int | None = None
-    # Cả N mốc của một dòng TRAKE vừa chốt, theo đúng thứ tự sự kiện.
-    #
-    # Ba trường trên là số ít, và với TRAKE thì "khung đã chốt" không phải một
-    # số mà là một bộ: bấm "Chọn" sinh MỘT dòng mang cả bốn mốc. Gửi bốn lần
-    # cũng ra kết quả đúng nhưng là bốn vòng mạng cho một cú bấm, và thứ tự
-    # giữa chúng phụ thuộc vào việc chúng về đích đúng thứ tự đã gửi.
-    #
-    # Bỏ trống thì mọi lời gọi hiện có giữ nguyên hành vi: một khung mỗi lần.
-    picked_frames: list[int] | None = None
 
 
 # Trần số khung giữ cho MỘT truy vấn. Bằng số dòng tối đa của một câu — chốt
@@ -67,47 +58,24 @@ class SearchStateRequest(BaseModel):
 MAX_PICKS = 100
 
 
-def _picks_sent(payload: "SearchStateRequest") -> list[dict[str, Any]]:
-    """Những khung vừa chốt trong lần ghi này. Rỗng khi không chốt gì.
+def _pick_of(payload: "SearchStateRequest") -> dict[str, Any] | None:
+    """Khung vừa chốt, hoặc None khi lần ghi này không chốt gì.
 
-    Tên khác hẳn `_picks_of` bên dưới, và có lý do: cái kia đọc một DÒNG đã lưu
-    trong CSDL, cái này đọc REQUEST vừa tới. Đặt trùng tên thì bản khai sau đè
-    bản trước và Python không nói gì — mọi test đổ một lượt vì `payload["picks"]`.
-
-    Thiếu `picked_video` thì không dựng lại được nút "▶ video · frame", nên nó
-    không phải một lần chốt — lượt dọn cuối phiên đi qua đây với mọi trường
-    picked_* đều None.
-
-    `picked_frames` (bộ N mốc TRAKE) thắng `picked_frame_idx`: khi cả hai cùng
-    có mặt thì cái sau chỉ là mốc đầu của cùng bộ đó, và nhận cả hai sẽ ghi mốc
-    E1 hai lần.
-
-    `name` chỉ gắn cho khung ĐƠN. Với một bộ TRAKE thì tên keyframe của thẻ đã
-    bấm không thuộc riêng mốc nào trong bốn mốc.
+    Thiếu `picked_video` hay `picked_frame_idx` thì không dựng lại được nút
+    "▶ video · frame", nên nó không phải một lần chốt — lượt dọn cuối phiên đi
+    qua đây với cả hai đều None.
     """
-    if not payload.picked_video:
-        return []
-    if payload.picked_frames:
-        return [
-            {"video": payload.picked_video, "frame": int(frame), "name": None}
-            # Cắt tại trần luôn: một bộ dài bất thường là dữ liệu sai, và để nó
-            # chảy tiếp thì `_merge_pick` phải tự lo, mà ở đó không còn ngữ
-            # cảnh để nói vì sao lại cắt.
-            for frame in payload.picked_frames[:MAX_PICKS]
-        ]
-    if payload.picked_frame_idx is None:
-        return []
-    return [
-        {
-            "video": payload.picked_video,
-            "frame": int(payload.picked_frame_idx),
-            "name": payload.picked_frame,
-        }
-    ]
+    if not payload.picked_video or payload.picked_frame_idx is None:
+        return None
+    return {
+        "video": payload.picked_video,
+        "frame": int(payload.picked_frame_idx),
+        "name": payload.picked_frame,
+    }
 
 
-def _merge_pick(raw: Any, fresh: list[dict[str, Any]]) -> str:
-    """Nối các khung mới vào danh sách cũ, giữ thứ tự bấm.
+def _merge_pick(raw: Any, pick: dict[str, Any] | None) -> str:
+    """Nối khung mới vào danh sách cũ, giữ thứ tự bấm.
 
     Thứ tự bấm là thứ tự người dùng tự xếp hạng, nên nối vào CUỐI chứ không
     chèn lên đầu. Bấm lại đúng khung cũ thì không thêm lần nữa — nó không phải
@@ -121,7 +89,7 @@ def _merge_pick(raw: Any, fresh: list[dict[str, Any]]) -> str:
         picks = []
     if not isinstance(picks, list):
         picks = []
-    for pick in fresh:
+    if pick is not None:
         same = any(
             isinstance(p, dict)
             and p.get("video") == pick["video"]
@@ -296,7 +264,7 @@ def _remember(
         and latest["search_type"] == payload.search_type
         and latest["params"] == params
     )
-    fresh = _picks_sent(payload)
+    pick = _pick_of(payload)
     if same:
         # NỐI vào danh sách chứ không ghi đè. Ba cột picked_* vẫn nhận khung
         # mới nhất — chúng là hình dạng search_states dùng chung — nhưng thứ
@@ -305,7 +273,7 @@ def _remember(
         # Không chốt gì thì đừng đụng vào: lượt ghi khi vừa đổi tham số cũng đi
         # qua đây với picked_* rỗng, và để nó xoá ba khung vừa chọn thì đúng
         # bằng lỗi cũ, chỉ khác đường tới.
-        if not fresh:
+        if pick is None:
             conn.execute(
                 "UPDATE search_history SET updated_at = ? WHERE id = ?",
                 (now, latest["id"]),
@@ -318,7 +286,7 @@ def _remember(
                 payload.picked_frame,
                 payload.picked_video,
                 payload.picked_frame_idx,
-                _merge_pick(latest["picks"], fresh),
+                _merge_pick(latest["picks"], pick),
                 now,
                 latest["id"],
             ),
@@ -338,7 +306,7 @@ def _remember(
             payload.picked_frame,
             payload.picked_video,
             payload.picked_frame_idx,
-            _merge_pick(None, fresh),
+            _merge_pick(None, pick),
             now,
             now,
         ),
