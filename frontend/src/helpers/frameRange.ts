@@ -21,6 +21,42 @@
  */
 const EPSILON = 1e-6;
 
+/**
+ * Vị trí của một mốc thời gian trên thanh, tính theo phần trăm bề rộng.
+ *
+ * Tách riêng vì thanh dưới video có HAI thang. Bình thường nó trải cả video;
+ * khi câu TRAKE đã ghim đủ hai đầu thì nó thu về đúng đoạn đó, để chọn khung
+ * bên trong. Một đoạn 300 khung trong video 15.000 khung chỉ chiếm 2% bề rộng
+ * — bấm vào đấy thì mỗi pixel nhảy vài chục khung, không cách nào trúng khung
+ * mình muốn.
+ *
+ * Kẹp trong [0, 1]: đầu phát có thể nằm ngoài cửa sổ khi người dùng tua bằng
+ * điều khiển của trình phát, và một cái vạch vẽ ra ngoài thanh thì tệ hơn là
+ * một cái vạch dính ở mép.
+ */
+export function barPosition(seconds: number, low: number, high: number): number {
+  const width = high - low;
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(seconds)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, (seconds - low) / width));
+}
+
+/**
+ * Chiều ngược lại: bấm vào đâu trên thanh thì đó là giây nào.
+ *
+ * `barPosition` và hàm này phải là hai chiều của cùng một phép quy đổi. Lệch
+ * nhau thì vạch đầu phát đứng một chỗ còn cú bấm nhảy sang chỗ khác, và không
+ * có gì trên màn hình nói cho người dùng biết vì sao.
+ */
+export function barSeconds(fraction: number, low: number, high: number): number {
+  const width = high - low;
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(fraction)) {
+    return low;
+  }
+  return low + Math.min(1, Math.max(0, fraction)) * width;
+}
+
 export function frameAt(seconds: number, fps: number): number | null {
   if (!Number.isFinite(fps) || fps <= 0 || !Number.isFinite(seconds)) {
     return null;

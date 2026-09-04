@@ -288,12 +288,29 @@ function App({
     setframeId(pick.name ? frameIdFromName(pick.name) : String(frame));
     setVideoUrl(video);
     setStartTime(startMsAt(video, frame));
-    setTrakeSlot({
-      cardKey,
-      index,
-      label: labels[index] ?? `E${index + 1}`,
-      total: activeTask?.n_events ?? labels.length,
-    });
+    // Ô mốc CHỈ dành cho câu TRAKE. Trước đây đặt cho mọi loại câu:
+    //
+    //     setTrakeSlot({ cardKey, index, label: ..., total: ... });
+    //
+    // Với câu KIS/Q&A thì đó là sai mô hình. Tuyến TRAKE ở đó chỉ là một CÁCH
+    // TÌM — kể một chuỗi hành động để lọc ra đúng video — chứ không đổi hình
+    // dạng đáp án: một dòng vẫn là một frame, y như ensemble. Đặt ô mốc vào
+    // biến popup thành một thứ khác hẳn: nút đổi thành "Chốt cho E1", chốt
+    // xong thì nút biến mất, và cả đường Add Answer quen thuộc — ghim hai đầu,
+    // nộp khung giữa, giỏ tự gợi ý bước để rải 99 dòng — không đi qua được.
+    //
+    // Bỏ trống ô mốc thì popup mở ra đúng như bấm một thẻ ensemble. Khác biệt
+    // của TRAKE search dừng lại ở màn kết quả.
+    if (activeTask?.type === "trake") {
+      setTrakeSlot({
+        cardKey,
+        index,
+        label: labels[index] ?? `E${index + 1}`,
+        total: activeTask?.n_events ?? labels.length,
+      });
+    } else {
+      setTrakeSlot(null);
+    }
     setShowPopup(true);
   };
 
@@ -699,12 +716,6 @@ function App({
               index: trakeSlot.index,
               label: trakeSlot.label,
               total: trakeSlot.total,
-              // Câu TRAKE nộp cả hàng N mốc thành MỘT dòng, nên chốt một mốc ở
-              // đó mới chỉ là điền vào ô, chưa có gì để ghi. Câu KIS/Q&A thì
-              // ngược lại: một frame ĐÃ là một dòng đủ nghĩa, nên dừng lại ở
-              // việc điền ô là bắt người dùng đóng popup rồi bấm thêm một nút
-              // nữa cho cùng một quyết định họ vừa đưa ra.
-              addsToBasket: Boolean(activeTask && activeTask.type !== "trake"),
               onCommit: (frame, range) => {
                 // Ô mốc từng để trống ảnh ở đây (`url: ""`), và thẻ TRAKE rơi
                 // vào nhánh nền đen chỉ in con số — tức là vừa dừng video ở
@@ -725,9 +736,6 @@ function App({
                   timestamp: "",
                   byHand: true,
                 });
-                // Với KIS/Q&A, mốc này đi thẳng vào giỏ chứ không nằm chờ một
-                // cú bấm nữa. Ghi trước khi dọn `trakeSlot`: sau đó thì không
-                // còn biết mốc nào vừa chốt.
                 // Hai đầu vừa ghim cho riêng mốc này, cất nguyên như đã ghim.
                 // Việc sắp thứ tự và loại bỏ cửa sổ đóng để `eventWindowFields`
                 // làm một chỗ, lúc đổ vào giỏ — chia đôi luật ra hai nơi là
@@ -743,38 +751,23 @@ function App({
                   }));
                 }
 
-                const goesToBasket = Boolean(
-                  activeTask && activeTask.type !== "trake"
-                );
-                if (goesToBasket) {
-                  void commitTrakeFrame(videoUrl, frame);
-                  markTrakePicked(trakeSlot.cardKey, trakeSlot.index);
-                }
-
-                // Trước đây luôn `setShowPopup(false)` ở đây, cả hai nhánh.
+                // Nhánh "với KIS/Q&A thì mốc này đi thẳng vào giỏ" đã bỏ, cùng
+                // với đoạn giữ popup mở cho riêng nhánh đó:
                 //
-                // Đúng với câu TRAKE: chốt xong một ô thì việc kế tiếp là mở ô
-                // E2, mà ô đó nằm trên thẻ phía sau — popup đứng chắn đúng
-                // đường đi tiếp.
+                //     if (activeTask && activeTask.type !== "trake") {
+                //       void commitTrakeFrame(videoUrl, frame);
+                //       markTrakePicked(trakeSlot.cardKey, trakeSlot.index);
+                //     }
                 //
-                // Sai với KIS/Q&A. Ở đó dòng đã vào giỏ rồi, không còn ô nào
-                // phải quay lại điền, mà khung hình vừa xem thì thường vẫn còn
-                // việc: soi lại cho chắc, tua vài chục frame quanh đó, chốt
-                // thêm một dòng nữa. Đóng popup là bắt người dùng dò lại từ
-                // đầu đúng khoảnh khắc họ đang đứng.
-                if (!goesToBasket) {
-                  setShowPopup(false);
-                }
-
-                // Dọn `trakeSlot` kể cả khi ở lại, và đó là chủ ý: ô E1 chốt
-                // xong rồi thì cái nút phải thôi mời chốt lại chính nó. Bấm
-                // lần nữa sẽ đẻ một dòng trùng trong giỏ — mà thứ hạng là dữ
-                // liệu, một dòng trùng ăn mất một chỗ trong R@k — đồng thời
-                // ghi đè lại ô E1 trên thẻ lần thứ hai mà chẳng để làm gì.
+                // Không còn đường nào chạy tới: `openTrakeEvent` chỉ đặt ô mốc
+                // cho câu TRAKE, nên `onCommit` giờ chỉ chạy ở đó. Câu KIS/Q&A
+                // vào giỏ bằng chính nút Add Answer của popup thường, y như
+                // ensemble. `commitTrakeFrame` vẫn còn việc — nút "+ Chốt"
+                // trên từng ô của thẻ vẫn gọi nó.
                 //
-                // Popup vì vậy trở về đúng trạng thái một khung KIS/Q&A mở
-                // bình thường: dải ghim đầu/cuối và nút "Add Answer". Đổi lại,
-                // chip "E1/4" biến mất ngay sau cú bấm.
+                // Đóng popup: chốt xong một ô thì việc kế tiếp là mở ô E2, mà
+                // ô đó nằm trên thẻ phía sau — popup đứng chắn đúng đường đi.
+                setShowPopup(false);
                 setTrakeSlot(null);
               },
             }

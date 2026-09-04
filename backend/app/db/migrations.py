@@ -128,6 +128,44 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ON search_history(task_id, updated_at DESC)",
         ),
     ),
+    (
+        6,
+        (
+            # MỌI khung đã chốt trên một truy vấn, không phải khung cuối cùng.
+            #
+            # Ba cột picked_* là số ít, mà một lượt tìm thường chốt nhiều khung:
+            # gõ một câu, bấm ba thẻ khác nhau trong lưới. Mỗi lần bấm lại ghi
+            # đè lên lần trước, nên bảng lịch sử chỉ còn khung thứ ba — hai
+            # khung đầu biến mất dù chúng đã nằm trong giỏ.
+            #
+            # JSON trong một cột chứ không phải bảng riêng: danh sách này luôn
+            # được đọc trọn gói cùng dòng của nó, không ai truy vấn theo khung,
+            # và một bảng nữa nghĩa là một JOIN nữa cho mỗi lần mở lịch sử.
+            #
+            # Ba cột cũ GIỮ NGUYÊN và vẫn mang khung mới nhất: chúng là thứ
+            # search_states dùng chung hình dạng, và dòng lịch sử cũ chỉ có
+            # chúng.
+            "ALTER TABLE search_history ADD COLUMN picks TEXT NOT NULL "
+            "DEFAULT '[]'",
+        ),
+    ),
+    (
+        7,
+        (
+            # Lượt đã khép. NULL = còn đang làm dở.
+            #
+            # Một mục lịch sử trước đây chỉ khép khi người dùng gõ truy vấn
+            # khác. Nhưng cùng một truy vấn vẫn có thể là hai lượt tách bạch:
+            # chốt ba khung, thấy sai cả ba, xoá sạch giỏ rồi chốt hai khung
+            # khác. Không có cột này thì cả năm khung dồn vào một dòng, và
+            # không đọc ra được rằng ba khung đầu đã bị chính người đó loại.
+            #
+            # Mốc khép là lúc GIỎ CẠN — xoá bằng nút "Xoá sạch" hay bấm x từng
+            # dòng đều tính. Xoá một trong ba dòng thì không: giỏ còn hai, đó
+            # là sửa sai chứ không phải làm lại.
+            "ALTER TABLE search_history ADD COLUMN closed_at TEXT",
+        ),
+    ),
 )
 
 

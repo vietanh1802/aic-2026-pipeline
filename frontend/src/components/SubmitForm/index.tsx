@@ -232,11 +232,10 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               // NaN. It used to submit that; now it says so and stops.
               disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
-              {trakeSlot
-                ? trakeSlot.addsToBasket
-                  ? `Chốt E${trakeSlot.index + 1} → vào giỏ`
-                  : `Chốt cho E${trakeSlot.index + 1}`
-                : "Add Answer"}
+              {/* Ô mốc chỉ có ở câu TRAKE, và ở đó chốt một mốc mới là điền
+                  vào ô chứ chưa sinh dòng nào — nên không còn nhãn "→ vào
+                  giỏ". Câu KIS/Q&A đi bằng "Add Answer" như ensemble. */}
+              {trakeSlot ? `Chốt cho E${trakeSlot.index + 1}` : "Add Answer"}
             </Button>
           </div>
 

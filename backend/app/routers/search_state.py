@@ -51,6 +51,113 @@ class SearchStateRequest(BaseModel):
     picked_frame_idx: int | None = None
 
 
+# Trần số khung giữ cho MỘT truy vấn. Bằng số dòng tối đa của một câu — chốt
+# nhiều hơn thế thì phần thừa không còn chỗ trong bài nộp. Có trần vì đây là
+# JSON nằm trong một cột: không chặn thì một phiên dài biến nó thành vài chục
+# KB đọc lại mỗi 5 giây theo nhịp poll của bảng lịch sử.
+MAX_PICKS = 100
+
+
+def _pick_of(payload: "SearchStateRequest") -> dict[str, Any] | None:
+    """Khung vừa chốt, hoặc None khi lần ghi này không chốt gì.
+
+    Thiếu `picked_video` hay `picked_frame_idx` thì không dựng lại được nút
+    "▶ video · frame", nên nó không phải một lần chốt — lượt dọn cuối phiên đi
+    qua đây với cả hai đều None.
+    """
+    if not payload.picked_video or payload.picked_frame_idx is None:
+        return None
+    return {
+        "video": payload.picked_video,
+        "frame": int(payload.picked_frame_idx),
+        "name": payload.picked_frame,
+    }
+
+
+def _merge_pick(raw: Any, pick: dict[str, Any] | None) -> str:
+    """Nối khung mới vào danh sách cũ, giữ thứ tự bấm.
+
+    Thứ tự bấm là thứ tự người dùng tự xếp hạng, nên nối vào CUỐI chứ không
+    chèn lên đầu. Bấm lại đúng khung cũ thì không thêm lần nữa — nó không phải
+    một lựa chọn mới, và một dòng lặp lại làm bảng khó đọc mà không nói thêm
+    được gì.
+    """
+    try:
+        picks = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        # Một dòng hỏng không được làm mất lần chốt đang diễn ra.
+        picks = []
+    if not isinstance(picks, list):
+        picks = []
+    if pick is not None:
+        same = any(
+            isinstance(p, dict)
+            and p.get("video") == pick["video"]
+            and p.get("frame") == pick["frame"]
+            for p in picks
+        )
+        if not same and len(picks) < MAX_PICKS:
+            picks.append(pick)
+    return json.dumps(picks, ensure_ascii=False)
+
+
+def _picks_of(row: sqlite3.Row) -> list[dict[str, Any]]:
+    """Danh sách khung của một dòng lịch sử, đã tính cả dòng ghi trước bước 6.
+
+    Dòng cũ có `picks` rỗng nhưng vẫn mang một khung ở ba cột `picked_*`. Trả
+    về nó như một danh sách một phần tử để giao diện chỉ phải biết một hình
+    dạng, thay vì mỗi chỗ hiển thị lại tự đi hỏi "dòng này cũ hay mới".
+    """
+    try:
+        picks = json.loads(row["picks"]) if row["picks"] else []
+    except (ValueError, TypeError, IndexError):
+        picks = []
+    if not isinstance(picks, list):
+        picks = []
+    if picks:
+        return [p for p in picks if isinstance(p, dict)]
+    if row["picked_video"] and row["picked_frame_idx"] is not None:
+        return [
+            {
+                "video": row["picked_video"],
+                "frame": row["picked_frame_idx"],
+                "name": row["picked_frame"],
+            }
+        ]
+    return []
+
+
+def close_attempt_if_basket_empty(
+    conn: sqlite3.Connection, user_id: int, task_id: int
+) -> None:
+    """Giỏ vừa cạn thì khép lượt lịch sử đang mở của người này.
+
+    Gọi từ mọi đường xoá đáp án. Không có nó thì cùng một truy vấn, chốt ba
+    khung rồi xoá sạch rồi chốt hai khung khác sẽ dồn cả năm vào một dòng — và
+    đọc lại không ai biết ba khung đầu đã bị chính người đó loại.
+
+    Khép theo GIỎ CẠN chứ không theo mỗi lần xoá: xoá một trong ba dòng là sửa
+    sai, không phải làm lại, và tách dòng ở đó chỉ làm bảng vụn ra.
+
+    Chỉ khép mục CÓ khung. Mục chưa chốt gì thì không có gì để giữ lại, mà khép
+    nó sẽ đẻ thêm một dòng rỗng nữa ngay sau đó.
+    """
+    left = conn.execute(
+        "SELECT COUNT(*) AS n FROM answers WHERE task_id = ? AND author_id = ?",
+        (task_id, user_id),
+    ).fetchone()["n"]
+    if left:
+        return
+    conn.execute(
+        "UPDATE search_history SET closed_at = ? WHERE id = ("
+        "  SELECT id FROM search_history"
+        "   WHERE user_id = ? AND task_id = ? AND closed_at IS NULL"
+        "     AND picks NOT IN ('', '[]')"
+        "   ORDER BY updated_at DESC, id DESC LIMIT 1)",
+        (utcnow_iso(), user_id, task_id),
+    )
+
+
 def _state_row(row: sqlite3.Row) -> dict[str, Any]:
     try:
         params = json.loads(row["params"])
@@ -149,18 +256,37 @@ def _remember(
     ).fetchone()
     same = (
         latest is not None
+        # Lượt đã khép thì không nối vào nữa, dù truy vấn y hệt. Giỏ cạn giữa
+        # chừng nghĩa là người dùng đã bỏ hết những gì chốt trước đó — hai lượt
+        # tách bạch, không phải một lượt kéo dài.
+        and latest["closed_at"] is None
         and latest["query_text"] == payload.query_text
         and latest["search_type"] == payload.search_type
         and latest["params"] == params
     )
+    pick = _pick_of(payload)
     if same:
+        # NỐI vào danh sách chứ không ghi đè. Ba cột picked_* vẫn nhận khung
+        # mới nhất — chúng là hình dạng search_states dùng chung — nhưng thứ
+        # bảng lịch sử bày ra giờ là cả danh sách.
+        #
+        # Không chốt gì thì đừng đụng vào: lượt ghi khi vừa đổi tham số cũng đi
+        # qua đây với picked_* rỗng, và để nó xoá ba khung vừa chọn thì đúng
+        # bằng lỗi cũ, chỉ khác đường tới.
+        if pick is None:
+            conn.execute(
+                "UPDATE search_history SET updated_at = ? WHERE id = ?",
+                (now, latest["id"]),
+            )
+            return
         conn.execute(
             "UPDATE search_history SET picked_frame = ?, picked_video = ?, "
-            "picked_frame_idx = ?, updated_at = ? WHERE id = ?",
+            "picked_frame_idx = ?, picks = ?, updated_at = ? WHERE id = ?",
             (
                 payload.picked_frame,
                 payload.picked_video,
                 payload.picked_frame_idx,
+                _merge_pick(latest["picks"], pick),
                 now,
                 latest["id"],
             ),
@@ -169,8 +295,8 @@ def _remember(
 
     conn.execute(
         "INSERT INTO search_history (user_id, task_id, query_text, search_type, "
-        "params, picked_frame, picked_video, picked_frame_idx, created_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "params, picked_frame, picked_video, picked_frame_idx, picks, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id,
             task_id,
@@ -180,6 +306,7 @@ def _remember(
             payload.picked_frame,
             payload.picked_video,
             payload.picked_frame_idx,
+            _merge_pick(None, pick),
             now,
             now,
         ),
@@ -232,7 +359,16 @@ def list_search_history(
     )
     return {
         "entries": [
-            {**_state_row(row), "id": row["id"], "created_at": row["created_at"]}
+            {
+                **_state_row(row),
+                "id": row["id"],
+                "created_at": row["created_at"],
+                # Chỉ bảng lịch sử có trường này. `search_states` là "đang tìm
+                # gì NGAY BÂY GIỜ", một dòng mỗi người, và ở đó khung mới nhất
+                # mới là câu trả lời đúng — gom cả danh sách vào đó sẽ biến nó
+                # thành một bảng lịch sử thứ hai.
+                "picks": _picks_of(row),
+            }
             for row in rows
         ]
     }

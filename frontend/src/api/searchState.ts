@@ -54,10 +54,29 @@ export function listSearchStates(
   return apiFetch(`/api/tasks/${taskId}/search-states`);
 }
 
+/** Một khung đã chốt trên một truy vấn. */
+export interface HistoryPick {
+  video: string;
+  frame: number;
+  /** Tên keyframe của thẻ đã bấm, null khi chốt trong popup sau khi tua. */
+  name: string | null;
+}
+
 /** Một mục lịch sử: cùng hình dạng trạng thái, thêm id và lúc gõ lần đầu. */
 export interface SearchHistoryEntry extends SearchState {
   id: number;
   created_at: string;
+  /**
+   * MỌI khung đã chốt trên truy vấn này, theo thứ tự bấm.
+   *
+   * `picked_*` kế thừa từ SearchState chỉ mang khung MỚI NHẤT — một lượt tìm
+   * thường chốt nhiều khung, và trước đây mỗi lần chốt lại ghi đè lần trước
+   * nên bảng này chỉ còn khung cuối.
+   *
+   * Dòng ghi trước khi có cột `picks` vẫn ra một phần tử: backend dựng nó lại
+   * từ `picked_*`, nên chỗ hiển thị chỉ phải biết một hình dạng.
+   */
+  picks: HistoryPick[];
 }
 
 /**

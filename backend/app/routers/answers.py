@@ -35,6 +35,9 @@ from app.routers._shared import (
     rows_per_query,
     top_sort_key,
 )
+# Xoá đáp án khép lượt lịch sử đang mở. Nhập một chiều: search_state.py không
+# biết gì về answers.py, nên không có vòng.
+from app.routers.search_state import close_attempt_if_basket_empty
 
 router = APIRouter(prefix="/api", tags=["answers"])
 
@@ -335,6 +338,10 @@ def delete_answer(
         f"Xoá 1 dòng ({gone['video_id']} · {gone['frames']})",
         {"answers": snapshot},
     )
+    # Bấm x cho tới dòng cuối cùng cũng là dọn sạch giỏ, y như nút "Xoá sạch".
+    # Hàm tự kiểm giỏ còn gì không nên xoá một trong ba dòng thì nó không làm
+    # gì — đó là sửa sai, không phải làm lại.
+    close_attempt_if_basket_empty(conn, user["id"], gone["task_id"])
     return {"ok": True}
 
 
@@ -374,6 +381,9 @@ def clear_answers(
             f"Xoá sạch {removed} dòng của task {task['code']}",
             {"answers": snapshot},
         )
+    # Giỏ vừa cạn: lượt lịch sử đang mở khép lại ở đây, nên những khung chốt
+    # sau đó thành một mục riêng thay vì nối vào mục vừa bị bỏ.
+    close_attempt_if_basket_empty(conn, user["id"], task_id)
     return {"removed": removed, "total": 0}
 
 
@@ -452,6 +462,10 @@ def autofill_answers(
                 "AND author_id = ?",
                 (task_id, user["id"]),
             ).fetchone()["n"]
+            # Đường này chỉ xoá dòng auto, nên giỏ thường CÒN các mốc ghim tay
+            # và hàm không làm gì. Vẫn gọi: một giỏ toàn dòng auto — mốc đã bị
+            # xoá trước đó — cạn sạch ở đây, và lúc đó nó đúng là hết lượt.
+            close_attempt_if_basket_empty(conn, user["id"], task_id)
             return {"added": 0, "removed": removed, "total": total}
 
     rows = conn.execute(

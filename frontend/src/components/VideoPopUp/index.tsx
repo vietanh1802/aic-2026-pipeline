@@ -38,14 +38,12 @@ export interface TrakeSlot {
   label: string;
   total: number;
   /**
-   * True khi cú chốt này ghi luôn một dòng vào giỏ — câu KIS/Q&A, nơi một
-   * frame đã là một đáp án đủ nghĩa. Câu TRAKE thì false: ở đó chốt một mốc
-   * mới chỉ là điền vào ô, cả hàng N mốc mới thành một dòng.
-   *
-   * Chỉ để nút nói đúng việc nó làm. "Chốt cho E1" mà lại đẻ ra một dòng trong
-   * giỏ là một tác dụng phụ không ai đọc được từ cái nhãn.
+   * `addsToBasket` đã bỏ. Nó phân biệt "chốt xong là có ngay một dòng trong
+   * giỏ" (KIS/Q&A) với "mới chỉ điền vào ô" (TRAKE), chỉ để nhãn nút nói đúng
+   * việc nó làm. Giờ ô mốc chỉ tồn tại cho câu TRAKE — câu KIS/Q&A dùng popup
+   * thường với nút Add Answer, y như ensemble — nên vế thứ nhất không còn xảy
+   * ra và nhãn luôn là "Chốt cho E…".
    */
-  addsToBasket?: boolean;
   /**
    * @param range Hai đầu đã ghim cho riêng mốc này, null khi chưa ghim đủ cả
    *   hai. Câu TRAKE dùng nó để điền ô "từ/đến" của Điền tự động trong giỏ;
@@ -123,23 +121,27 @@ export default function VideoPopup({
   const [playhead, setPlayhead] = useState<number>(startAt / 1000);
   const livePosition = () => videoRef.current?.currentTime ?? playhead;
 
-  // A different video is a different moment; carrying marks across would submit
-  // a frame number the user pinned somewhere else entirely.
+  // Popup được trỏ sang một khoảnh khắc khác thì bỏ ghim cũ.
+  //
+  // Trước đây chỉ nghe `[videoId]`. Không đủ, và với TRAKE search thì hụt ngay
+  // ở lần dùng đầu: cả N mốc của một thẻ nằm trên CÙNG một video, nên bấm kính
+  // lúp ở E1 rồi E3 không đổi `videoId` và popup cũng không gắn lại — E3 thừa
+  // hưởng nguyên đoạn vừa ghim cho E1, rồi "Add Answer" nộp điểm giữa của một
+  // cảnh khác hẳn cảnh đang xem.
+  //
+  // `frameId` là khung mà popup được trỏ tới, chỉ đổi khi có người trỏ nó đi
+  // chỗ khác — hai nút −/+ dưới video sửa `frameIdx` cục bộ, không đụng vào
+  // đây, nên bước từng khung KHÔNG làm mất ghim.
   useEffect(() => {
     setMarkIn(null);
     setMarkOut(null);
-  }, [videoId]);
+  }, [videoId, frameId]);
 
-  // Và một mốc khác cũng là một khoảnh khắc khác.
+  // Và đổi mốc cũng là đổi khoảnh khắc — kể cả khi hai mốc tình cờ trỏ vào
+  // cùng một khung, lúc đó `frameId` ở trên không đổi.
   //
-  // Chỉ `[videoId]` là không đủ: cả N mốc của một hàng TRAKE nằm trên CÙNG một
-  // video, nên bấm từ E1 sang E2 không đổi `videoId` và popup cũng không gắn
-  // lại — E2 thừa hưởng nguyên đoạn vừa ghim cho E1, rồi đoạn đó đi thẳng vào
-  // ô "từ/đến" của E2 như thể người dùng đã xem và xác nhận nó.
-  //
-  // Bỏ qua khi `slotKey` null: lúc đó không phải chuyển mốc mà là vừa chốt
-  // xong một dòng KIS/Q&A (App dọn `trakeSlot` nhưng giữ popup mở), và xoá
-  // ghim ở đó là giật mất đoạn người dùng còn đang nhìn.
+  // Bỏ qua khi `slotKey` null: câu KIS/Q&A không có ô mốc nào, và hiệu ứng này
+  // không có việc gì ở đó.
   const slotKey = trakeSlot ? `${trakeSlot.cardKey}:${trakeSlot.index}` : null;
   useEffect(() => {
     if (slotKey === null) {

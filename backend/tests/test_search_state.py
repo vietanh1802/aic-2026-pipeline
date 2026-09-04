@@ -4,7 +4,9 @@ import pytest
 from fastapi import HTTPException
 
 from app.db.connection import utcnow_iso
+from app.routers.answers import clear_answers, delete_answer
 from app.routers.search_state import (
+    MAX_PICKS,
     SearchStateRequest,
     clear_search_history,
     list_search_history,
@@ -259,3 +261,309 @@ def test_clearing_a_task_that_does_not_exist_is_refused(conn):
     with pytest.raises(HTTPException) as raised:
         clear_search_history(999999, an, conn, scope="mine")
     assert raised.value.status_code == 404
+
+# --- Nhiều khung trên MỘT truy vấn -----------------------------------------
+
+
+def _pick(query, video, frame, name=None):
+    return _state(
+        query_text=query,
+        picked_frame=name,
+        picked_video=video,
+        picked_frame_idx=frame,
+    )
+
+
+def test_three_frames_picked_on_one_query_all_survive(conn):
+    """Lỗi được báo: gõ một câu rồi bấm ba thẻ, bảng chỉ còn thẻ thứ ba.
+
+    Ba cột picked_* là số ít nên mỗi lần chốt ghi đè lần trước. Hai khung đầu
+    biến mất khỏi lịch sử dù cả ba đã nằm trong giỏ.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("nhóm 5 người", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("nhóm 5 người", "L24_V035", 2236), an, conn)
+    save_search_state(task, _pick("nhóm 5 người", "L24_V035", 9112), an, conn)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert len(entries) == 1
+    assert [p["frame"] for p in entries[0]["picks"]] == [448, 2236, 9112]
+
+
+def test_the_order_of_picks_is_the_order_they_were_clicked(conn):
+    """Thứ tự bấm là thứ tự người dùng tự xếp hạng, nên nối vào CUỐI."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    for frame in (9112, 448, 2236):
+        save_search_state(task, _pick("một câu", "L24_V035", frame), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [9112, 448, 2236]
+
+
+def test_clicking_the_same_frame_twice_does_not_repeat_it(conn):
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [448]
+
+
+def test_the_same_frame_number_in_another_video_is_its_own_pick(conn):
+    """Khoá theo cặp (video, frame), không riêng frame."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("một câu", "L21_V002", 448), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [(p["video"], p["frame"]) for p in picks] == [
+        ("L24_V035", 448),
+        ("L21_V002", 448),
+    ]
+
+
+def test_a_new_query_starts_its_own_list_of_picks(conn):
+    """Đổi truy vấn là một mục mới; khung của câu cũ ở lại câu cũ."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("câu một", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("câu hai", "L24_V035", 9112), an, conn)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    by_query = {e["query_text"]: [p["frame"] for p in e["picks"]] for e in entries}
+    assert by_query == {"câu một": [448], "câu hai": [9112]}
+
+
+def test_a_write_with_no_pick_does_not_wipe_the_ones_already_there(conn):
+    """Đổi tham số rồi bấm Search lại cũng đi qua đây với picked_* rỗng.
+
+    Để lượt đó xoá ba khung vừa chọn thì đúng bằng lỗi cũ, chỉ khác đường tới.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("một câu", "L24_V035", 2236), an, conn)
+    save_search_state(
+        task,
+        _state(
+            query_text="một câu",
+            picked_frame=None,
+            picked_video=None,
+            picked_frame_idx=None,
+        ),
+        an,
+        conn,
+    )
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [448, 2236]
+
+
+def test_the_newest_pick_still_reaches_the_single_columns(conn):
+    """Ba cột cũ vẫn mang khung mới nhất.
+
+    search_states dùng chung hình dạng đó, và bỏ nó đi sẽ làm bảng "cả nhóm
+    đang tìm gì" mất chỗ chỉ khung.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    save_search_state(task, _pick("một câu", "L24_V035", 9112), an, conn)
+
+    entry = list_search_history(task, an, conn)["entries"][0]
+    assert entry["picked_frame_idx"] == 9112
+    assert list_search_states(task, an, conn)["states"][0]["picked_frame_idx"] == 9112
+
+
+def test_a_row_written_before_the_picks_column_still_shows_its_frame(conn):
+    """Dòng cũ có `picks` rỗng nhưng vẫn mang một khung ở picked_*.
+
+    Dựng lại thành danh sách một phần tử để giao diện chỉ phải biết một hình
+    dạng — nếu không, mọi lịch sử có từ trước bản này mất sạch nút mở video.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    # Giả lập dòng ghi trước bước 6.
+    conn.execute("UPDATE search_history SET picks = '[]'")
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [(p["video"], p["frame"]) for p in picks] == [("L24_V035", 448)]
+
+
+def test_the_pick_list_stops_growing_at_the_cap(conn):
+    """Trần bằng số dòng tối đa của một câu.
+
+    Không chặn thì một phiên dài biến cột JSON này thành vài chục KB, đọc lại
+    mỗi 5 giây theo nhịp poll của bảng lịch sử.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    for frame in range(MAX_PICKS + 10):
+        save_search_state(task, _pick("một câu", "L24_V035", frame), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert len(picks) == MAX_PICKS
+    # Giữ những khung ĐẦU: thứ tự bấm là thứ hạng, nên phần đầu đáng giá hơn.
+    assert picks[0]["frame"] == 0
+
+
+def test_a_corrupt_pick_list_does_not_lose_the_click_being_made(conn):
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(task, _pick("một câu", "L24_V035", 448), an, conn)
+    conn.execute("UPDATE search_history SET picks = 'không phải JSON'")
+
+    save_search_state(task, _pick("một câu", "L24_V035", 2236), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [2236]
+
+# --- Giỏ cạn thì khép lượt -------------------------------------------------
+
+
+def _answer(conn, task, user, frame):
+    conn.execute(
+        "INSERT INTO answers (task_id, author_id, sort_key, video_id, frames, "
+        "answer_text, origin, created_by, updated_by, updated_at, version) "
+        "VALUES (?, ?, ?, 'L24_V035', ?, NULL, 'manual', ?, NULL, ?, 1)",
+        (task, user["id"], float(frame), f"[{frame}]", user["id"], utcnow_iso()),
+    )
+
+
+def _pick_and_pin(conn, task, user, frame):
+    """Chốt một khung: vừa ghi lịch sử vừa thêm một dòng vào giỏ."""
+    save_search_state(task, _pick("cùng một câu", "L24_V035", frame), user, conn)
+    _answer(conn, task, user, frame)
+
+
+def test_clearing_the_basket_starts_a_new_attempt_on_the_same_query(conn):
+    """Đúng kịch bản chủ repo mô tả.
+
+    Chốt ba khung, thấy sai cả ba, xoá sạch giỏ rồi chốt hai khung khác. Hai
+    lượt đó tách bạch dù truy vấn y hệt — gộp lại thì đọc không ra được rằng
+    ba khung đầu đã bị chính người đó loại.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    for frame in (448, 2236, 9112):
+        _pick_and_pin(conn, task, an, frame)
+    clear_answers(task, an, conn)
+    for frame in (500, 600):
+        _pick_and_pin(conn, task, an, frame)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert [[p["frame"] for p in e["picks"]] for e in entries] == [
+        [500, 600],
+        [448, 2236, 9112],
+    ]
+
+
+def test_deleting_one_of_three_is_a_correction_not_a_restart(conn):
+    """Giỏ còn hai dòng thì lượt chưa khép.
+
+    Tách dòng ở mỗi lần xoá chỉ làm bảng vụn ra: bỏ một khung chọn nhầm rồi
+    chốt khung thay thế vẫn là cùng một lượt tìm.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    for frame in (448, 2236, 9112):
+        _pick_and_pin(conn, task, an, frame)
+
+    row = conn.execute(
+        "SELECT id FROM answers WHERE frames = '[2236]'"
+    ).fetchone()
+    delete_answer(row["id"], an, conn)
+    _pick_and_pin(conn, task, an, 500)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert len(entries) == 1
+    assert [p["frame"] for p in entries[0]["picks"]] == [448, 2236, 9112, 500]
+
+
+def test_deleting_the_rows_one_by_one_still_closes_the_attempt(conn):
+    """Bấm x cho tới dòng cuối cũng là dọn sạch giỏ.
+
+    Chỉ nghe nút "Xoá sạch" thì cùng một hành động, làm theo cách khác, lại ra
+    kết quả khác — mà người dùng không có cách nào đoán được điều đó.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    for frame in (448, 2236):
+        _pick_and_pin(conn, task, an, frame)
+
+    for row in conn.execute("SELECT id FROM answers").fetchall():
+        delete_answer(row["id"], an, conn)
+    _pick_and_pin(conn, task, an, 500)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert [[p["frame"] for p in e["picks"]] for e in entries] == [[500], [448, 2236]]
+
+
+def test_one_persons_clearing_does_not_close_another_persons_attempt(conn):
+    """Khoá theo author_id, cùng luật với mọi đường ghi khác trong repo."""
+    an = _user(conn, "an")
+    vanh = _user(conn, "vanh")
+    task = _task(conn, an["id"])
+    _pick_and_pin(conn, task, an, 448)
+    _pick_and_pin(conn, task, vanh, 900)
+
+    clear_answers(task, an, conn)
+    _pick_and_pin(conn, task, vanh, 901)
+
+    of_vanh = [
+        e for e in list_search_history(task, vanh, conn)["entries"]
+        if e["user"]["id"] == vanh["id"]
+    ]
+    assert len(of_vanh) == 1
+    assert [p["frame"] for p in of_vanh[0]["picks"]] == [900, 901]
+
+
+def test_clearing_an_empty_basket_does_not_leave_a_blank_entry(conn):
+    """Chỉ khép mục CÓ khung.
+
+    Khép một mục chưa chốt gì thì không giữ lại được gì, mà lại đẻ thêm một
+    dòng rỗng nữa ngay sau đó.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task,
+        _state(query_text="chưa chốt gì", picked_frame=None,
+               picked_video=None, picked_frame_idx=None),
+        an,
+        conn,
+    )
+
+    clear_answers(task, an, conn)
+    _pick_and_pin(conn, task, an, 448)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert len(entries) == 2  # "chưa chốt gì" và "cùng một câu" — khác truy vấn
+    assert [p["frame"] for p in entries[0]["picks"]] == [448]
+
+
+def test_a_closed_attempt_is_never_appended_to_again(conn):
+    """Kể cả khi truy vấn, kiểu tìm và tham số trùng khớp hoàn toàn."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    _pick_and_pin(conn, task, an, 448)
+    clear_answers(task, an, conn)
+    _pick_and_pin(conn, task, an, 500)
+    _pick_and_pin(conn, task, an, 600)
+
+    entries = list_search_history(task, an, conn)["entries"]
+    assert [[p["frame"] for p in e["picks"]] for e in entries] == [[500, 600], [448]]

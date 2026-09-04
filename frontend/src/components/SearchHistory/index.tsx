@@ -277,20 +277,30 @@ export default function SearchHistory({
               <span className="text-proto-muted shrink-0 hidden md:inline mt-0.5">
                 {ago(entry.updated_at)}
               </span>
-              {entry.picked_video && entry.picked_frame_idx !== null && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onOpenVideo(
-                      entry.picked_video as string,
-                      entry.picked_frame_idx as number
-                    )
-                  }
-                  className="shrink-0 px-2 py-0.5 rounded-[6px] border border-proto-line text-proto-ink"
-                  title="Mở video tại khung người đó dừng lại ở lần tìm này"
-                >
-                  ▶ {entry.picked_video} · {entry.picked_frame_idx}
-                </button>
+              {/* MỘT nút cho MỖI khung đã chốt, theo thứ tự bấm — thứ tự đó
+                  chính là thứ tự người dùng tự xếp hạng.
+
+                  Trước đây chỗ này đọc `entry.picked_*`, tức chỉ một khung, và
+                  đó là khung CUỐI CÙNG: gõ một câu rồi bấm ba thẻ thì hai thẻ
+                  đầu không còn dấu vết nào ở đây, dù cả ba đã nằm trong giỏ.
+
+                  `flex-wrap` vì ba bốn nút cộng lại dài hơn một dòng, mà cắt
+                  bớt thì đúng những khung sau cùng biến mất — lặp lại chính
+                  cái lỗi vừa sửa, chỉ bằng CSS. */}
+              {entry.picks.length > 0 && (
+                <span className="shrink-0 flex flex-wrap justify-end gap-1 max-w-[46%]">
+                  {entry.picks.map((pick) => (
+                    <button
+                      key={`${pick.video}-${pick.frame}`}
+                      type="button"
+                      onClick={() => onOpenVideo(pick.video, pick.frame)}
+                      className="px-2 py-0.5 rounded-[6px] border border-proto-line text-proto-ink"
+                      title="Mở video tại khung này"
+                    >
+                      ▶ {pick.video} · {pick.frame}
+                    </button>
+                  ))}
+                </span>
               )}
               <button
                 type="button"

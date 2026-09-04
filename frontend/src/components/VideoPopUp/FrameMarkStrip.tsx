@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 
 import FramePreview from "../FramePreview";
-import { frameAt, frameRange } from "../../helpers/frameRange";
+import {
+  barPosition,
+  barSeconds,
+  frameAt,
+  frameRange,
+} from "../../helpers/frameRange";
 
 /**
  * Marking the moment, directly under the player it refers to.
@@ -91,12 +96,31 @@ export default function FrameMarkStrip({
   const currentFrame = frameAt(currentSeconds, fps);
 
   const span = duration > 0 ? duration : 1;
-  const pct = (seconds: number) =>
-    `${Math.min(100, Math.max(0, (seconds / span) * 100))}%`;
+  // Khai trước `zoomed` bên dưới vì nó quyết định cả thang của thanh lẫn con
+  // số được nộp — hai thứ phải cùng một câu trả lời.
+  const onPlayhead = submits === "playhead";
 
   const low = Math.min(markIn ?? currentSeconds, markOut ?? currentSeconds);
   const high = Math.max(markIn ?? currentSeconds, markOut ?? currentSeconds);
   const marked = markIn !== null || markOut !== null;
+
+  // Ghim đủ hai đầu rồi thì thanh THU VỀ đúng đoạn đó, và bước tiếp theo là
+  // chọn khung nào bên trong.
+  //
+  // Chỉ cho câu TRAKE (`submits === "playhead"`): ở đó khung được nộp chính là
+  // khung đang dừng, nên chọn đúng khung là việc thật. Câu KIS/Q&A nộp điểm
+  // giữa — máy tính ra, người dùng không phải nhắm — nên thu thanh về ở đó chỉ
+  // lấy mất cái nhìn toàn video mà không đổi lại được gì.
+  //
+  // Một đoạn 300 khung trong video 15.000 khung chiếm 2% bề rộng thanh: mỗi
+  // pixel nhảy vài chục khung. Thu về thì cũng chừng ấy pixel trải cho 300
+  // khung, tức bấm đâu trúng đấy.
+  const zoomed =
+    onPlayhead && markIn !== null && markOut !== null && high > low;
+  const barLow = zoomed ? low : 0;
+  const barHigh = zoomed ? high : span;
+  const pct = (seconds: number) =>
+    `${barPosition(seconds, barLow, barHigh) * 100}%`;
   // Hai đầu trùng nhau thì khung giữa CHÍNH LÀ hai đầu — không có gì để đối
   // chiếu. `range` cũng null khi thiếu fps, và lúc đó không có số frame nào.
   const canCompare = range !== null && range.start !== range.end;
@@ -105,7 +129,6 @@ export default function FrameMarkStrip({
   // SubmitForm.frameToSubmit() — dải này in ra con số, còn cái nút mới thật sự
   // gửi nó đi, và hai chỗ nói khác nhau là kiểu sai không ai phát hiện ra cho
   // tới lúc đọc bảng điểm.
-  const onPlayhead = submits === "playhead";
   const submitFrame = onPlayhead ? currentFrame : range?.frame ?? null;
   const middleLabel = onPlayhead ? "đang đứng — sẽ nộp" : "giữa — sẽ nộp";
 
@@ -154,20 +177,45 @@ export default function FrameMarkStrip({
         </span>
       </div>
 
-      {/* The video's duration, with the marked moment on it. */}
+      {/* Bước 2 của câu TRAKE. Nói ra vì cái thanh vừa đổi ý nghĩa dưới tay
+          người dùng: cũng chừng ấy pixel, giờ là 300 khung chứ không phải cả
+          video. Không nói thì cú bấm đầu tiên nhảy đi một quãng không ai giải
+          thích được. */}
+      {zoomed && (
+        <p className="text-[11px] text-proto-primary-active mb-1.5">
+          Đã ghim xong hai đầu — thanh dưới giờ chỉ còn đoạn này. Bấm để chọn
+          đúng khung sẽ nộp, hoặc <b>bỏ ghim</b> để xem lại cả video.
+        </p>
+      )}
+
+      {/* Thang của thanh: cả video, hoặc đúng đoạn đã ghim khi đang thu về. */}
       <div
-        className="relative h-2.5 rounded-full bg-proto-line cursor-pointer mb-2"
+        className={`relative h-2.5 rounded-full cursor-pointer mb-2 ${
+          zoomed ? "bg-proto-primary/25" : "bg-proto-line"
+        }`}
         onClick={(event) => {
           const box = event.currentTarget.getBoundingClientRect();
           const fraction = (event.clientX - box.left) / box.width;
-          onSeek(Math.min(span, Math.max(0, fraction * span)));
+          onSeek(barSeconds(fraction, barLow, barHigh));
         }}
-        title="Bấm để tua"
+        title={zoomed ? "Bấm để chọn khung trong đoạn" : "Bấm để tua"}
       >
-        {marked && (
+        {/* Khi đã thu về thì CẢ thanh là đoạn ghim, nên vệt xanh chỉ còn là
+            trang trí chồng lên chính nó — bỏ đi cho đỡ rối. */}
+        {marked && !zoomed && (
           <div
             className="absolute inset-y-0 bg-proto-primary/70 rounded-full"
-            style={{ left: pct(low), width: pct(high - low) }}
+            style={{
+              left: pct(low),
+              // Hiệu của HAI vị trí, không phải vị trí của hiệu. Hai cách chỉ
+              // trùng nhau khi thang bắt đầu từ 0, và thang ở đây không phải
+              // lúc nào cũng vậy.
+              width: `${
+                (barPosition(high, barLow, barHigh) -
+                  barPosition(low, barLow, barHigh)) *
+                100
+              }%`,
+            }}
           />
         )}
         <div
