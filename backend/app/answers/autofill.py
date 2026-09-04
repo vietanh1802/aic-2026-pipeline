@@ -53,11 +53,26 @@ def _at(values: list, index: int):
     return values[index] if index < len(values) else values[-1]
 
 
+def _reach_at(reaches: list[int], index: int) -> int:
+    """Tầm của mốc thứ `index`, thiếu thì coi như KHÔNG có tầm.
+
+    Cố ý khác `_at`: cái kia rơi về phần tử cuối, và ở đây làm vậy nghĩa là gán
+    cửa sổ của mốc khác cho một mốc người dùng chưa hề khoanh. Mốc chưa khoanh
+    thì không có mép để dừng — đó là sự thật về nó, không phải một chỗ trống
+    cần điền.
+    """
+    if index >= len(reaches):
+        return 0
+    value = reaches[index]
+    return value if value > 0 else 0
+
+
 def plan(
     anchor_count: int,
     steps: list[int],
     directions: list[str],
     limit: int = 4000,
+    reaches: list[int] | None = None,
 ) -> Iterator[tuple[int, int]]:
     """Sinh ra (chỉ số mốc, độ dời) theo đúng thứ tự sẽ chèn vào giỏ.
 
@@ -81,6 +96,20 @@ def plan(
     Mốc không nhận dấu này thì bị BỎ QUA ở lượt đó, không đẩy lịch: mốc 2 chỉ
     cộng lên sẽ vắng mặt ở mọi lượt dấu trừ, chứ không lấn chỗ của mốc 3.
 
+    `reaches[i]` là ĐỘ DỜI LỚN NHẤT mốc i được phép đi, tức nửa rộng của đoạn
+    người dùng đã khoanh quanh nó. 0 hoặc thiếu = không có mép, đi tới khi hết
+    ngân sách như trước.
+
+    Mép là thứ biến "mọi mốc chung một bước" thành "đoạn dài hơn được nhiều
+    dòng hơn", mà không phải tính tỉ lệ ở đâu cả. Cùng bước 8, mốc có nửa rộng
+    150 dừng sau 18 bậc còn mốc nửa rộng 250 đi tới 31 bậc — 36 dòng so với 62,
+    đúng tỉ lệ 300:500 của hai đoạn. Tỉ lệ rơi ra từ hình học.
+
+    Thứ hạng vẫn cân: cùng một bước nên bậc thứ k của mọi mốc cách tâm bằng
+    nhau, và vòng ngoài vẫn là k. Các hạng đầu chia đều cho mọi phỏng đoán —
+    chỗ R@1/R@5 đọc — chỉ phần đuôi mới dồn về cửa sổ rộng, đúng chỗ còn chưa
+    soi hết.
+
     `limit` chặn số lượt sinh ra: hàm gọi lọc bớt trùng lặp nên phải sinh dư,
     còn cái chặn này để một mốc sát frame 0 không quay vô hạn khi phía dưới đã
     cạn.
@@ -102,11 +131,26 @@ def plan(
     if not usable:
         return
 
+    reach_of = [_reach_at(reaches or [], i) for i in range(anchor_count)]
+
     produced = 0
     k = 1
     while produced < limit:
+        # Mốc đã ra khỏi cửa sổ của nó thì nghỉ từ đây, không phải nghỉ một lượt
+        # — bậc sau còn xa tâm hơn nên nó không bao giờ quay lại được.
+        live = [
+            i
+            for i in usable
+            if reach_of[i] == 0 or k * steps_of[i] <= reach_of[i]
+        ]
+        # Mọi mốc đều đã tới mép mà chưa đủ dòng: `produced` sẽ đứng im, còn
+        # `produced < limit` thì mãi mãi đúng và k tăng vô tận — request treo
+        # cứng chứ không báo lỗi. Cùng cái bẫy mà `usable` chặn ở trên, chỉ khác
+        # là nó xảy ra GIỮA CHỪNG chứ không phải ngay từ đầu.
+        if not live:
+            return
         for sign in (1, -1):
-            for index in usable:
+            for index in live:
                 if sign not in signs_of[index]:
                     continue
                 yield index, sign * k * steps_of[index]

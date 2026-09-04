@@ -17,7 +17,7 @@ import FramePreview from "../FramePreview";
 import {
   autofillPlan,
   rangeOwner,
-  suggestStep,
+  uniformStep,
   type MarkedRange,
 } from "../../helpers/basketMath";
 import {
@@ -144,7 +144,7 @@ export default function BasketBody({
   // `autoStepById` là giao diện tính cho ĐÚNG mốc đó, `step` là mặc định chung
   // cho mốc chưa có cả hai. Gộp vào một map thì không phân biệt được "máy tính
   // ra" với "người gõ", mà `stepEdited` lại dựa vào đúng sự phân biệt ấy.
-  const { dirById, stepById, autoStepById } = tuning;
+  const { dirById, stepById, autoRangeById } = tuning;
 
   // ── TRAKE: khoảng đầu–cuối của từng hành động ────────────────────────────
   //
@@ -282,19 +282,43 @@ export default function BasketBody({
   // vừa sinh ra thì tâm rải trôi xa dần khỏi khung thật.
   const pinned = rows.filter((row) => row.origin !== "auto");
   const anchors = pinned.filter((row) => !anchorOff.includes(row.id));
-  // Ba tầng, người gõ thắng máy tính, máy tính thắng mặc định chung.
+  // Nửa rộng cửa sổ của một mốc: khoảng cách từ khung của nó tới mép XA hơn.
+  // Không phải nửa rộng của đoạn — mốc nằm lệch tâm vẫn phải với tới được mép
+  // xa, nếu không phần đoạn bên đó không có dòng nào.
+  const reachFrom = (frame: number, range: MarkedRange): number => {
+    const reach = Math.max(
+      frame - Math.min(range.start, range.end),
+      Math.max(range.start, range.end) - frame
+    );
+    return Number.isFinite(reach) && reach > 0 ? reach : 0;
+  };
+  const reachOf = (row: AnswerRow): number => {
+    const range = autoRangeById[row.id];
+    return range ? reachFrom(row.frames[0], range) : 0;
+  };
+
+  // MỘT bước cho mọi mốc. Mỗi mốc dừng ở mép cửa sổ của mình, nên cửa sổ rộng
+  // gấp đôi tự nhận gấp đôi số dòng — tỉ lệ rơi ra từ hình học, không ai tính.
+  //
+  // Cách cũ tính bước RIÊNG từng mốc (`suggestStep(..., anchors.length)`) để
+  // mỗi cửa sổ được phủ đúng khít với đúng một nửa ngân sách. Nó đúng khi
+  // backend chia dòng đều, nhưng đổi lại mật độ hai bên khác nhau: đoạn 300 rải
+  // mỗi 6 frame còn đoạn 500 rải mỗi 10. Chủ repo muốn mật độ đồng đều, nên giờ
+  // backend nhận thêm mép và tự dừng — xem `reaches` trong autofill.plan().
+  const autoStep = uniformStep(anchors.map(reachOf), needed);
+  // Ba tầng, người gõ thắng máy tính, máy tính thắng mặc định chung. Tầng giữa
+  // giờ là một con số CHUNG, nên mọi hàng chưa gõ tay đều hiện cùng một bước —
+  // đúng như thiết kế: mật độ đồng đều là điểm của cách rải này.
   const stepOf = (id: number) => {
     const typed = Number(stepById[id]);
     if (Number.isInteger(typed) && inStepRange(typed)) {
       return typed;
     }
-    const auto = autoStepById[id];
-    return auto !== undefined && inStepRange(auto) ? auto : step;
+    return autoStep !== null && inStepRange(autoStep) ? autoStep : step;
   };
   // Cùng thứ tự ưu tiên, dùng cho ô số trên mỗi hàng mốc. Phải khớp `stepOf`:
   // hàng hiện một số mà lúc điền lại gửi số khác là lỗi im lặng tệ nhất ở đây.
-  const stepTextOf = (id: number) =>
-    stepById[id] ?? String(autoStepById[id] ?? step);
+  const stepTextOf = (id: number) => stepById[id] ?? String(autoStep ?? step);
   const dirOf = (id: number): SpreadDirection => dirById[id] ?? "both";
   // Gửi luôn cả hai danh sách, không cần cờ bật/tắt: mốc chưa chỉnh gì thì
   // stepOf trả về `step` chung và dirOf trả "both", tức đúng hành vi mặc định.
@@ -341,6 +365,9 @@ export default function BasketBody({
       : { anchor_ids: anchors.map((row) => row.id) }),
     steps: anchors.map((row) => stepOf(row.id)),
     directions: anchors.map((row) => dirOf(row.id)),
+    // Mép của từng mốc, 0 cho mốc chưa khoanh đoạn. Đây là thứ khiến đoạn dài
+    // hơn nhận nhiều dòng hơn dù mọi mốc chung một bước.
+    reaches: anchors.map(reachOf),
   });
 
   /** Đặt cùng một chiều cho mọi mốc đang tick — lối tắt cho trường hợp thường. */
@@ -399,10 +426,17 @@ export default function BasketBody({
   // 6916 phủ 203→13629, tức trượt xa khỏi đoạn người dùng vừa khoanh.
   const suggestionTarget =
     !isDialog && markedRange ? rangeOwner(pinned, markedRange) : null;
-  const suggestion =
-    suggestionTarget && markedRange
-      ? suggestStep(suggestionTarget.frames[0], markedRange, needed)
-      : null;
+  // Bước chung mà giỏ SẼ dùng một khi đoạn đang ghim được lưu lại. Tính trước
+  // chứ không đọc `autoStep` hiện tại: `autoStep` chưa biết đoạn này, nên ô
+  // "Bước" sẽ chậm một nhịp và badge "tự tính" khoe một con số đã cũ.
+  const pendingReaches = anchors.map((row) =>
+    row.id === suggestionTarget?.id && markedRange
+      ? reachFrom(row.frames[0], markedRange)
+      : reachOf(row)
+  );
+  const suggestion = suggestionTarget
+    ? uniformStep(pendingReaches, needed)
+    : null;
 
   // Cách cũ chỉ chạy khi HAI ĐẦU đổi:
   //
@@ -420,36 +454,51 @@ export default function BasketBody({
   // đầu — và thứ giữ tay người dùng lại là `stepEdited` chứ không phải danh
   // sách phụ thuộc.
   //
-  // Con số tính ra được ghi vào HAI chỗ: ô "Bước" chung (để badge "tự tính" và
-  // dòng "phủ … → …" nói đúng thứ vừa xảy ra) và `autoStepById` của riêng mốc
-  // đó. Chỗ thứ hai mới là chỗ giữ nó lại: lần ghim sau đổi ô chung sang con
-  // số của mốc mới, còn mốc cũ đọc bản đã đóng băng của mình.
+  // Ghi vào HAI chỗ. Ô "Bước" chung nhận CON SỐ, để badge "tự tính" và dòng
+  // "phủ … → …" nói đúng thứ vừa xảy ra. Còn `autoRangeById` nhận cả ĐOẠN —
+  // đó mới là dữ liệu, con số chỉ là một cách đọc nó tại một thời điểm.
+  //
+  // Trước đây chỗ thứ hai cũng chỉ giữ con số, và nó đóng băng luôn: ghim đoạn
+  // rộng 300 lúc mới có một mốc ra bước 3, thêm mốc thứ hai thì ngân sách dòng
+  // của mốc đầu tụt còn một nửa mà bước vẫn nằm ở 3 — với tới ±72 thay vì
+  // ±150, tức bỏ trống hơn nửa đoạn người dùng đã khoanh. Giữ đoạn thì
+  // `autoStepFor` tính lại được với số mốc hiện tại.
   const suggestionTargetId = suggestionTarget?.id ?? null;
   useEffect(() => {
-    if (stepEdited || suggestion === null || suggestionTargetId === null) {
+    if (stepEdited || suggestionTargetId === null || markedRange === null) {
       return;
     }
+    // Lưu ĐOẠN kể cả khi chưa tính được bước — mốc vừa ghim có thể đang bị bỏ
+    // tick, và lúc đó nó không góp vào bước chung nhưng vẫn là thứ người dùng
+    // vừa khoanh. Vứt đi để rồi tick lại phải ghim lần nữa là mất công vô lý.
+    const nextStep = suggestion ?? step;
     // Đã đúng rồi thì đừng ghi: effect này chạy lại sau mỗi lần store đổi, mà
     // `patch` luôn tạo object mới nên ghi vô điều kiện là một vòng lặp vô tận.
+    const saved = autoRangeById[suggestionTargetId];
     if (
-      step === suggestion &&
-      autoStepById[suggestionTargetId] === suggestion
+      step === nextStep &&
+      saved?.start === markedRange.start &&
+      saved?.end === markedRange.end
     ) {
       return;
     }
     // Gọi thẳng `patchTuning` chứ không qua `tune`: `tune` được tạo lại mỗi
     // lần render nên đưa vào danh sách phụ thuộc là effect chạy mọi render.
     patchTuning(task.id, task.type, {
-      step: suggestion,
-      stepText: String(suggestion),
-      autoStepById: { ...autoStepById, [suggestionTargetId]: suggestion },
+      step: nextStep,
+      stepText: String(nextStep),
+      autoRangeById: {
+        ...autoRangeById,
+        [suggestionTargetId]: { start: markedRange.start, end: markedRange.end },
+      },
     });
   }, [
     suggestion,
     suggestionTargetId,
     stepEdited,
     step,
-    autoStepById,
+    markedRange,
+    autoRangeById,
     patchTuning,
     task.id,
     task.type,

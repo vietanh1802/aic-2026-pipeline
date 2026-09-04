@@ -5,6 +5,7 @@ import {
   eventWindowFields,
   rangeOwner,
   suggestStep,
+  uniformStep,
 } from "./basketMath";
 import type { AnswerRow } from "../api/answers";
 
@@ -269,5 +270,155 @@ describe("eventWindowFields", () => {
   it("skips a non-finite edge instead of writing NaN into the box", () => {
     const fields = eventWindowFields({ 0: { start: Number.NaN, end: 300 } });
     expect(fields.eventLo).toEqual({});
+  });
+});
+
+describe("suggestStep chia ngân sách dòng theo số mốc", () => {
+  // Đúng cảnh trong báo cáo: một đoạn rộng 300 rồi tới một đoạn rộng 500, giỏ
+  // 100 dòng. backend rải VÒNG TRÒN (autofill.plan) nên N mốc thì mỗi mốc chỉ
+  // nhận needed/N dòng — bước phải nhân lên bấy nhiêu mới với tới hai đầu.
+  const wide300 = { start: 1000, end: 1300 }; // nửa rộng 150 quanh 1150
+  const wide500 = { start: 2000, end: 2500 }; // nửa rộng 250 quanh 2250
+
+  it("one anchor: 150 / ceil(99/2) = 3", () => {
+    expect(suggestStep(1150, wide300, 99, 1)).toBe(3);
+  });
+
+  it("two anchors: mỗi mốc chỉ còn nửa ngân sách, nên bước gấp đôi", () => {
+    // ceil(98 / (2*2)) = 25 bậc mỗi phía.
+    expect(suggestStep(1150, wide300, 98, 2)).toBe(6); // 150 / 25
+    expect(suggestStep(2250, wide500, 98, 2)).toBe(10); // 250 / 25
+  });
+
+  it("bước mới phủ đúng hai đầu, bước cũ thì không", () => {
+    const steps = Math.ceil(98 / (2 * 2)); // 25 bậc mỗi phía khi có 2 mốc
+    // Cách cũ bỏ qua số mốc: ceil(98/2) = 49 bậc -> bước 3 và 5.
+    expect(steps * 3).toBeLessThan(150); // 75 — hụt hơn nửa đoạn 300
+    expect(steps * 5).toBeLessThan(250); // 125 — hụt hơn nửa đoạn 500
+    // Cách mới phủ trọn.
+    expect(steps * 6).toBeGreaterThanOrEqual(150);
+    expect(steps * 10).toBeGreaterThanOrEqual(250);
+  });
+
+  it("ba mốc thì chia ba, không phải chia đôi", () => {
+    // ceil(97 / (2*3)) = 17 bậc. 150/17 = 8.8 -> 9.
+    expect(suggestStep(1150, wide300, 97, 3)).toBe(9);
+  });
+
+  it("một đoạn hẹp vẫn được rải dày hơn một đoạn rộng", () => {
+    // Hai mốc, cùng ngân sách: đoạn hẹp ra bước nhỏ. Đó là điều nên xảy ra —
+    // đoạn hẹp nghĩa là người dùng chắc chắn hơn về chỗ cần soi kỹ.
+    const narrow = suggestStep(1150, wide300, 98, 2) as number;
+    const wide = suggestStep(2250, wide500, 98, 2) as number;
+    expect(narrow).toBeLessThan(wide);
+  });
+
+  it("mặc định một mốc khi không truyền, giữ nguyên hành vi cũ", () => {
+    expect(suggestStep(1150, wide300, 99)).toBe(suggestStep(1150, wide300, 99, 1));
+  });
+
+  it("không mốc nào được tick thì coi như một, không chia cho 0", () => {
+    // anchorCount 0 mà chia thẳng sẽ ra Infinity bậc, bước rơi về 1 và rải đặc
+    // kín cả đoạn.
+    expect(suggestStep(1150, wide300, 99, 0)).toBe(3);
+  });
+});
+
+describe("uniformStep", () => {
+  // Số dòng một bước sinh ra khi mỗi mốc dừng ở mép của nó — cùng công thức
+  // backend chạy, viết lại ở đây để bài test khẳng định chứ không lặp lại code.
+  const rowsAt = (halfWidths: number[], step: number) =>
+    halfWidths.reduce((total, hw) => total + 2 * Math.floor(hw / step), 0);
+
+  it("gives 8 for the reported case — 300 and 500 in a 100-row basket", () => {
+    // Nửa rộng 150 và 250, còn thiếu 98 dòng.
+    expect(uniformStep([150, 250], 98)).toBe(8);
+  });
+
+  it("that step fills the basket without going over", () => {
+    // Ràng buộc chủ repo đặt ra: đừng để lố 100 dòng.
+    expect(rowsAt([150, 250], 8)).toBe(98);
+    expect(rowsAt([150, 250], 7)).toBeGreaterThan(98); // 112 — nên bị loại
+  });
+
+  it("splits the rows in proportion to the windows, with nobody computing it", () => {
+    const step = uniformStep([150, 250], 98) as number;
+    const first = 2 * Math.floor(150 / step);
+    const second = 2 * Math.floor(250 / step);
+    expect([first, second]).toEqual([36, 62]);
+    // 36:62 xấp xỉ 300:500 — tỉ lệ rơi ra từ hình học.
+    expect(first / (first + second)).toBeCloseTo(300 / 800, 1);
+  });
+
+  it("spends the whole budget rather than leaving rows unused", () => {
+    // Một mốc, cửa sổ 300, còn thiếu 98 dòng:
+    //   bước 3 -> 100 dòng, endpoint cắt còn 98, phủ ±147
+    //   bước 4 ->  74 dòng,                      phủ ±148
+    // Chọn 4 thì được thêm 1 frame tầm với mà mất 24 ứng viên. R@k đếm ứng
+    // viên. Bài test này chính là thứ kịch bản Chrome bắt được.
+    expect(uniformStep([150], 98)).toBe(3);
+    expect(rowsAt([150], 3)).toBeGreaterThanOrEqual(98);
+    expect(rowsAt([150], 4)).toBeLessThan(98);
+  });
+
+  it("takes the LARGEST step that still fills the budget", () => {
+    // Bước nhỏ hơn cũng lấp đầy, nhưng lấp bằng cách rải dày hơn mức cần và
+    // để endpoint cắt mất phần mép — tức thu hẹp tầm với vô cớ.
+    const step = uniformStep([150, 250], 98) as number;
+    expect(rowsAt([150, 250], step)).toBeGreaterThanOrEqual(98);
+    expect(rowsAt([150, 250], step + 1)).toBeLessThan(98);
+  });
+
+  it("does the same for lopsided windows", () => {
+    // Đoạn 100 và 900 — hai cửa sổ chênh nhau nhiều.
+    const step = uniformStep([50, 450], 98) as number;
+    expect(rowsAt([50, 450], step)).toBeGreaterThanOrEqual(98);
+    expect(rowsAt([50, 450], step + 1)).toBeLessThan(98);
+  });
+
+  it("gives two equal windows the same number of rows", () => {
+    const step = uniformStep([200, 200], 98) as number;
+    expect(2 * Math.floor(200 / step)).toBe(2 * Math.floor(200 / step));
+    expect(rowsAt([200, 200], step)).toBeGreaterThanOrEqual(98);
+  });
+
+  it("ignores anchors with no window rather than treating them as width 0", () => {
+    // Mốc chưa khoanh không có mép; nó không được kéo bước xuống 1.
+    expect(uniformStep([150, 0, 250], 98)).toBe(8);
+  });
+
+  it("has nothing to say when no window was marked at all", () => {
+    expect(uniformStep([], 98)).toBeNull();
+    expect(uniformStep([0, 0], 98)).toBeNull();
+  });
+
+  it("has nothing to say when the basket is already full", () => {
+    expect(uniformStep([150, 250], 0)).toBeNull();
+    expect(uniformStep([150, 250], -5)).toBeNull();
+  });
+
+  it("stays inside the range the API accepts", () => {
+    // Một cửa sổ khổng lồ với một dòng còn thiếu vẫn phải nằm dưới 2000.
+    const step = uniformStep([500000], 1) as number;
+    expect(step).toBeLessThanOrEqual(2000);
+    expect(step).toBeGreaterThanOrEqual(1);
+  });
+
+  it("falls back to the finest step when no step can fill the basket", () => {
+    // 98 dòng cho một cửa sổ nửa rộng 3: kể cả bước 1 cũng chỉ sinh 6 dòng.
+    // Giỏ không đủ frame để điền, và rải ra ngoài cửa sổ để cho đủ là đi ngược
+    // đúng điều người dùng vừa khoanh.
+    expect(uniformStep([3], 98)).toBe(1);
+    expect(rowsAt([3], 1)).toBe(6);
+  });
+
+  it("keeps the total inside the budget once the endpoint caps it", () => {
+    // Ràng buộc chủ repo đặt ra. uniformStep được phép vượt một chút vì
+    // endpoint dừng ở `needed`, nhưng mức vượt phải nhỏ — bước kế tiếp đã
+    // thiếu rồi, nên không bao giờ vượt cả một bậc.
+    for (const windows of [[150], [150, 250], [50, 450], [200, 200], [30, 30, 30]]) {
+      const step = uniformStep(windows, 98) as number;
+      expect(rowsAt(windows, step + 1)).toBeLessThan(98);
+    }
   });
 });

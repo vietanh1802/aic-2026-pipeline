@@ -385,3 +385,112 @@ def test_a_misspelled_direction_falls_back_instead_of_failing(conn):
     )
     # "nguoc" không hợp lệ nên rơi về `direction` = "up".
     assert [f[0] for _, f, _ in _rows(conn, task)] == [1000, 1010, 1020]
+
+# ─── Mép của từng mốc: cùng một bước, đoạn dài hơn nhận nhiều dòng hơn ───────
+
+
+def _all(anchor_count, steps, direction, reaches, limit=4000):
+    """Sinh cho tới khi cạn. Phải có `limit` hữu hạn: nếu luật dừng hỏng thì
+    bài test treo thay vì đỏ, và một bài test treo không nói gì cả."""
+    dirs = [direction] if isinstance(direction, str) else direction
+    return list(autofill.plan(anchor_count, steps, dirs, limit, reaches))
+
+
+def test_a_narrow_window_stops_while_a_wide_one_keeps_going():
+    """Chính con toán trong báo cáo: đoạn 300 và đoạn 500, giỏ 100 dòng.
+
+    Cùng bước 8, mốc nửa rộng 150 dừng sau 18 bậc còn mốc nửa rộng 250 đi tới
+    31 bậc. Tỉ lệ dòng 36:62 khớp tỉ lệ đoạn 300:500 mà không ai phải tính nó.
+    """
+    pairs = _all(2, [8, 8], autofill.BOTH, [150, 250])
+    first = [d for i, d in pairs if i == 0]
+    second = [d for i, d in pairs if i == 1]
+
+    assert len(first) == 36
+    assert len(second) == 62
+    assert len(pairs) == 98
+    # Không bậc nào vượt mép của chính nó.
+    assert max(abs(d) for d in first) == 144   # 18 x 8
+    assert max(abs(d) for d in second) == 248  # 31 x 8
+
+
+def test_the_top_ranks_stay_shared_between_both_anchors():
+    """Cửa sổ rộng chỉ được ưu ái ở phần ĐUÔI.
+
+    R@1/R@5 chỉ đọc mấy hạng đầu, nên nếu mốc rộng chiếm luôn các hạng đó thì
+    phỏng đoán kia coi như bị bỏ, dù người dùng ghim cả hai ngang nhau.
+    """
+    pairs = _all(2, [8, 8], autofill.BOTH, [150, 250])
+    # Bốn lượt đầu: bậc 1 của cả hai mốc, hai phía.
+    assert [i for i, _ in pairs[:4]] == [0, 1, 0, 1]
+    # Phần đuôi thì chỉ còn mốc rộng.
+    assert set(i for i, _ in pairs[-10:]) == {1}
+
+
+def test_every_anchor_reaching_its_edge_stops_instead_of_spinning_forever():
+    """Cái bẫy CLAUDE.md đã ghi, ở một chỗ mới.
+
+    `while produced < limit` chỉ tiến khi có dòng được sinh. Mọi mốc đều đã tới
+    mép mà chưa đủ `limit` thì `produced` đứng im và k tăng vô tận — request
+    treo cứng chứ không báo lỗi. Khác với `usable`, chuyện này xảy ra GIỮA
+    CHỪNG chứ không phải ngay từ đầu.
+    """
+    pairs = _all(2, [10, 10], autofill.BOTH, [25, 25], limit=4000)
+    # 2 bậc mỗi phía cho mỗi mốc: dừng ở 8 dòng, không quay tiếp cho đủ 4000.
+    assert len(pairs) == 8
+
+
+def test_an_anchor_with_no_window_keeps_going_unbounded():
+    """Mốc chưa khoanh đoạn thì không có mép để dừng.
+
+    Bịa một cửa sổ cho nó là dựng ra thông tin người dùng chưa đưa; loại nó ra
+    thì một mốc cố ý không khoanh lại bị thiệt.
+    """
+    pairs = _all(2, [10, 10], autofill.BOTH, [20, 0], limit=40)
+    first = [d for i, d in pairs if i == 0]
+    second = [d for i, d in pairs if i == 1]
+    assert len(first) == 4          # 2 bậc mỗi phía rồi nghỉ
+    assert len(second) == 36        # chạy tiếp tới hết ngân sách
+
+
+def test_a_reach_list_shorter_than_the_anchors_leaves_the_rest_unbounded():
+    """KHÁC `_at` một cách cố ý.
+
+    Bước và chiều rơi về phần tử cuối khi danh sách ngắn, vì dùng lại một con
+    số hợp lý vẫn rải được. Mép thì không: rơi về phần tử cuối nghĩa là gán cửa
+    sổ của mốc này cho mốc khác, và mốc đó bị cắt theo một đoạn nó không hề có.
+    """
+    pairs = _all(3, [10], autofill.BOTH, [20], limit=30)
+    counts = {i: len([d for j, d in pairs if j == i]) for i in range(3)}
+    assert counts[0] == 4
+    assert counts[1] > 4
+    assert counts[2] > 4
+
+
+def test_a_negative_or_zero_reach_means_no_edge_at_all():
+    pairs = _all(1, [10], autofill.BOTH, [-5], limit=12)
+    assert len(pairs) == 12
+
+
+def test_reaches_left_out_entirely_behaves_exactly_as_before():
+    """Mọi lời gọi hiện có không đổi hành vi."""
+    before = list(autofill.plan(2, [25], [autofill.BOTH], 20))
+    after = list(autofill.plan(2, [25], [autofill.BOTH], 20, None))
+    assert before == after
+
+
+def test_an_edge_lands_exactly_on_the_last_usable_step():
+    """Mép chia hết cho bước thì bậc cuối cùng vẫn được lấy, không bị cắt sớm."""
+    pairs = _all(1, [10], autofill.BOTH, [30], limit=100)
+    assert sorted(d for _, d in pairs) == [-30, -20, -10, 10, 20, 30]
+
+
+def test_a_window_narrower_than_one_step_yields_nothing_for_that_anchor():
+    """Bước 10 mà cửa sổ chỉ rộng 4 thì không có bậc nào lọt vào.
+
+    Không được coi đó là 'chưa có mép' rồi thả cho chạy vô hạn — người dùng đã
+    nói rõ hành động nằm trong 4 frame đó.
+    """
+    pairs = _all(2, [10, 10], autofill.BOTH, [4, 50], limit=40)
+    assert [d for i, d in pairs if i == 0] == []
+    assert len([d for i, d in pairs if i == 1]) == 10

@@ -40,8 +40,20 @@ export interface AutofillTuning {
   markKey: string | null;
   /** Bước người dùng GÕ cho riêng một mốc, khoá theo id dòng. */
   stepById: Record<number, string>;
-  /** Bước giao diện TỰ TÍNH cho riêng một mốc, khoá theo id dòng. */
-  autoStepById: Record<number, number>;
+  /**
+   * Đoạn người dùng đã ghim cho riêng một mốc, khoá theo id dòng.
+   *
+   * Giữ ĐOẠN chứ không giữ con số bước đã tính ra từ nó. Bước còn phụ thuộc
+   * vào ngân sách dòng mà mốc này được chia, mà ngân sách đó tụt xuống mỗi lần
+   * thêm một mốc nữa — backend rải vòng tròn nên N mốc thì mỗi mốc chỉ được
+   * `needed / N` dòng.
+   *
+   * Đóng băng con số thì đoạn rộng 300 tính ra bước 3 lúc có một mốc, rồi giữ
+   * nguyên 3 khi có hai mốc — trong khi lúc đó nó cần 6 mới với tới hai đầu.
+   * Giữ đoạn thì bước tính lại được bất cứ lúc nào, và luôn tính từ đoạn của
+   * CHÍNH mốc đó chứ không phải của mốc vừa ghim sau.
+   */
+  autoRangeById: Record<number, { start: number; end: number }>;
   /** Chiều rải của riêng một mốc. */
   dirById: Record<number, SpreadDirection>;
   /**
@@ -78,7 +90,7 @@ export function defaultTuning(taskType: string): AutofillTuning {
     stepEdited: false,
     markKey: null,
     stepById: {},
-    autoStepById: {},
+    autoRangeById: {},
     dirById: {},
     anchorOff: [],
     eventLo: {},

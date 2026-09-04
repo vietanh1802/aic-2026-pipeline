@@ -113,6 +113,19 @@ export function autofillAnswers(
     direction?: SpreadDirection;
     directions?: SpreadDirection[];
     /**
+     * Độ dời LỚN NHẤT của từng mốc — nửa rộng đoạn người dùng đã khoanh quanh
+     * nó. 0 = mốc đó không có mép, đi tới khi hết ngân sách.
+     *
+     * Đây là thứ cho phép mọi mốc dùng chung một bước mà đoạn dài hơn vẫn nhận
+     * nhiều dòng hơn: cùng bước, cửa sổ hẹp chạm mép sớm rồi nghỉ, cửa sổ rộng
+     * đi tiếp. Không ai phải tính tỉ lệ — nó rơi ra từ hình học.
+     *
+     * Danh sách NGẮN hơn số mốc thì phần còn lại coi như không có mép; backend
+     * cố ý không rơi về phần tử cuối như `steps`, vì làm vậy là gán cửa sổ của
+     * mốc này cho mốc khác.
+     */
+    reaches?: number[];
+    /**
      * TRAKE: khoảng của từng hành động.
      *
      * Có mặt thì backend đổi hẳn cách rải — giữ nguyên N−1 mốc của dòng neo và

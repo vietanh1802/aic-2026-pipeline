@@ -109,6 +109,20 @@ class AutofillRequest(BaseModel):
     # rải hai phía; mốc nằm ngay đầu cảnh thì rải xuống là ném đi nửa số dòng.
     # Ép cả ba dùng chung một chiều là bắt hai mốc chịu thiệt vì mốc thứ ba.
     directions: list[str] | None = None
+    # Độ dời LỚN NHẤT của từng mốc, cùng thứ tự với mốc — nửa rộng của đoạn
+    # người dùng đã khoanh quanh nó. 0 hoặc thiếu = mốc đó không có mép.
+    #
+    # Đây là thứ cho phép mọi mốc dùng CHUNG một bước mà đoạn dài hơn vẫn nhận
+    # nhiều dòng hơn: cùng bước, mốc có cửa sổ hẹp chạm mép sớm rồi nghỉ, mốc
+    # có cửa sổ rộng đi tiếp. Tỉ lệ dòng rơi ra từ hình học nên không ai phải
+    # tính nó, và thứ tự vòng tròn theo k giữ nguyên nên các hạng đầu vẫn chia
+    # đều cho mọi phỏng đoán.
+    #
+    # Gửi một CON SỐ chứ không phải hai mép như `event_ranges`: bộ sinh chỉ cần
+    # biết "đi xa nhất tới đâu". Gửi lo/hi thì backend phải tự tính lại đúng
+    # phép max() mà giao diện vừa tính, và hai bên có thể bất đồng về khung nào
+    # là tâm.
+    reaches: list[int] | None = None
 
     # ── TRAKE: khoảng của từng SỰ KIỆN ───────────────────────────────────────
     #
@@ -498,6 +512,11 @@ def autofill_answers(
         d if d in autofill.DIRECTIONS else fallback
         for d in (payload.directions or [])
     ] or [fallback]
+    # Số âm về 0 = "không có mép" thay vì bị từ chối: một tầm âm là vô nghĩa,
+    # và bỏ cả lượt điền vì nó thì mất 97 dòng cho một con số giao diện gửi
+    # nhầm. KHÔNG cắt ngắn hay đệm cho đủ số mốc — `_reach_at` cố ý không rơi
+    # về phần tử cuối, vì làm vậy là gán cửa sổ của mốc này cho mốc khác.
+    reaches = [max(0, int(r)) for r in (payload.reaches or [])]
 
     taken = {
         (row["video_id"], tuple(int(f) for f in json.loads(row["frames"])))
@@ -581,7 +600,7 @@ def autofill_answers(
         source = (
             (index, None, -1, delta)
             for index, delta in autofill.plan(
-                len(anchors), steps, directions, budget
+                len(anchors), steps, directions, budget, reaches
             )
         )
 

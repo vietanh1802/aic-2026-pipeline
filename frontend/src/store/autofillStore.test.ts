@@ -30,18 +30,26 @@ describe("defaultTuning", () => {
     expect(tuning.stepEdited).toBe(false);
     expect(tuning.markKey).toBeNull();
     expect(tuning.stepById).toEqual({});
-    expect(tuning.autoStepById).toEqual({});
+    expect(tuning.autoRangeById).toEqual({});
     expect(tuning.anchorOff).toEqual([]);
   });
 });
 
 describe("useAutofillStore", () => {
   it("survives the mount that wrote it — the bug this store exists for", () => {
-    // Cột bên video tính ra 11 cho mốc 1 và 36 cho mốc 2...
-    patch(3, "kis", { step: 36, stepText: "36", autoStepById: { 1: 11, 2: 36 } });
+    // Cột bên video ghim một đoạn cho mốc 1 và một đoạn khác cho mốc 2...
+    patch(3, "kis", {
+      step: 36,
+      stepText: "36",
+      autoRangeById: {
+        1: { start: 1410, end: 2469 },
+        2: { start: 5176, end: 8657 },
+      },
+    });
     // ...rồi hộp thoại "Giỏ" mở ra. Đó là một instance BasketBody KHÁC, dựng
     // lại từ đầu. Trước đây nó đọc `useState` của chính nó nên ra 25 mặc định.
-    expect(read(3).autoStepById).toEqual({ 1: 11, 2: 36 });
+    expect(read(3).autoRangeById[1]).toEqual({ start: 1410, end: 2469 });
+    expect(read(3).autoRangeById[2]).toEqual({ start: 5176, end: 8657 });
     expect(read(3).step).toBe(36);
   });
 
@@ -54,9 +62,9 @@ describe("useAutofillStore", () => {
   });
 
   it("leaves untouched fields alone on a later patch", () => {
-    patch(3, "kis", { autoStepById: { 1: 11 } });
+    patch(3, "kis", { autoRangeById: { 1: { start: 100, end: 400 } } });
     patch(3, "kis", { stepEdited: true });
-    expect(read(3).autoStepById).toEqual({ 1: 11 });
+    expect(read(3).autoRangeById).toEqual({ 1: { start: 100, end: 400 } });
     expect(read(3).stepEdited).toBe(true);
   });
 
