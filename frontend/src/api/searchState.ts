@@ -35,6 +35,14 @@ export interface SearchStateInput {
   picked_frame?: string | null;
   picked_video?: string | null;
   picked_frame_idx?: number | null;
+  /**
+   * Cả N mốc của một dòng TRAKE vừa chốt, theo thứ tự sự kiện.
+   *
+   * Ba trường trên là số ít, mà với TRAKE thì "khung đã chốt" là một BỘ: bấm
+   * "Chọn" sinh một dòng mang cả bốn mốc. Bỏ trống thì backend giữ nguyên
+   * đường cũ — một khung mỗi lần ghi.
+   */
+  picked_frames?: number[] | null;
 }
 
 /** Ghi đè trạng thái của chính mình trên câu này. */

@@ -36,6 +36,19 @@ export interface PickedFrame {
    * đầu.
    */
   frameIdx: number;
+  /**
+   * Cả N mốc của một dòng TRAKE, theo thứ tự sự kiện.
+   *
+   * Có nó thì bảng lịch sử bày ra N nút "▶ video · frame" cho một cú bấm
+   * "Chọn", mỗi nút mở video tại một hành động. Không có thì dòng TRAKE nằm
+   * trong lịch sử mà không kèm khung nào — truy vấn thì lấy lại được, còn thứ
+   * người dùng đã chốt thì không.
+   *
+   * `frameIdx` vẫn phải có và là mốc ĐẦU: ba cột số ít trong CSDL dùng chung
+   * hình dạng với bảng "cả nhóm đang tìm gì", và ở đó một dòng chỉ có chỗ cho
+   * một khung.
+   */
+  frames?: number[];
 }
 
 export function recordSearchState(
@@ -62,5 +75,6 @@ export function recordSearchState(
     picked_frame: picked ? picked.name ?? ring : null,
     picked_video: picked?.video ?? null,
     picked_frame_idx: picked?.frameIdx ?? null,
+    picked_frames: picked?.frames ?? null,
   }).catch(() => undefined);
 }

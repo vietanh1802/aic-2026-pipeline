@@ -34,7 +34,10 @@ import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
 import { type SearchState } from "./api/searchState";
 import SearchHistory from "./components/SearchHistory";
-import { recordSearchState } from "./helpers/searchStateRecorder";
+import {
+  recordSearchState,
+  type PickedFrame,
+} from "./helpers/searchStateRecorder";
 import { usePickedFrameStore } from "./store/pickedFrameStore";
 import { useAutofillStore } from "./store/autofillStore";
 import type {
@@ -340,6 +343,10 @@ function App({
         // viên vì cả câu chỉ có một đáp án — chỉ khung hình là thay đổi.
         answer_text: activeTask.type === "qa" ? trakeQaText.trim() || null : null,
       });
+      // Cùng chỗ thiếu như `commitTrakeRow`: nút "+ Chốt" trên từng ô là một
+      // đường vào giỏ đầy đủ, nên nó cũng phải để lại dấu trong lịch sử. Không
+      // thì chốt bằng lối tắt này xong, mở lịch sử ra không thấy gì.
+      recordState({ video, frameIdx });
       onBasketChanged?.();
     } catch (err) {
       console.error("Không thêm được mốc TRAKE vào giỏ:", err);
@@ -358,6 +365,14 @@ function App({
     }
     try {
       await addAnswer(activeTask.id, { video_id: video, frames });
+      // Ghi vào lịch sử tìm. Thiếu dòng này thì mục lịch sử của câu TRAKE có
+      // truy vấn nhưng KHÔNG kèm khung nào: bấm "Chọn" xong mở lịch sử ra chỉ
+      // thấy câu chữ, còn bộ bốn mốc vừa chốt thì không có dấu vết.
+      //
+      // Gửi cả bộ trong MỘT lần: bốn lần gửi cũng ra kết quả đúng nhưng là bốn
+      // vòng mạng cho một cú bấm, và thứ tự bốn mốc lúc đó phụ thuộc vào việc
+      // chúng về đích đúng thứ tự đã gửi.
+      recordState({ video, frameIdx: frames[0], frames });
       // Đổ hai đầu đã ghim của từng mốc vào ô "từ/đến" của Điền tự động, ngay
       // sau khi dòng đã nằm trong giỏ. Sau chứ không trước: hàng chưa vào giỏ
       // thì chưa có mốc gốc nào để rải quanh, và ghi sẵn vào bảng đó chỉ tạo
@@ -382,11 +397,12 @@ function App({
   // Ghi trạng thái tìm. Thân hàm nằm ở helpers/searchStateRecorder vì màn
   // popup video cũng phải gọi nó — chốt khung sau khi tua tới lui là một lần
   // "tìm ra" y như bấm thẳng trên thẻ, mà đường đó nằm ở cây component khác.
-  const recordState = (picked?: {
-    name?: string | null;
-    video: string;
-    frameIdx: number;
-  }) => recordSearchState(activeTask?.id, picked);
+  // Dùng thẳng `PickedFrame` thay vì khai lại hình dạng ở đây. Bản khai lại
+  // vừa khiến `frames` — trường mới cho bộ N mốc TRAKE — bị từ chối ngay tại
+  // chỗ gọi, dù helper đã nhận nó: hai bản mô tả cùng một thứ thì sớm muộn
+  // cũng lệch nhau.
+  const recordState = (picked?: PickedFrame) =>
+    recordSearchState(activeTask?.id, picked);
 
   /**
    * @param options.record false khi lần chạy này là để XEM LẠI bài người khác.

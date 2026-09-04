@@ -567,3 +567,145 @@ def test_a_closed_attempt_is_never_appended_to_again(conn):
 
     entries = list_search_history(task, an, conn)["entries"]
     assert [[p["frame"] for p in e["picks"]] for e in entries] == [[500, 600], [448]]
+
+# --- Bộ N mốc của một dòng TRAKE -------------------------------------------
+
+
+def _trake_pick(query, video, frames):
+    return _state(
+        query_text=query,
+        picked_frame=None,
+        picked_video=video,
+        picked_frame_idx=frames[0],
+        picked_frames=frames,
+    )
+
+
+def test_committing_a_trake_row_records_all_four_events(conn):
+    """Lỗi được báo: bấm "Chọn" xong, lịch sử có truy vấn mà không có khung nào.
+
+    Dòng TRAKE mang cả bốn mốc, còn ba cột picked_* là số ít — nên phải gửi cả
+    bộ, và bảng lịch sử phải bày ra bốn nút chứ không phải một.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+
+    save_search_state(
+        task,
+        _trake_pick("bốn loại trái cây", "L27_V011", [3811, 3880, 4019, 4100]),
+        an,
+        conn,
+    )
+
+    entry = list_search_history(task, an, conn)["entries"][0]
+    assert [p["frame"] for p in entry["picks"]] == [3811, 3880, 4019, 4100]
+    assert {p["video"] for p in entry["picks"]} == {"L27_V011"}
+
+
+def test_the_event_order_is_kept_exactly_as_sent(conn):
+    """Thứ tự mốc LÀ thứ tự sự kiện E1..E4, không phải thứ tự tăng dần.
+
+    Sắp lại ở đây thì nút thứ hai không còn là E2, mà bảng thì không có gì nói
+    ra điều đó.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task, _trake_pick("câu", "L27_V011", [900, 100, 500, 300]), an, conn
+    )
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [900, 100, 500, 300]
+
+
+def test_a_batch_does_not_write_its_first_frame_twice(conn):
+    """`picked_frame_idx` là mốc ĐẦU của cùng bộ đó, không phải một khung nữa.
+
+    Nhận cả hai thì E1 vào danh sách hai lần.
+    """
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task, _trake_pick("câu", "L27_V011", [3811, 3880]), an, conn
+    )
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [3811, 3880]
+
+
+def test_the_single_columns_still_carry_the_first_event(conn):
+    """Bảng "cả nhóm đang tìm gì" chỉ có chỗ cho MỘT khung."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task, _trake_pick("câu", "L27_V011", [3811, 3880, 4019]), an, conn
+    )
+
+    assert list_search_states(task, an, conn)["states"][0]["picked_frame_idx"] == 3811
+
+
+def test_a_second_trake_row_on_the_same_query_appends_its_events(conn):
+    """Chốt thêm một hàng nữa cho cùng truy vấn: nối tiếp, không ghi đè."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(task, _trake_pick("câu", "L27_V011", [10, 20]), an, conn)
+    save_search_state(task, _trake_pick("câu", "L27_V011", [30, 40]), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [10, 20, 30, 40]
+
+
+def test_a_repeated_event_frame_is_not_added_twice(conn):
+    """Hai hàng TRAKE dùng chung một mốc thì mốc đó chỉ hiện một lần."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(task, _trake_pick("câu", "L27_V011", [10, 20]), an, conn)
+    save_search_state(task, _trake_pick("câu", "L27_V011", [20, 30]), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [10, 20, 30]
+
+
+def test_a_batch_without_a_video_records_nothing(conn):
+    """Không có video thì không dựng lại được nút mở, nên đó không phải lần chốt."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task,
+        _state(
+            query_text="câu",
+            picked_frame=None,
+            picked_video=None,
+            picked_frame_idx=None,
+            picked_frames=[10, 20],
+        ),
+        an,
+        conn,
+    )
+
+    assert list_search_history(task, an, conn)["entries"][0]["picks"] == []
+
+
+def test_a_batch_longer_than_the_cap_is_cut_not_refused(conn):
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(
+        task,
+        _trake_pick("câu", "L27_V011", list(range(MAX_PICKS + 20))),
+        an,
+        conn,
+    )
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert len(picks) == MAX_PICKS
+    assert picks[0]["frame"] == 0
+
+
+def test_leaving_picked_frames_out_keeps_the_old_single_frame_path(conn):
+    """Mọi lời gọi hiện có không đổi hành vi."""
+    an = _user(conn, "an")
+    task = _task(conn, an["id"])
+    save_search_state(task, _pick("câu", "L24_V035", 448), an, conn)
+
+    picks = list_search_history(task, an, conn)["entries"][0]["picks"]
+    assert [p["frame"] for p in picks] == [448]
