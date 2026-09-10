@@ -218,7 +218,7 @@ def process_run(
                 "SELECT status FROM evaluation_runs WHERE id = ?", (run_id,)
             ).fetchone()["status"]
             if (state == "cancelling") :
-                _mark_cancelled(conn, run_id)
+                _finalize(conn, run_id, "cancelled")
                 return
             if (state != "running") :
                 return
@@ -274,30 +274,15 @@ def process_run(
             update_counts(conn, run_id)
 
         # A cancel that landed while the final query was still running would
-        # otherwise be overwritten by the summary below.
+        # otherwise be overwritten by the finished summary below.
         if (get_run(conn, run_id)["status"] == "cancelling") :
-            _mark_cancelled(conn, run_id)
+            _finalize(conn, run_id, "cancelled")
             return
 
         results = get_results(conn, run_id)
-        summary = summarize_run(results)
         completed_count = sum(1 for result in results if result["status"] == "completed")
         failed_count = sum(1 for result in results if result["status"] == "failed")
-        now = utcnow_iso()
-        conn.execute(
-            """
-            UPDATE evaluation_runs
-            SET status = ?, summary_json = ?, task_type_summary_json = ?,
-                finished_at = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                _final_status(completed_count, failed_count),
-                json.dumps(summary["headline"], ensure_ascii = False),
-                json.dumps(summary["by_task_type"], ensure_ascii = False),
-                now, now, run_id,
-            ),
-        )
+        _finalize(conn, run_id, _final_status(completed_count, failed_count))
     except Exception as exc :
         try :
             now = utcnow_iso()
@@ -315,11 +300,24 @@ def process_run(
         conn.close()
 
 
-def _mark_cancelled(conn : sqlite3.Connection, run_id : int) -> None :
+def _finalize(conn : sqlite3.Connection, run_id : int, final_status : str) -> None :
+    """Write the terminal status plus a summary over whatever ran. A cancelled
+    run gets real partial numbers too, not a blank summary."""
+    summary = summarize_run(get_results(conn, run_id))
     now = utcnow_iso()
     conn.execute(
-        "UPDATE evaluation_runs SET status = 'cancelled', finished_at = ?, updated_at = ? WHERE id = ?",
-        (now, now, run_id),
+        """
+        UPDATE evaluation_runs
+        SET status = ?, summary_json = ?, task_type_summary_json = ?,
+            finished_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            final_status,
+            json.dumps(summary["headline"], ensure_ascii = False),
+            json.dumps(summary["by_task_type"], ensure_ascii = False),
+            now, now, run_id,
+        ),
     )
 
 

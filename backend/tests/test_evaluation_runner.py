@@ -83,6 +83,10 @@ def test_full_run_persists_video_and_interval_scores(conn) :
     assert trake["interval_hit"] is None
     assert trake["interval_rank"] is None
     assert trake["final_score"] is None
+    # detail endpoint surfaces the reference answer / events, unscored
+    assert len(trake["trake_events"]) == 3
+    qa = get_result(conn, run_id, "p1-3")
+    assert qa["qa_answer"] == "37.05"
 
 
 def test_full_run_persists_task_type_summary(conn) :
@@ -141,12 +145,38 @@ def test_cancel_during_last_query_is_not_overwritten_by_summary(conn) :
 
     run = get_run(conn, run_id)
     assert run["status"] == "cancelled"
-    assert run["summary"] is None
+    # a cancelled run still carries real partial numbers over what ran
+    assert run["summary"]["final_score_kis"] == 1.0
+    assert run["task_type_summary"]["KIS"]["video"]["completed"] == 20
     # the query that was in flight when the cancel landed still finished
     assert conn.execute(
         "SELECT COUNT(*) FROM evaluation_query_results WHERE run_id = ? AND status = 'completed'",
         (run_id,),
     ).fetchone()[0] == 25
+
+
+def test_cancel_mid_run_still_persists_a_partial_summary(conn) :
+    _admin(conn)
+    import_seed(conn, ROUND1)
+    run = create_run(conn, "round1-v2", "r1-manual-v2", 1)
+    run_id = run["id"]
+
+    calls = {"n" : 0}
+
+    def cancel_after_ten(query_vi, query_en, ref, intervals, *, translation_ms) :
+        calls["n"] += 1
+        if (calls["n"] == 10) :
+            side = get_conn()
+            side.execute("UPDATE evaluation_runs SET status = 'cancelling' WHERE id = ?", (run_id,))
+            side.close()
+        return _perfect_evaluate(query_vi, query_en, ref, intervals, translation_ms = translation_ms)
+
+    process_run(run_id, translate_fn = _translate, evaluate_fn = cancel_after_ten)
+
+    run = get_run(conn, run_id)
+    assert run["status"] == "cancelled"
+    assert run["summary"] is not None
+    assert run["summary"]["video"]["completed"] == 10
 
 
 # ─── resume skips completed rows ──────────────────────────────────────────

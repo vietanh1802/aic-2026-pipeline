@@ -322,6 +322,21 @@ def get_result(conn : sqlite3.Connection, run_id : int, query_key : str) -> dict
     payload = _result_payload(row)
     payload["frame_results"] = _loads(row["frame_results_json"])
     payload["ranked_videos"] = _loads(row["ranked_videos_json"])
+
+    # qa_answer and trake_events live on the reference, not frozen onto the
+    # result. The detail panel shows them (labelled "not scored"), so join
+    # them in here rather than widen every result row.
+    reference = conn.execute(
+        """
+        SELECT r.qa_answer, r.trake_events_json
+        FROM evaluation_references r
+        JOIN evaluation_runs run ON run.reference_set_id = r.reference_set_id
+        WHERE run.id = ? AND r.query_id = ?
+        """,
+        (run_id, row["query_id"]),
+    ).fetchone()
+    payload["qa_answer"] = reference["qa_answer"] if reference is not None else None
+    payload["trake_events"] = _loads(reference["trake_events_json"]) if reference is not None else None
     return payload
 
 
