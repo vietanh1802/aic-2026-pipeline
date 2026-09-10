@@ -46,11 +46,13 @@ from app.routers import (
     answers as answers_router,
     auth as auth_router,
     board as board_router,
+    evaluation as evaluation_router,
     export as export_router,
     packs as packs_router,
     rounds as rounds_router,
     search_state as search_state_router,
 )
+from app.evaluation.runner import interrupt_incomplete_runs
 from app.version import SHORT_COMMIT, VERSION
 from app import ocr_search as ocr_route
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
@@ -387,6 +389,11 @@ async def lifespan(app: FastAPI):
     _conn = get_conn()
     try:
         migrate(_conn)
+        # A benchmark run left mid-flight by the previous process is marked
+        # interrupted here, never resumed silently — an admin decides.
+        interrupted = interrupt_incomplete_runs(_conn)
+        if interrupted:
+            print(f"[evaluation] marked {interrupted} unfinished run(s) as interrupted")
     finally:
         _conn.close()
 
@@ -417,6 +424,7 @@ app.include_router(answers_router.router)
 app.include_router(export_router.router)
 app.include_router(rounds_router.router)
 app.include_router(search_state_router.router)
+app.include_router(evaluation_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is

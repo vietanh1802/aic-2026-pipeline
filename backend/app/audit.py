@@ -47,6 +47,12 @@ PACK_SET_PHASE = "pack.set_phase"
 # ra được. Ghi lại vì bản `scope="all"` của admin xoá cả đường tìm của người
 # khác — cần biết ai đã bấm, chứ không cần lấy lại.
 SEARCH_HISTORY_CLEAR = "search_history.clear"
+# Retrieval Evaluation benchmark runs. None are restorable — a run is
+# recomputable — but a run competes with live search on the same process, so
+# who started or cancelled one and when is worth having.
+EVALUATION_RUN_START = "evaluation.run_start"
+EVALUATION_RUN_CANCEL = "evaluation.run_cancel"
+EVALUATION_RUN_RESUME = "evaluation.run_resume"
 
 # Which actions put answer rows in `detail`, and so can be undone.
 RESTORABLE = (ANSWER_DELETE, ANSWERS_CLEAR, ANSWERS_AUTOFILL_CLEAR)
