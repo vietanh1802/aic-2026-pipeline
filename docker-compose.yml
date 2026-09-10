@@ -57,6 +57,16 @@ services:
       AIC_CORS_ORIGINS: ${AIC_CORS_ORIGINS:-https://aic.umaga.fun}
       AIC_MODELS: ${AIC_MODELS:-}
       AIC_WARMUP: ${AIC_WARMUP:-1}
+      # Read only when the Retrieval Evaluation benchmark asks for a translation
+      # (app/translation.py, lazily via os.getenv). The app starts fine without
+      # it; only a benchmark run fails, one query at a time, until it is set.
+      #
+      # Passthrough, never a value: the key comes from the host — either the
+      # `.env` file docker compose reads for interpolation, next to this file at
+      # /opt/aic/app/.env, or the shell that runs `docker compose up`. Like
+      # AIC_OCR_DIR above, a deploy ships an image and not this file, so adding
+      # the line here also means adding it by hand to /opt/aic/app/docker-compose.yml.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       HF_HOME: /opt/aic/model-cache/huggingface
       TORCH_HOME: /opt/aic/model-cache/torch
       XDG_CACHE_HOME: /opt/aic/model-cache/xdg

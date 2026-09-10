@@ -18,7 +18,6 @@ from app.evaluation.scoring import (
     score_video_ranking,
 )
 from app.translation import (
-    DEFAULT_TRANSLATION_POLICY,
     normalize_translation_policy,
     translate_vi_to_en,
     translator_id_for_policy,

@@ -3,7 +3,6 @@ from __future__ import annotations
 from app.evaluation.scoring import (
     R_AT_CUTS,
     collapse_visual_results,
-    rank_visual_videos,
     score_frame_intervals,
     score_video_ranking,
     summarize_run,

@@ -2,14 +2,12 @@
 are deterministic and no model is loaded."""
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi import HTTPException
 
 from app import audit
 from app.db.connection import get_conn, utcnow_iso
-from app.evaluation.repository import create_run, get_result, get_run, get_results, resume_run
+from app.evaluation.repository import create_run, get_result, get_run, resume_run
 from app.evaluation.runner import process_run
 from app.evaluation.scoring import rank_visual_videos, score_frame_intervals, score_video_ranking
 from app.evaluation.seed import SEEDS_DIR, import_seed
