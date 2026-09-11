@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApiRequestError } from "../api/base";
 import {
-  R_AT_CUTS,
   cancelRun,
   createRun,
   getRun,
@@ -16,18 +15,17 @@ import {
 import type {
   BenchmarkRun,
   Dataset,
-  IntervalMetrics,
+  LatencyMetrics,
   QueryResult,
   QueryResultDetail,
-  RAt,
   RunHeadline,
   RunStatus,
   TaskType,
   TranslationPolicy,
-  VideoMetrics,
 } from "../api/retrievalBenchmark";
 import Button from "../components/Button";
 import RetrievalBenchmarkDetail from "../components/RetrievalBenchmarkDetail";
+import { RAtHeatStrip, ResultIndicator, perQueryRAt } from "../components/RetrievalBenchmarkDetail/visuals";
 
 const POLL_MS = 2500;
 
@@ -92,6 +90,19 @@ function configFingerprint(run: BenchmarkRun): string {
   });
 }
 
+// A run's p95/max only matter as an outlier signal, not a number anyone
+// watches per run — flag it instead of always showing all four latency
+// figures at equal weight (previously P50/P95/Max/≤10s sat in their own
+// full-width row on every run).
+function isSlow(latency: LatencyMetrics): boolean {
+  return (latency.p95_ms ?? 0) > 10000 || (latency.max_ms ?? 0) > 15000;
+}
+
+function outlierClass(ms: number | null, p50: number | null): string {
+  if (ms === null || p50 === null || p50 <= 0) return "";
+  return ms > p50 * 3 && ms > 3000 ? "text-[#c64545] font-bold" : "";
+}
+
 // ── small presentational pieces ────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: RunStatus }) {
@@ -116,208 +127,171 @@ function StatusBadge({ status }: { status: RunStatus }) {
   );
 }
 
-function Metric({
-  label,
-  value,
-  sub,
-  primary = false,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  primary?: boolean;
-}) {
+function ScoreBar({ value, tone = "primary" }: { value: number; tone?: "primary" | "muted" }) {
+  const width = `${Math.max(0, Math.min(1, value)) * 100}%`;
   return (
-    <div className="border border-proto-line rounded-[10px] bg-white p-3.5 min-h-[96px]">
-      <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">{label}</div>
+    <div className="h-2 rounded-full bg-proto-soft overflow-hidden w-full">
       <div
-        className={`font-mono font-bold text-proto-ink leading-none mt-2.5 ${
-          primary ? "text-[26px]" : "text-[22px]"
-        }`}
-      >
-        {value}
-      </div>
-      {sub && <div className="text-[11px] font-mono text-proto-muted mt-1.5">{sub}</div>}
-    </div>
-  );
-}
-
-function RAtRow({ label, rAt }: { label: string; rAt: RAt }) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px]">
-      <span className="text-proto-muted uppercase text-[10px] font-bold tracking-wide">{label}</span>
-      {R_AT_CUTS.map((cut) => (
-        <span key={cut} className="font-mono">
-          R@{cut} <b className="text-proto-ink">{pct(rAt[String(cut)] ?? 0)}</b>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function VideoBlock({ video }: { video: VideoMetrics }) {
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-mono">
-      <span>
-        Hit@1 <b className="text-proto-ink">{pct(video.hit_at_1)}</b>
-      </span>
-      <span>
-        R@3 <b className="text-proto-ink">{pct(video.recall_at_3)}</b>
-      </span>
-      <span>
-        R@5 <b className="text-proto-ink">{pct(video.recall_at_5)}</b>
-      </span>
-      <span>
-        R@10 <b className="text-proto-ink">{pct(video.recall_at_10)}</b>
-      </span>
-      <span>
-        MRR <b className="text-proto-ink">{video.mrr.toFixed(3)}</b>
-      </span>
-      <span className="text-proto-muted">
-        median rank {video.median_reference_rank ?? "—"}
-      </span>
-    </div>
-  );
-}
-
-function IntervalBlock({ interval }: { interval: IntervalMetrics }) {
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-mono">
-      <span>
-        Final <b className="text-proto-ink">{score(interval.final_score)}</b>
-      </span>
-      <span>
-        interval-hit <b className="text-proto-ink">{pct(interval.interval_hit_rate)}</b>
-      </span>
-      <span className="text-[#c64545]">
-        video-hit / interval-miss <b>{interval.video_hit_interval_miss}</b>
-      </span>
+        className={`h-full rounded-full ${tone === "primary" ? "bg-proto-primary" : "bg-proto-teal"}`}
+        style={{ width }}
+      />
     </div>
   );
 }
 
 // ── report sections ───────────────────────────────────────────────────────
-
-function CaveatsBlock({ staleFiles }: { staleFiles: string[] }) {
-  return (
-    <div className="border border-proto-line rounded-[10px] bg-white px-4 py-3 text-[12px] text-proto-body space-y-1.5">
-      {staleFiles.length > 0 && (
-        <div className="rounded-[8px] border border-[#c64545]/30 bg-[#c64545]/5 px-3 py-2 text-[#c64545]">
-          <b>Index was stale at run start.</b> These files changed on disk without a
-          restart, so the numbers may not reflect current retrieval:{" "}
-          <span className="font-mono">{staleFiles.join(", ")}</span>
-        </div>
-      )}
-      <p className="m-0">
-        <b>QA</b> queries are scored on video + frame-interval only. Answer text is
-        never checked.
-      </p>
-      <p className="m-0">
-        <b>TRAKE</b> queries are Tier 0: target-video ranking only. Per-event frames
-        are not scored.
-      </p>
-      <p className="m-0">
-        Translations are captured per run, not frozen across runs — re-running the
-        same policy can yield slightly different English.
-      </p>
-      <p className="m-0 text-proto-muted">
-        A benchmark run shares the live backend process with competition search.
-        Don't start one during a live round.
-      </p>
-    </div>
-  );
-}
+//
+// Previously this whole area was a single CaveatsBlock: four standing
+// paragraphs (stale-index warning, "QA answer text not checked", "TRAKE is
+// Tier 0", "translations aren't frozen") shown in full every time any run
+// was viewed, regardless of whether that run even had QA/TRAKE queries or
+// was being compared to anything. Each caveat now lives next to the metric
+// it actually qualifies instead of in a standing block everyone reads every
+// time: stale-index stays a real-time conditional banner below; the QA/TRAKE
+// notes are captions on their own rows in TaskTypeBars; the
+// translation-not-frozen note is a tooltip on the policy field in the
+// "New run" panel; the live-round warning sits next to the Start button —
+// see the JSX further down.
 
 function HeadlineStrip({ headline }: { headline: RunHeadline }) {
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 sm:grid-cols-3 min-[1050px]:grid-cols-6 gap-3">
-        <Metric
-          label="Final Score · KIS+QA"
-          value={score(headline.final_score_kis_qa)}
-          sub={`${headline.scored_queries} scored`}
-          primary
-        />
-        <Metric
-          label="Final Score · KIS only"
-          value={score(headline.final_score_kis)}
-          sub="QA excluded"
-          primary
-        />
-        <Metric label="R@1" value={pct(headline.r_at_kis_qa["1"] ?? 0)} sub="KIS+QA" />
-        <Metric label="R@5" value={pct(headline.r_at_kis_qa["5"] ?? 0)} sub="KIS+QA" />
-        <Metric label="R@20" value={pct(headline.r_at_kis_qa["20"] ?? 0)} sub="KIS+QA" />
-        <Metric
-          label="Interval hit"
-          value={pct(headline.interval.interval_hit_rate)}
-          sub={`${headline.interval.video_hit_interval_miss} video-hit / interval-miss`}
-        />
+    <div className="border border-proto-line rounded-[10px] bg-white p-4">
+      <div className="flex flex-wrap items-start gap-8">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+            Final score
+          </div>
+          <div className="font-mono font-bold text-proto-ink text-[34px] leading-none mt-1">
+            {score(headline.final_score_kis_qa)}
+          </div>
+          <div className="text-[11px] text-proto-muted mt-1.5">
+            {headline.scored_queries} scored ·{" "}
+            <span className="font-mono">KIS only {score(headline.final_score_kis)}</span>{" "}
+            <span
+              className="cursor-help"
+              title="The blended score includes QA, but QA's answer text is never checked — only video + frame. KIS-only excludes QA so you can see how much that shifts the blended number."
+            >
+              ⓘ
+            </span>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-2">
+            R@k
+          </div>
+          <RAtHeatStrip rAt={headline.r_at_kis_qa} />
+        </div>
+
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+            Right video, wrong frame
+          </div>
+          <div className="font-mono font-bold text-[#c9962b] text-[22px] mt-1 leading-none">
+            {headline.interval.video_hit_interval_miss}
+          </div>
+        </div>
       </div>
 
-      <div className="border border-proto-line rounded-[10px] bg-white px-4 py-3 space-y-2">
-        <RAtRow label="R@k · KIS+QA" rAt={headline.r_at_kis_qa} />
-        <RAtRow label="R@k · KIS only" rAt={headline.r_at_kis} />
-        <div className="pt-2 border-t border-proto-line">
-          <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1">
-            Video level — did we find the right video at all
+      <div className="mt-3 pt-3 border-t border-proto-line flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[11.5px] text-proto-muted">
+        <span>
+          Found the video · <b className="text-proto-ink font-mono">{pct(headline.video.hit_at_1)}</b>{" "}
+          at rank 1
+        </span>
+        <details>
+          <summary className="cursor-pointer inline">more video-ranking detail</summary>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono">
+            <span>R@3 <b className="text-proto-ink">{pct(headline.video.recall_at_3)}</b></span>
+            <span>R@5 <b className="text-proto-ink">{pct(headline.video.recall_at_5)}</b></span>
+            <span>R@10 <b className="text-proto-ink">{pct(headline.video.recall_at_10)}</b></span>
+            <span>MRR <b className="text-proto-ink">{headline.video.mrr.toFixed(3)}</b></span>
+            <span>median rank {headline.video.median_reference_rank ?? "—"}</span>
           </div>
-          <VideoBlock video={headline.video} />
-        </div>
-        <div className="pt-2 border-t border-proto-line flex flex-wrap gap-x-3 gap-y-1 text-[12px] font-mono text-proto-muted">
-          <span>
-            P50 <b className="text-proto-ink">{seconds(headline.latency.p50_ms)}</b>
-          </span>
-          <span>
-            P95 <b className="text-proto-ink">{seconds(headline.latency.p95_ms)}</b>
-          </span>
-          <span>
-            Max <b className="text-proto-ink">{seconds(headline.latency.max_ms)}</b>
-          </span>
-          <span>
-            ≤10s <b className="text-proto-ink">{pct(headline.latency.within_10s_rate)}</b>
-          </span>
-        </div>
+        </details>
+        <span className="ml-auto">
+          Typical{" "}
+          <b
+            className="text-proto-ink font-mono cursor-help"
+            title={`p95 ${seconds(headline.latency.p95_ms)} · within 10s ${pct(headline.latency.within_10s_rate)}`}
+          >
+            {seconds(headline.latency.p50_ms)}
+          </b>
+          {isSlow(headline.latency) && (
+            <span className="ml-1 text-[#c64545] font-bold">
+              · slowest {seconds(headline.latency.max_ms)}
+            </span>
+          )}
+        </span>
       </div>
     </div>
   );
 }
 
-function TaskTypeCards({ run }: { run: BenchmarkRun }) {
+function TaskTypeRow({
+  label,
+  count,
+  value,
+  valueLabel,
+  caption,
+  tone = "primary",
+}: {
+  label: string;
+  count: number;
+  value: number;
+  valueLabel: string;
+  caption?: string;
+  tone?: "primary" | "muted";
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-3 text-[12px]">
+        <span className="font-bold text-proto-ink w-12">{label}</span>
+        <span className="text-proto-muted text-[11px] w-20 shrink-0">{count} queries</span>
+        <div className="flex-1">
+          <ScoreBar value={value} tone={tone} />
+        </div>
+        <span className="font-mono font-bold text-proto-ink w-14 text-right shrink-0">
+          {valueLabel}
+        </span>
+      </div>
+      {/* QA and TRAKE captions are always-visible text, not a hover tooltip —
+          QA alone is roughly a quarter of every dataset, so the caveat that
+          its answer text isn't graded needs to survive a skim, not require a
+          deliberate hover. */}
+      {caption && <div className="mt-1 ml-[6.5rem] text-[11px] text-proto-muted">{caption}</div>}
+    </div>
+  );
+}
+
+function TaskTypeBars({ run }: { run: BenchmarkRun }) {
   const byType = run.task_type_summary;
   if (!byType) return null;
   return (
-    <div className="grid gap-3 min-[900px]:grid-cols-3">
-      {(["KIS", "QA"] as const).map((type) => {
-        const block = byType[type];
-        return (
-          <div key={type} className="border border-proto-line rounded-[10px] bg-white p-3.5">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-proto-ink">
-              {type}{" "}
-              <span className="text-proto-muted font-normal">
-                · {block.video.total} queries
-              </span>
-            </div>
-            <div className="mt-2 space-y-1.5">
-              <IntervalBlock interval={block.interval} />
-              <VideoBlock video={block.video} />
-            </div>
-          </div>
-        );
-      })}
-      <div className="border border-proto-line rounded-[10px] bg-white p-3.5">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-proto-ink">
-          TRAKE{" "}
-          <span className="text-proto-muted font-normal">
-            · {byType.TRAKE.video.total} queries
-          </span>
-          <span className="ml-2 text-[9.5px] px-1.5 py-0.5 rounded-full bg-proto-cream-strong text-proto-ink">
-            Tier 0 — video ranking only
-          </span>
-        </div>
-        <div className="mt-2">
-          <VideoBlock video={byType.TRAKE.video} />
-        </div>
+    <div className="border border-proto-line rounded-[10px] bg-white p-4 space-y-3">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
+        By question type
       </div>
+      <TaskTypeRow
+        label="KIS"
+        count={byType.KIS.video.total}
+        value={byType.KIS.interval.final_score}
+        valueLabel={score(byType.KIS.interval.final_score)}
+      />
+      <TaskTypeRow
+        label="QA"
+        count={byType.QA.video.total}
+        value={byType.QA.interval.final_score}
+        valueLabel={score(byType.QA.interval.final_score)}
+        caption="Answer text isn't graded — only video + frame."
+      />
+      <TaskTypeRow
+        label="TRAKE"
+        count={byType.TRAKE.video.total}
+        value={byType.TRAKE.video.mrr}
+        valueLabel={score(byType.TRAKE.video.mrr)}
+        tone="muted"
+        caption="Video match only — individual moments aren't checked."
+      />
     </div>
   );
 }
@@ -406,16 +380,16 @@ function CompareSection({
               </select>
             </div>
             {run?.summary ? (
-              <div className="space-y-1.5">
-                <div className="text-[13px] font-mono">
-                  Final Score{" "}
-                  <b className="text-proto-ink">{score(run.summary.final_score_kis_qa)}</b>{" "}
-                  <span className="text-proto-muted">
-                    (KIS {score(run.summary.final_score_kis)})
+              <div className="space-y-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono font-bold text-[22px] text-proto-ink">
+                    {score(run.summary.final_score_kis_qa)}
+                  </span>
+                  <span className="text-[11px] text-proto-muted">
+                    KIS only {score(run.summary.final_score_kis)}
                   </span>
                 </div>
-                <IntervalBlock interval={run.summary.interval} />
-                <VideoBlock video={run.summary.video} />
+                <RAtHeatStrip rAt={run.summary.r_at_kis_qa} size="sm" />
               </div>
             ) : (
               <p className="text-[12px] text-proto-muted m-0">No summary.</p>
@@ -426,17 +400,20 @@ function CompareSection({
 
       {mismatch ? (
         <div className="rounded-[8px] border border-[#d4a017]/40 bg-[#d4a017]/10 px-3 py-2 text-[12px] text-[#7a5c0c]">
-          The two runs used a different translation policy or model config, so a
+          These two runs used a different translation policy or model config, so a
           combined number would average incompatible measurements. Pick runs with
           matching config to see it.
         </div>
       ) : (
-        <div className="border border-proto-line rounded-[10px] bg-white px-4 py-3 text-[13px]">
-          Combined Final Score (KIS+QA, both datasets pooled){" "}
-          <b className="font-mono text-proto-ink">{score(combined)}</b>
-          <div className="text-[11px] text-proto-muted mt-1">
-            A portfolio figure — Round 1 and Round 2 difficulty are not identical.
-          </div>
+        <div className="border border-proto-line rounded-[10px] bg-white px-4 py-3 text-[13px] flex items-baseline gap-2">
+          <span className="text-proto-muted">Combined score</span>
+          <b
+            className="font-mono text-proto-ink text-[16px] cursor-help"
+            title="A portfolio figure across both datasets pooled — Round 1 and Round 2 aren't equally difficult, so treat this as a rough blend, not an apples-to-apples score."
+          >
+            {score(combined)}
+          </b>
+          <span className="text-proto-muted text-[11px] cursor-help">ⓘ</span>
         </div>
       )}
     </div>
@@ -725,6 +702,7 @@ export default function RetrievalBenchmark() {
   const referenceSet = selectedDataset?.reference_sets.find(
     (reference) => reference.version === (run?.reference_set_version ?? referenceSetVersion)
   );
+  const runP50 = run?.summary?.latency.p50_ms ?? null;
 
   return (
     <div className="max-w-[1240px] mx-auto p-6 font-baloo">
@@ -812,8 +790,11 @@ export default function RetrievalBenchmark() {
             </select>
           </label>
           <label>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1">
-              Translation policy
+            <div
+              className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1 cursor-help"
+              title="Translations are captured per run, not frozen across runs — re-running the same policy can yield slightly different English and shift results a little."
+            >
+              Translation policy ⓘ
             </div>
             <select
               className="w-full px-2 py-1.5 rounded-[7px] border border-proto-line bg-white text-[13px]"
@@ -828,7 +809,7 @@ export default function RetrievalBenchmark() {
             </select>
           </label>
         </div>
-        <div className="px-4 pb-4 flex items-center gap-2">
+        <div className="px-4 pb-2 flex items-center gap-2">
           <Button
             size="sm"
             onClick={() => void startRun()}
@@ -841,6 +822,12 @@ export default function RetrievalBenchmark() {
             {policies.find((p) => p.id === selectedPolicy)?.description}
           </span>
         </div>
+        {/* Contextual, not a standing disclaimer on every finished run's
+            results — this only matters at the moment someone is about to
+            start a run, so it lives next to the button that does that. */}
+        <div className="px-4 pb-4 text-[11px] text-proto-muted">
+          Runs share the live search backend with the app — avoid starting one during a live round.
+        </div>
       </div>
 
       {run && (
@@ -849,17 +836,16 @@ export default function RetrievalBenchmark() {
             {/* metadata header */}
             <div className="border border-proto-line rounded-[10px] bg-white p-4">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-[12px] text-proto-muted">#{run.id}</span>
                 <StatusBadge status={run.status} />
                 <span className="text-[12px] text-proto-ink font-semibold">
                   {selectedDataset?.display_name ?? run.dataset_version}
                 </span>
-                <span className="text-[11px] font-mono text-proto-muted">
-                  {run.dataset_version} / {run.reference_set_version}
+                <span className="text-[11.5px] font-mono text-proto-muted">
+                  {run.completed_count} of {run.query_count} done
+                  {run.failed_count > 0 && (
+                    <span className="text-[#c64545]"> · {run.failed_count} failed</span>
+                  )}
                 </span>
-                {run.resume_count > 0 && (
-                  <span className="text-[10px] text-proto-muted">· resumed ×{run.resume_count}</span>
-                )}
                 <span className="ml-auto flex gap-2">
                   {canCancel && (
                     <Button size="xs" variant="outline" onClick={() => void doCancel()} loading={busy}>
@@ -880,24 +866,6 @@ export default function RetrievalBenchmark() {
                 </div>
               )}
 
-              <div className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2 text-[12px] text-proto-muted font-mono">
-                <span>
-                  policy ·{" "}
-                  <b className="text-proto-ink">
-                    {policyLabel(run.configuration?.translation_policy, policies)}
-                  </b>
-                </span>
-                <span>
-                  models · {(run.configuration?.models ?? []).join(", ") || "—"} · topK{" "}
-                  {run.configuration?.top_k} · topM {run.configuration?.top_m}
-                </span>
-                <span>
-                  build · {runtime?.version ?? "—"} @ {runtime?.commit ?? "—"}
-                </span>
-                <span>
-                  {run.completed_count}/{run.query_count} done · {run.failed_count} failed
-                </span>
-              </div>
               {run.error && (
                 <div className="mt-2 text-[12px] font-mono text-[#c64545]">{run.error}</div>
               )}
@@ -906,14 +874,51 @@ export default function RetrievalBenchmark() {
                   {referenceSet.label_semantics}
                 </p>
               )}
+
+              {/* Reproducibility metadata (dataset/reference slugs, model
+                  config, build commit) — collapsed by default. Every run
+                  today uses the same hardcoded ensemble config, so none of
+                  this differentiates one run from another yet; it earns a
+                  click, not permanent space next to the score. */}
+              <details className="mt-3 text-[11.5px] text-proto-muted">
+                <summary className="cursor-pointer">Run details</summary>
+                <div className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 font-mono">
+                  <span>
+                    run #{run.id}
+                    {run.resume_count > 0 && ` · resumed ×${run.resume_count}`}
+                  </span>
+                  <span>
+                    {run.dataset_version} / {run.reference_set_version}
+                  </span>
+                  <span>
+                    policy ·{" "}
+                    <b className="text-proto-ink">
+                      {policyLabel(run.configuration?.translation_policy, policies)}
+                    </b>
+                  </span>
+                  <span>
+                    models · {(run.configuration?.models ?? []).join(", ") || "—"} · topK{" "}
+                    {run.configuration?.top_k} · topM {run.configuration?.top_m}
+                  </span>
+                  <span>
+                    build · {runtime?.version ?? "—"} @ {runtime?.commit ?? "—"}
+                  </span>
+                </div>
+              </details>
             </div>
 
-            <CaveatsBlock staleFiles={staleFiles} />
+            {staleFiles.length > 0 && (
+              <div className="border border-[#c64545]/30 rounded-[10px] bg-[#c64545]/5 px-4 py-3 text-[12px] text-[#c64545]">
+                <b>Index was stale when this run started.</b> These files changed on disk
+                without a restart, so results may not reflect current retrieval:{" "}
+                <span className="font-mono">{staleFiles.join(", ")}</span>
+              </div>
+            )}
 
             {run.summary ? (
               <>
                 <HeadlineStrip headline={run.summary} />
-                <TaskTypeCards run={run} />
+                <TaskTypeBars run={run} />
               </>
             ) : (
               <div className="border border-proto-line rounded-[10px] bg-white p-4 text-[12.5px] text-proto-muted">
@@ -959,9 +964,9 @@ export default function RetrievalBenchmark() {
                   onChange={(event) => setFilter(event.target.value as ResultFilter)}
                 >
                   <option value="all">all</option>
-                  <option value="video-miss">video miss</option>
-                  <option value="interval-miss">interval miss</option>
-                  <option value="video-hit-interval-miss">video hit / interval miss</option>
+                  <option value="video-miss">video missed</option>
+                  <option value="interval-miss">wrong frame</option>
+                  <option value="video-hit-interval-miss">right video, wrong frame</option>
                   <option value="failed">failed</option>
                   <option value="has-note">has note</option>
                 </select>
@@ -988,17 +993,16 @@ export default function RetrievalBenchmark() {
                     <tr className="text-left text-[10px] uppercase tracking-wide text-proto-muted">
                       <th className="px-3 py-1.5 font-semibold">Query</th>
                       <th className="px-3 py-1.5 font-semibold">Type</th>
-                      <th className="px-3 py-1.5 font-semibold">Video</th>
-                      <th className="px-3 py-1.5 font-semibold">Interval</th>
-                      <th className="px-3 py-1.5 font-semibold">R@1/5/20/50/100</th>
+                      <th className="px-3 py-1.5 font-semibold">Result</th>
+                      <th className="px-3 py-1.5 font-semibold">R@k</th>
                       <th className="px-3 py-1.5 font-semibold">Final</th>
                       <th className="px-3 py-1.5 font-semibold">Total</th>
-                      <th className="px-3 py-1.5 font-semibold">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredResults.map((result) => {
                       const selected = result.query_key === selectedQueryKey;
+                      const isTrake = result.task_type === "TRAKE";
                       return (
                         <tr
                           key={result.query_key}
@@ -1019,45 +1023,21 @@ export default function RetrievalBenchmark() {
                             )}
                           </td>
                           <td className="px-3 py-1.5">{result.task_type}</td>
-                          <td className="px-3 py-1.5 font-mono">
-                            {result.reference_video_rank === null ? (
+                          <td className="px-3 py-1.5">
+                            <ResultIndicator result={result} />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {isTrake ? (
                               <span className="text-proto-muted">—</span>
                             ) : (
-                              `#${result.reference_video_rank}`
+                              <RAtHeatStrip rAt={perQueryRAt(result.interval_rank)} size="sm" />
                             )}
                           </td>
                           <td className="px-3 py-1.5 font-mono">
-                            {result.task_type === "TRAKE" ? (
-                              <span className="text-proto-muted">tier 0</span>
-                            ) : result.interval_rank === null ? (
-                              <span className="text-proto-muted">miss</span>
-                            ) : (
-                              <span className="text-[#3d7a4d]">
-                                #{result.interval_rank}
-                                {result.matched_interval_index !== null &&
-                                  ` (iv ${result.matched_interval_index + 1})`}
-                              </span>
-                            )}
+                            {isTrake ? "—" : score(result.final_score)}
                           </td>
-                          <td className="px-3 py-1.5 font-mono">
-                            {result.task_type === "TRAKE"
-                              ? "—"
-                              : R_AT_CUTS.map((cut) =>
-                                  result.interval_rank !== null && result.interval_rank <= cut
-                                    ? "✓"
-                                    : "×"
-                                ).join(" ")}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono">
-                            {result.task_type === "TRAKE" ? "—" : score(result.final_score)}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono">{seconds(result.total_ms)}</td>
-                          <td className="px-3 py-1.5">
-                            {result.status === "failed" ? (
-                              <span className="text-[#c64545]">failed</span>
-                            ) : (
-                              result.status
-                            )}
+                          <td className={`px-3 py-1.5 font-mono ${outlierClass(result.total_ms, runP50)}`}>
+                            {seconds(result.total_ms)}
                           </td>
                         </tr>
                       );
