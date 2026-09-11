@@ -12,6 +12,7 @@ export type Screen =
   | "history"
   | "board"
   | "evaluation"
+  | "retrieval-benchmark"
   | "import"
   | "export";
 
@@ -34,6 +35,7 @@ const NAV: { id: Screen; label: string; adminOnly?: boolean }[] = [
   { id: "board", label: "Board" },
   { id: "search", label: "Search" },
   { id: "evaluation", label: "Evaluation" },
+  { id: "retrieval-benchmark", label: "Benchmark", adminOnly: true },
   { id: "export", label: "Export" },
 ];
 
