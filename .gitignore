@@ -165,3 +165,12 @@ data_raw/L25_V001_configs.json
 
 # Paper Vintern-1B. Tải lại từ arxiv.org/abs/2408.12480 khi cần.
 docs/2408.12480v2.pdf
+
+# Báo cáo kỹ thuật nộp BTC — tài liệu của đội, không phải nguồn của repo.
+# Bộ khung LaTeX được viết trên Overleaf; ba file md là ghi chú và kế hoạch
+# viết, dùng nội bộ rồi thôi.
+technical_report/
+technical_report.zip
+docs/bao-cao-ky-thuat-ke-hoach.md
+docs/bao-cao-ky-thuat-mau.md
+docs/cac-huong-truy-van.md
