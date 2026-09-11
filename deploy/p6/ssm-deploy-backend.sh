@@ -128,6 +128,15 @@ docker compose ps api
 if ! docker compose exec -T api python -m scripts.seed_team; then
   echo "WARNING: seeding failed; run 'docker compose exec api python -m scripts.seed_team' by hand" >&2
 fi
+
+# Register the retrieval-benchmark datasets. Same reasoning and same best-effort
+# stance as seed_team above: idempotent (INSERT OR IGNORE plus a source-hash
+# guard), the tables were already created by migrate() when the container came
+# up, and the benchmark is an admin tool nobody needs in the first minutes after
+# a deploy — a failure here must not roll back a good image.
+if ! docker compose exec -T api python -m scripts.seed_evaluation; then
+  echo "WARNING: evaluation seeding failed; run 'docker compose exec api python -m scripts.seed_evaluation' by hand" >&2
+fi
 REMOTE
 
 command_payload="$tmp/command.json"

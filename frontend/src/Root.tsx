@@ -9,6 +9,7 @@ import AppNav, { type Screen } from "./components/AppNav";
 import Board from "./pages/Board";
 import ChangePassword from "./pages/ChangePassword";
 import EvaluationPage from "./pages/Evaluation";
+import RetrievalBenchmark from "./pages/RetrievalBenchmark";
 import ExportPage from "./pages/Export";
 import ImportPack from "./pages/ImportPack";
 import Login from "./pages/Login";
@@ -160,6 +161,7 @@ export default function Root() {
         />
       )}
       {screen === "evaluation" && <EvaluationPage />}
+      {screen === "retrieval-benchmark" && <RetrievalBenchmark />}
       {screen === "import" && <ImportPack />}
       {screen === "export" && <ExportPage />}
 

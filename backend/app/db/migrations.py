@@ -166,6 +166,151 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ALTER TABLE search_history ADD COLUMN closed_at TEXT",
         ),
     ),
+    (
+        8,
+        (
+            # Retrieval Evaluation benchmark: score the translated visual
+            # ensemble pipeline against manually reviewed Round 1 / Round 2
+            # references. Six tables, added together because they are one
+            # feature and none of them existed before this step.
+            #
+            # These are the reference SET tables and the RUN tables, kept
+            # apart on purpose: a dataset + its reference set is seeded once
+            # from a JSON file and never touched by a run, while runs and
+            # their per-query results accumulate over time.
+            "CREATE TABLE evaluation_datasets ("
+            "  id               INTEGER PRIMARY KEY,"
+            "  slug             TEXT NOT NULL,"
+            "  version          TEXT NOT NULL,"
+            "  display_name     TEXT NOT NULL,"
+            "  query_count      INTEGER NOT NULL,"
+            "  source_filename  TEXT,"
+            # sha256 of the seed file, or of its canonicalised query list when
+            # the file declares none — either way, re-seeding an edited file
+            # is refused rather than silently merged.
+            "  source_sha256    TEXT,"
+            "  created_at       TEXT NOT NULL,"
+            "  UNIQUE(slug, version)"
+            ")",
+            "CREATE TABLE evaluation_queries ("
+            "  id          INTEGER PRIMARY KEY,"
+            "  dataset_id  INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,"
+            "  query_key   TEXT NOT NULL,"           # 'p1-1', 'p2-16'
+            "  ordinal     INTEGER NOT NULL,"
+            "  task_type   TEXT NOT NULL,"           # 'KIS' | 'QA' | 'TRAKE'
+            "  query_vi    TEXT NOT NULL,"
+            "  UNIQUE(dataset_id, query_key)"
+            ")",
+            "CREATE TABLE evaluation_reference_sets ("
+            "  id                   INTEGER PRIMARY KEY,"
+            "  dataset_id           INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,"
+            "  version              TEXT NOT NULL,"
+            "  label_semantics      TEXT NOT NULL,"
+            "  interval_annotation  TEXT,"
+            "  notes                TEXT,"
+            "  created_at           TEXT NOT NULL,"
+            "  UNIQUE(dataset_id, version)"
+            ")",
+            # One reference per (reference_set, query). valid_intervals_json is
+            # a JSON list of {start,end} inclusive frame ranges — a query is a
+            # hit when any candidate frame for the right video lands in any
+            # listed interval. It is NULL only for TRAKE, which stays scored on
+            # video ranking alone (Tier 0). reference_frame_idx is kept for
+            # display and is just the first interval's start.
+            "CREATE TABLE evaluation_references ("
+            "  id                    INTEGER PRIMARY KEY,"
+            "  reference_set_id      INTEGER NOT NULL REFERENCES evaluation_reference_sets(id) ON DELETE CASCADE,"
+            "  query_id              INTEGER NOT NULL REFERENCES evaluation_queries(id) ON DELETE CASCADE,"
+            "  video_id              TEXT NOT NULL,"
+            "  valid_intervals_json  TEXT,"
+            "  interval_count        INTEGER NOT NULL DEFAULT 0,"
+            "  reference_frame_idx   INTEGER,"
+            "  status                TEXT NOT NULL,"
+            "  confidence            TEXT,"
+            "  provenance            TEXT,"
+            "  notes                 TEXT NOT NULL DEFAULT '',"
+            "  qa_answer             TEXT,"           # QA reference answer — stored, never scored
+            "  trake_events_json     TEXT,"           # TRAKE events — descriptive only, never scored
+            "  UNIQUE(reference_set_id, query_id)"
+            ")",
+            # A run is one (dataset, reference_set) scored under one translation
+            # policy and model config. summary_json is the blended headline;
+            # task_type_summary_json breaks the same run out by KIS / QA / TRAKE,
+            # which now matters because their scoring semantics differ.
+            "CREATE TABLE evaluation_runs ("
+            "  id                       INTEGER PRIMARY KEY,"
+            "  dataset_id               INTEGER NOT NULL REFERENCES evaluation_datasets(id) ON DELETE CASCADE,"
+            "  reference_set_id         INTEGER NOT NULL REFERENCES evaluation_reference_sets(id) ON DELETE CASCADE,"
+            "  strategy                 TEXT NOT NULL,"
+            "  video_ranking_policy     TEXT NOT NULL,"
+            "  interval_scoring_policy  TEXT NOT NULL,"
+            "  translator               TEXT NOT NULL,"
+            "  status                   TEXT NOT NULL,"
+            "  query_count              INTEGER NOT NULL,"
+            "  completed_count          INTEGER NOT NULL DEFAULT 0,"
+            "  failed_count             INTEGER NOT NULL DEFAULT 0,"
+            "  created_by_user_id       INTEGER,"
+            "  configuration_json       TEXT NOT NULL,"
+            "  runtime_json             TEXT,"
+            "  summary_json             TEXT,"
+            "  task_type_summary_json   TEXT,"
+            "  error                    TEXT,"
+            "  created_at               TEXT NOT NULL,"
+            "  started_at               TEXT,"
+            "  finished_at              TEXT,"
+            "  updated_at               TEXT NOT NULL,"
+            "  resume_count             INTEGER NOT NULL DEFAULT 0"
+            ")",
+            # reference_intervals_json / reference_notes are frozen copies taken
+            # at run creation, so a later edit to the reference set cannot change
+            # what a past run was scored against. interval_rank is the smallest
+            # submitted rank whose frame is a correct-video-in-interval hit;
+            # every R@k and final_score for KIS/QA derives from it. All the
+            # interval_* columns are NULL for TRAKE.
+            "CREATE TABLE evaluation_query_results ("
+            "  id                       INTEGER PRIMARY KEY,"
+            "  run_id                   INTEGER NOT NULL REFERENCES evaluation_runs(id) ON DELETE CASCADE,"
+            "  query_id                 INTEGER NOT NULL REFERENCES evaluation_queries(id) ON DELETE CASCADE,"
+            "  query_key                TEXT NOT NULL,"
+            "  ordinal                  INTEGER NOT NULL,"
+            "  task_type                TEXT NOT NULL,"
+            "  status                   TEXT NOT NULL,"
+            "  query_vi                 TEXT NOT NULL,"
+            "  query_en                 TEXT,"
+            "  translator               TEXT NOT NULL,"
+            "  reference_video          TEXT NOT NULL,"
+            "  reference_intervals_json TEXT,"
+            "  reference_frame_idx      INTEGER,"
+            "  reference_notes          TEXT NOT NULL DEFAULT '',"
+            "  predicted_top1_video     TEXT,"
+            "  reference_video_rank     INTEGER,"
+            "  hit_at_1                 INTEGER,"
+            "  hit_at_3                 INTEGER,"
+            "  hit_at_5                 INTEGER,"
+            "  hit_at_10                INTEGER,"
+            "  reciprocal_rank          REAL,"
+            "  not_retrieved            INTEGER,"
+            "  interval_hit             INTEGER,"
+            "  interval_rank            INTEGER,"
+            "  matched_interval_index   INTEGER,"
+            "  final_score              REAL,"
+            "  translation_ms           REAL,"
+            "  retrieval_ms             REAL,"
+            "  aggregation_ms           REAL,"
+            "  total_ms                 REAL,"
+            "  frame_results_json       TEXT,"
+            "  ranked_videos_json       TEXT,"
+            "  error                    TEXT,"
+            "  started_at               TEXT,"
+            "  finished_at              TEXT,"
+            "  UNIQUE(run_id, query_id)"
+            ")",
+            "CREATE INDEX idx_evaluation_runs_status "
+            "ON evaluation_runs(status)",
+            "CREATE INDEX idx_evaluation_query_results_run "
+            "ON evaluation_query_results(run_id, ordinal)",
+        ),
+    ),
 )
 
 
