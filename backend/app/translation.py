@@ -8,13 +8,22 @@ import urllib.request
 
 # Every run records the policy-specific translator_id_for_policy() value, so a
 # past run's translations stay attributable even after the default changes.
-DEFAULT_TRANSLATION_POLICY = "visual_faithful"
+DEFAULT_TRANSLATION_POLICY = "literal_v1"
 
 _GEMINI_MODEL = "gemini-3.5-flash-lite"
 _GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent"
 
 
 TRANSLATION_POLICIES = {
+    "literal_v1" : {
+        "label" : "Literal (baseline)",
+        "description" : "Plain literal translation, no restructuring.",
+        "instructions" : (
+            "Translate the following Vietnamese text into English.\n"
+            "Preserve the original meaning precisely.\n"
+            "Do not explain or add information."
+        ),
+    },
     "visual_faithful" : {
         "label" : "Visual faithful",
         "description" : "Preserve every explicit visual detail while removing video-narration boilerplate.",
@@ -92,6 +101,32 @@ TRANSLATION_POLICIES = {
             "- Do not invent or infer which detail is present if it is not explicitly stated.\n"
             "- Do not remove details merely because they seem less important.\n"
             "- If the input contains a question, do not answer it."
+        ),
+    },
+    "literal_visual_v2" : {
+        "label" : "Literal visual v2",
+        "description" : "Literal translation that also protects specific visual wording from being generalized.",
+        "instructions" : (
+            "Translate the following Vietnamese query into English for visual video retrieval.\n\n"
+            "Requirements:\n"
+            "- Return only the English translation.\n"
+            "- Preserve sentence order exactly as written.\n"
+            "- Preserve subject-action-object relationships exactly as stated.\n"
+            "- Preserve every explicit count, color, object, clothing item, spatial relation, "
+            "temporal relation, camera/viewpoint detail, and visible text.\n"
+            "- Preserve temporal connectors such as 'then', 'after that', 'next', 'finally' when "
+            "they appear in the source -- do not remove them, they can mark distinct sub-scenes.\n"
+            "- Do not summarize, compress, or merge separate observations into one broader concept "
+            "(e.g. do not turn 'two students acting as presenters' into 'two student MCs').\n"
+            "- Do not introduce more specific or technical vocabulary than the source uses "
+            "(e.g. do not turn 'drum set' into 'acoustic drum kit').\n"
+            "- Do not reorder details for salience or emphasis.\n"
+            "- Do not infer, explain, or add information not stated.\n"
+            "- Remove only truly empty wrapper phrases that describe the existence of the video "
+            "rather than its visible content, such as 'đoạn video cho thấy', 'có thể thấy trong "
+            "cảnh', 'cảnh quay ghi lại'. Do not remove anything else.\n"
+            "- If the input contains a question, do not answer it, but preserve the full visual "
+            "evidence description needed to answer it."
         ),
     },
 }
