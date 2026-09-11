@@ -5,12 +5,17 @@ import type {
   FrameResult,
   QueryResultDetail,
 } from "../../api/retrievalBenchmark";
-import { R_AT_CUTS } from "../../api/retrievalBenchmark";
 import { videoUrlAt } from "../../helpers/videoSource";
 import KeyframeFPS from "../../mapping/fps_map.json";
 import KeyframeImg from "../KeyframeImg";
+import { RAtHeatStrip, ResultIndicator, perQueryRAt } from "./visuals";
 
 const FPS = KeyframeFPS as Record<string, number | undefined>;
+
+// How many ranked-video evidence blocks to show before collapsing the rest
+// behind "show more" — ten full video blocks (each with up to three frame
+// thumbnails) is more than most inspection actually needs by default.
+const VISIBLE_RANKED_VIDEOS = 5;
 
 function formatSeconds(ms: number | null): string {
   if (ms === null) return "—";
@@ -34,7 +39,7 @@ function inAnyInterval(
 }
 
 function intervalListLabel(intervals: FrameInterval[] | null): string {
-  if (!intervals || intervals.length === 0) return "no interval (TRAKE — video ranking only)";
+  if (!intervals || intervals.length === 0) return "no interval — video match only";
   return intervals.map((iv) => `${iv.start}–${iv.end}`).join(", ");
 }
 
@@ -51,9 +56,11 @@ export default function RetrievalBenchmarkDetail({
     seconds: number;
     src: string;
   } | null>(null);
+  const [showAllVideos, setShowAllVideos] = useState(false);
 
   useEffect(() => {
     setPreview(null);
+    setShowAllVideos(false);
   }, [result?.id]);
 
   if (!result) {
@@ -72,6 +79,8 @@ export default function RetrievalBenchmarkDetail({
 
   const isTrake = result.task_type === "TRAKE";
   const rankedVideos = (result.ranked_videos ?? []).slice(0, 10);
+  const visibleVideos = showAllVideos ? rankedVideos : rankedVideos.slice(0, VISIBLE_RANKED_VIDEOS);
+  const hiddenVideoCount = rankedVideos.length - visibleVideos.length;
 
   const openFrame = (frame: FrameResult, fallbackVideoId: string) => {
     const videoId = frameVideoId(frame, fallbackVideoId);
@@ -90,9 +99,13 @@ export default function RetrievalBenchmarkDetail({
         <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-proto-dark text-proto-canvas">
           {result.task_type}
         </span>
-        <span className="ml-auto text-[10px] uppercase tracking-wide text-proto-muted">
-          {result.status}
-        </span>
+        {/* "completed" is the default outcome for nearly every row — only
+            worth printing when the status is something else. */}
+        {result.status !== "completed" && (
+          <span className="ml-auto text-[10px] uppercase tracking-wide text-proto-muted">
+            {result.status}
+          </span>
+        )}
       </div>
 
       <div className="p-4 max-h-[calc(100vh-120px)] overflow-y-auto">
@@ -114,6 +127,15 @@ export default function RetrievalBenchmarkDetail({
           </div>
         )}
 
+        {/* The verdict — the first thing this panel should answer, before any
+            of the supporting detail below. Uses the same dot+label language
+            as the per-query table so the two views read as one system. */}
+        {!result.error && (
+          <div className="mb-4">
+            <ResultIndicator result={result} verbose />
+          </div>
+        )}
+
         <section>
           <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1">
             Original query
@@ -128,8 +150,9 @@ export default function RetrievalBenchmarkDetail({
           <p className="text-[13px] text-proto-body leading-[1.5] m-0">
             {result.query_en ?? "Not available"}
           </p>
-          <div className="text-[10.5px] text-proto-muted mt-1 font-mono">{result.translator}</div>
-          <div className="text-[10.5px] text-proto-muted mt-0.5">Policy · {translationPolicyLabel}</div>
+          <div className="text-[10.5px] text-proto-muted mt-1">
+            {result.translator} · {translationPolicyLabel}
+          </div>
         </section>
 
         <section className="mt-4 grid grid-cols-2 gap-3">
@@ -149,31 +172,6 @@ export default function RetrievalBenchmarkDetail({
             <div className="font-mono text-[12.5px] text-proto-ink">
               {result.predicted_top1_video ?? "—"}
             </div>
-            <div
-              className={`text-[11px] mt-0.5 ${
-                result.reference_video_rank === null ? "text-[#c64545]" : "text-proto-muted"
-              }`}
-            >
-              {result.status !== "completed"
-                ? result.status
-                : result.reference_video_rank === null
-                  ? "reference video not retrieved"
-                  : `video rank #${result.reference_video_rank}`}
-            </div>
-            {!isTrake && (
-              <div
-                className={`text-[11px] mt-0.5 ${
-                  result.interval_hit ? "text-[#3d7a4d]" : "text-proto-muted"
-                }`}
-              >
-                {result.interval_rank === null
-                  ? "no frame inside a valid interval"
-                  : `interval hit at rank #${result.interval_rank}` +
-                    (result.matched_interval_index !== null
-                      ? ` (interval ${result.matched_interval_index + 1})`
-                      : "")}
-              </div>
-            )}
           </div>
         </section>
 
@@ -187,16 +185,8 @@ export default function RetrievalBenchmarkDetail({
                 Final <b className="font-mono text-proto-ink">{result.final_score?.toFixed(2) ?? "—"}</b>
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] font-mono">
-              {R_AT_CUTS.map((cut) => {
-                const hit =
-                  result.interval_rank !== null && result.interval_rank <= cut;
-                return (
-                  <span key={cut} className={hit ? "text-[#3d7a4d]" : "text-proto-muted"}>
-                    R@{cut} {hit ? "✓" : "×"}
-                  </span>
-                );
-              })}
+            <div className="mt-2">
+              <RAtHeatStrip rAt={perQueryRAt(result.interval_rank)} />
             </div>
           </section>
         )}
@@ -204,13 +194,13 @@ export default function RetrievalBenchmarkDetail({
         {result.task_type === "QA" && (
           <section className="mt-4 border border-proto-line rounded-[8px] px-3 py-2.5">
             <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-              Reference answer · not scored
+              Reference answer
             </div>
             <div className="mt-1 text-[13px] font-mono text-proto-ink">
               {result.qa_answer ?? "—"}
             </div>
             <div className="mt-1 text-[11px] text-proto-muted">
-              QA is scored on video + frame interval only; the answer text is never checked.
+              Not part of the score — only video + frame are graded.
             </div>
           </section>
         )}
@@ -218,7 +208,7 @@ export default function RetrievalBenchmarkDetail({
         {isTrake && result.trake_events && result.trake_events.length > 0 && (
           <section className="mt-4 border border-proto-line rounded-[8px] px-3 py-2.5">
             <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted">
-              TRAKE events · not scored
+              Event moments
             </div>
             <ol className="mt-1.5 mb-0 pl-4 space-y-1 text-[12px] text-proto-body">
               {result.trake_events.map((event) => (
@@ -232,7 +222,7 @@ export default function RetrievalBenchmarkDetail({
               ))}
             </ol>
             <div className="mt-1 text-[11px] text-proto-muted">
-              Tier 0: only the target video ranking is scored for TRAKE.
+              Not part of the score — only the video match is graded.
             </div>
           </section>
         )}
@@ -287,7 +277,7 @@ export default function RetrievalBenchmarkDetail({
             </p>
           ) : (
             <div className="space-y-2.5">
-              {rankedVideos.map((candidate) => {
+              {visibleVideos.map((candidate) => {
                 const isReference = candidate.video_id === result.reference_video;
                 return (
                   <div
@@ -349,15 +339,24 @@ export default function RetrievalBenchmarkDetail({
                   </div>
                 );
               })}
+              {hiddenVideoCount > 0 && (
+                <button
+                  type="button"
+                  className="text-[11px] underline text-proto-muted"
+                  onClick={() => setShowAllVideos(true)}
+                >
+                  Show {hiddenVideoCount} more
+                </button>
+              )}
             </div>
           )}
         </section>
 
-        <section className="mt-4 pt-4 border-t border-proto-line">
-          <div className="text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-2">
+        <details className="mt-4 pt-4 border-t border-proto-line">
+          <summary className="text-[10px] font-bold uppercase tracking-wide text-proto-muted cursor-pointer">
             Timing
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px]">
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px]">
             <span className="text-proto-muted">Translation</span>
             <span className="font-mono text-right text-proto-ink">
               {formatSeconds(result.translation_ms)}
@@ -375,7 +374,7 @@ export default function RetrievalBenchmarkDetail({
               {formatSeconds(result.total_ms)}
             </span>
           </div>
-        </section>
+        </details>
       </div>
     </div>
   );
