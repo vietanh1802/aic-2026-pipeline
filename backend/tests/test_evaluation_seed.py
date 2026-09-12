@@ -8,6 +8,11 @@ from app.evaluation.seed import SEEDS_DIR, import_all_seeds, import_seed
 
 ROUND1 = SEEDS_DIR / "round1-v2.json"
 ROUND2 = SEEDS_DIR / "round2-v1.json"
+ROUND3 = SEEDS_DIR / "round3-v1.json"
+
+# 25 + 30 + 35. Round 3 is 35 and not 36: question 34 is omitted because the
+# team chose the wrong video for it, so its submission cannot serve as a label.
+TOTAL_QUERIES = 90
 
 
 def _count(conn, table : str) -> int :
@@ -17,26 +22,27 @@ def _count(conn, table : str) -> int :
 def test_seed_files_are_present() :
     assert ROUND1.exists()
     assert ROUND2.exists()
+    assert ROUND3.exists()
 
 
-def test_import_all_seeds_registers_both_datasets(conn) :
+def test_import_all_seeds_registers_every_round(conn) :
     results = import_all_seeds(conn)
     versions = {result["dataset_version"] for result in results}
-    assert versions == {"round1-v2", "round2-v1"}
+    assert versions == {"round1-v2", "round2-v1", "round3-v1"}
 
-    assert _count(conn, "evaluation_datasets") == 2
-    assert _count(conn, "evaluation_queries") == 55
-    assert _count(conn, "evaluation_reference_sets") == 2
-    assert _count(conn, "evaluation_references") == 55
+    assert _count(conn, "evaluation_datasets") == 3
+    assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
+    assert _count(conn, "evaluation_reference_sets") == 3
+    assert _count(conn, "evaluation_references") == TOTAL_QUERIES
 
 
 def test_import_is_idempotent(conn) :
     first = import_all_seeds(conn)
     second = import_all_seeds(conn)
     assert [r["query_count"] for r in first] == [r["query_count"] for r in second]
-    assert _count(conn, "evaluation_datasets") == 2
-    assert _count(conn, "evaluation_queries") == 55
-    assert _count(conn, "evaluation_references") == 55
+    assert _count(conn, "evaluation_datasets") == 3
+    assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
+    assert _count(conn, "evaluation_references") == TOTAL_QUERIES
 
 
 def test_task_counts_match_the_declared_breakdown(conn) :
@@ -56,6 +62,59 @@ def test_task_counts_match_the_declared_breakdown(conn) :
     assert counts[("round2-v1", "KIS")] == 19
     assert counts[("round2-v1", "QA")] == 9
     assert counts[("round2-v1", "TRAKE")] == 2
+    assert counts[("round3-v1", "KIS")] == 26
+    assert counts[("round3-v1", "QA")] == 8
+    assert counts[("round3-v1", "TRAKE")] == 1
+
+
+# Round 3 keeps the original question numbers as ordinals, so 34 is simply
+# absent rather than the rest being shifted up — a result row still points back
+# at the organiser's question number.
+def test_round3_keeps_question_numbers_and_drops_question_34(conn) :
+    import_seed(conn, ROUND3)
+    rows = conn.execute(
+        """
+        SELECT q.query_key, q.ordinal FROM evaluation_queries q
+        JOIN evaluation_datasets d ON d.id = q.dataset_id
+        WHERE d.version = 'round3-v1' ORDER BY q.ordinal
+        """
+    ).fetchall()
+    ordinals = [row["ordinal"] for row in rows]
+    assert ordinals == [n for n in range(1, 37) if n != 34]
+    assert [row["query_key"] for row in rows] == [f"p3-{n}" for n in ordinals]
+
+
+# The organiser's Round 3 filenames reuse the 'p2-' prefix; ids must not collide
+# with round2-v1 or one round's references would overwrite the other's.
+def test_round3_ids_do_not_collide_with_round2(conn) :
+    import_all_seeds(conn)
+    duplicated = conn.execute(
+        """
+        SELECT query_key, COUNT(DISTINCT dataset_id) AS n
+        FROM evaluation_queries GROUP BY query_key HAVING n > 1
+        """
+    ).fetchall()
+    assert duplicated == []
+
+
+def test_round3_intervals_come_from_the_submitted_span(conn) :
+    import_seed(conn, ROUND3)
+    row = conn.execute(
+        """
+        SELECT r.video_id, r.valid_intervals_json, r.interval_count,
+               r.reference_frame_idx, r.confidence, r.qa_answer
+        FROM evaluation_references r
+        JOIN evaluation_queries q ON q.id = r.query_id
+        WHERE q.query_key = 'p3-8'
+        """
+    ).fetchone()
+    intervals = json.loads(row["valid_intervals_json"])
+    assert row["video_id"] == "L21_V018"
+    assert row["confidence"] == "submission_derived_span"
+    assert row["qa_answer"] == "SEGA"            # nháy bao quanh đã được bóc
+    assert row["interval_count"] == len(intervals) == 1
+    # Khung mỏ neo là dòng 1 của file nộp, và phải nằm trong khoảng suy ra.
+    assert intervals[0]["start"] <= row["reference_frame_idx"] <= intervals[0]["end"]
 
 
 def test_intervals_are_persisted_as_json_lists(conn) :

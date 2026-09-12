@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.parse
 import urllib.request
 
 
@@ -12,6 +13,23 @@ DEFAULT_TRANSLATION_POLICY = "literal_v1"
 
 _GEMINI_MODEL = "gemini-3.5-flash-lite"
 _GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent"
+
+# Ai thật sự dịch. Mọi policy cũ đều là Gemini nên thiếu khoá "provider" nghĩa
+# là Gemini — không phải sửa lại sáu entry chỉ để khai thêm một giá trị mặc định.
+PROVIDER_GEMINI = "gemini"
+PROVIDER_GOOGLE_GTX = "google_gtx"
+
+# Đúng endpoint mà nút Translate ở tab Search gọi (QueryInput/index.tsx). Đây là
+# endpoint nội bộ của trang translate.google.com: không cần key, nhưng cũng
+# không có hợp đồng nào — Google chặn hay đổi định dạng lúc nào cũng được.
+_GOOGLE_GTX_URL = "https://translate.googleapis.com/translate_a/single"
+
+# Gọi từ EC2 bằng User-Agent mặc định của urllib ("Python-urllib/3.x") rất dễ
+# ăn 403. Giả trình duyệt để đi cùng đường với nút Translate trên web.
+_GOOGLE_GTX_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 TRANSLATION_POLICIES = {
@@ -129,6 +147,17 @@ TRANSLATION_POLICIES = {
             "evidence description needed to answer it."
         ),
     },
+    # Không phải một cách viết prompt — là một NGƯỜI DỊCH khác hẳn. Có mặt ở đây
+    # vì suốt cuộc thi cả nhóm bấm nút Translate ở tab Search, tức là dịch bằng
+    # Google chứ không phải Gemini. Thiếu lựa chọn này thì benchmark đang chấm
+    # một hệ thống không ai dùng, và không tách được "ensemble tìm giỏi tới đâu"
+    # khỏi "Gemini dịch khéo hơn Google tới đâu".
+    "google_gtx_v1" : {
+        "label" : "Google Translate (contest parity)",
+        "description" : "Exactly what the Search tab's Translate button does — free gtx endpoint, no prompt.",
+        "provider" : PROVIDER_GOOGLE_GTX,
+        "translator_id" : "google_gtx_vi_en_v1",
+    },
 }
 
 
@@ -139,8 +168,19 @@ def normalize_translation_policy(policy : str | None) -> str :
     return selected
 
 
+def provider_of_policy(policy : str | None) -> str :
+    selected = normalize_translation_policy(policy)
+    return str(TRANSLATION_POLICIES[selected].get("provider") or PROVIDER_GEMINI)
+
+
 def translator_id_for_policy(policy : str | None) -> str :
     selected = normalize_translation_policy(policy)
+    # Giữ nguyên chuỗi suy ra từ tên policy cho các policy Gemini: id này đã nằm
+    # trong DB của những lần chạy trước, đổi là các run cũ không còn so được với
+    # run mới. Người dịch không phải Gemini thì khai thẳng id của mình.
+    explicit_id = TRANSLATION_POLICIES[selected].get("translator_id")
+    if (explicit_id) :
+        return str(explicit_id)
     return f"gemini_3_5_flash_lite_vi_en_{selected}_v1"
 
 
@@ -160,6 +200,41 @@ def _translation_prompt(text : str, policy : str) -> str :
     return f"{instructions}\n\nVietnamese:\n{text}"
 
 
+def _translate_google_gtx(query : str, timeout_s : float) -> str :
+    """Cùng endpoint, cùng tham số với nút Translate ở tab Search, để con số
+    benchmark nói đúng về thứ cả nhóm đã dùng trong lúc thi."""
+    params = urllib.parse.urlencode({
+        "client" : "gtx",
+        "sl"     : "auto",
+        "tl"     : "en",
+        "dt"     : "t",
+        "q"      : query,
+    })
+    request = urllib.request.Request(
+        f"{_GOOGLE_GTX_URL}?{params}",
+        headers = {"User-Agent" : _GOOGLE_GTX_USER_AGENT},
+        method = "GET",
+    )
+    with urllib.request.urlopen(request, timeout = timeout_s) as response :
+        data = json.loads(response.read().decode("utf-8"))
+
+    # Trả về [[ ["câu đã dịch", "câu gốc", ...], ... ], ...] — câu dài bị cắt
+    # thành nhiều đoạn, phải nối lại đúng như frontend đang làm.
+    segments = data[0] if (isinstance(data, list) and data) else None
+    if (not isinstance(segments, list) or not segments) :
+        raise RuntimeError("Google Translate returned no translation")
+
+    translated = "".join(
+        str(segment[0] or "")
+        for segment in segments
+        if (isinstance(segment, list) and segment)
+    ).strip()
+
+    if (not translated) :
+        raise RuntimeError("Google Translate returned an empty translation")
+    return translated
+
+
 def translate_vi_to_en(
     text : str,
     timeout_s : float = 10.0,
@@ -169,6 +244,13 @@ def translate_vi_to_en(
     query = text.strip()
     if (not query) :
         raise ValueError("Translation text must not be empty")
+
+    # Tuyến Google không có key, nên phải rẽ TRƯỚC chỗ kiểm GEMINI_API_KEY —
+    # nếu không thì chọn Google mà thiếu key Gemini vẫn hỏng cả lần chạy.
+    if (provider_of_policy(policy) == PROVIDER_GOOGLE_GTX) :
+        started = time.monotonic()
+        translated = _translate_google_gtx(query, timeout_s)
+        return translated, (time.monotonic() - started) * 1000.0
 
     api_key = os.getenv("GEMINI_API_KEY")
     if (not api_key) :
