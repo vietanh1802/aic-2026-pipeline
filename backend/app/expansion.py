@@ -171,6 +171,14 @@ def _ollama_generate(prompt : str, system : str, model : str, base_url : str) ->
     return text
 
 
+# Cache kết quả expand theo (query_text, task_type). Temperature 0 nên cùng
+# đề luôn cho cùng output — cache là bản ghi quota miễn phí: double-click, bấm
+# lại trên cùng task, hay đổi máy tab đều không đốt thêm request Gemini.
+# Giới hạn 512 mục: đề của một vòng thi là vài chục câu, 512 là dư và vẫn nhỏ.
+_EXPANSION_CACHE : dict[tuple[str, str], dict[str, Any]] = {}
+_CACHE_LIMIT = 512
+
+
 def expand_query(query_text : str, task_type : str = "KIS") -> dict[str, Any] :
     """Đề bài VI → {eng_query, check_units, provider}.
 
@@ -179,6 +187,13 @@ def expand_query(query_text : str, task_type : str = "KIS") -> dict[str, Any] :
     500.
     """
     started = time.monotonic()
+
+    cache_key = (query_text, task_type)
+    cached = _EXPANSION_CACHE.get(cache_key)
+    if (cached is not None and "error" not in cached) :
+        # Trả bản cache với elapsed_ms reset: thời gian thật của lần này là
+        # ~0, không phải thời gian của lần sinh kết quả.
+        return {**cached, "cached" : True, "elapsed_ms" : 0}
 
     def _result(eng : str, units : list[str], provider : str,
                 translated : str | None = None) -> dict[str, Any] :
@@ -190,6 +205,13 @@ def expand_query(query_text : str, task_type : str = "KIS") -> dict[str, Any] :
             "elapsed_ms" : int((time.monotonic() - started) * 1000),
         }
 
+    def _remember(result : dict[str, Any]) -> dict[str, Any] :
+        if ("error" not in result) :
+            if (len(_EXPANSION_CACHE) >= _CACHE_LIMIT) :
+                _EXPANSION_CACHE.pop(next(iter(_EXPANSION_CACHE)))
+            _EXPANSION_CACHE[cache_key] = result
+        return result
+
     # 1) Gemini one-call
     api_key = os.getenv("GEMINI_API_KEY")
     if (api_key) :
@@ -198,7 +220,7 @@ def expand_query(query_text : str, task_type : str = "KIS") -> dict[str, Any] :
                 lambda : _gemini_expand(query_text, task_type, api_key)
             )
             eng, units = _parse_expand_json(raw)
-            return _result(eng, units, "gemini")
+            return _remember(_result(eng, units, "gemini"))
         except Exception :
             pass  # rơi xuống nhánh local — đúng vai trò fallback của nó
 
@@ -215,7 +237,7 @@ def expand_query(query_text : str, task_type : str = "KIS") -> dict[str, Any] :
                 ollama_model, ollama_url,
             )
             eng, units = _parse_expand_json(raw)
-            return _result(eng, units, "ollama", translated)
+            return _remember(_result(eng, units, "ollama", translated))
         except Exception :
             pass
 
