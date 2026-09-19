@@ -67,6 +67,11 @@ services:
       # AIC_OCR_DIR above, a deploy ships an image and not this file, so adding
       # the line here also means adding it by hand to /opt/aic/app/docker-compose.yml.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Nút Expand (app/expansion.py): fallback Ollama local khi Gemini chết.
+      # Cùng cơ chế passthrough như GEMINI_API_KEY — giá trị thật sống ở .env
+      # trên host EC2, không nằm trong repo.
+      AIC_OLLAMA_URL: ${AIC_OLLAMA_URL:-}
+      AIC_OLLAMA_MODEL: ${AIC_OLLAMA_MODEL:-qwen3.8:27b}
       HF_HOME: /opt/aic/model-cache/huggingface
       TORCH_HOME: /opt/aic/model-cache/torch
       XDG_CACHE_HOME: /opt/aic/model-cache/xdg

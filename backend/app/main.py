@@ -47,6 +47,7 @@ from app.routers import (
     auth as auth_router,
     board as board_router,
     evaluation as evaluation_router,
+    expansion as expansion_router,
     export as export_router,
     packs as packs_router,
     rounds as rounds_router,
@@ -425,6 +426,7 @@ app.include_router(export_router.router)
 app.include_router(rounds_router.router)
 app.include_router(search_state_router.router)
 app.include_router(evaluation_router.router)
+app.include_router(expansion_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is

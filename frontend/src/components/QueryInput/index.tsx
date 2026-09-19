@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import {
@@ -7,6 +8,7 @@ import {
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
+import { expandQuery, type ExpansionResult } from "../../api/expansion";
 
 interface QueryInputProps {
   doSearch: () => void;
@@ -85,6 +87,32 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       // Dịch hỏng thì giữ nguyên câu đang gõ. Ném ra ngoài sẽ thành lỗi
       // không ai bắt, mà thứ người dùng vừa gõ thì biến mất.
       console.error("Không dịch được:", err);
+    }
+  };
+
+  // Expand: giống Translate ở chỗ ghi thẳng vào ô nhập, khác ở chỗ đi qua
+  // backend (Gemini/Ollama) thay vì gtx trong trình duyệt. Kết quả kèm
+  // check_units — hiện một dòng mờ dưới cụm nút, biến mất ngay khi người dùng
+  // sửa câu, theo cùng triết lý "không để UI cố định chỉ để đọc một lần".
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [expansion, setExpansion] = useState<ExpansionResult | null>(null);
+
+  const handleExpand = async () => {
+    if (!queryText || expanding) return;
+    setExpanding(true);
+    setExpandError(null);
+    try {
+      const result = await expandQuery(queryText, "KIS");
+      setQueryText(result.eng_query);
+      setExpansion(result);
+    } catch (err) {
+      setExpandError(
+        err instanceof Error ? err.message : "Không mở rộng được câu truy vấn"
+      );
+      console.error("Không mở rộng được:", err);
+    } finally {
+      setExpanding(false);
     }
   };
 
@@ -262,6 +290,16 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                   Translate
                 </Button>
               </div>
+              <div>
+                <Button
+                  className="h-full bg-gray-500 hover:bg-gray-700"
+                  onClick={handleExpand}
+                  disabled={expanding || disabled}
+                  title="Dịch + mở rộng qua backend (Gemini, fallback Ollama local)"
+                >
+                  {expanding ? "Đang mở rộng..." : "Expand"}
+                </Button>
+              </div>
             </>
           )}
 
@@ -301,10 +339,30 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
           Enter vẫn là Search như cũ, nên `preventDefault` — nếu không nó chèn
           một dòng trống rồi mới tìm. Shift+Enter mới xuống dòng. */}
+      {/* Kết quả Expand: chỉ hiện ngay sau khi bấm và biến mất khi câu trong
+          ô nhập được sửa. Hai dòng trở xuống là đã chiếm chỗ vĩnh viễn —
+          đúng thứ mà hồi 4.2.0 đã dọn cho khối Dịch. */}
+      {expandError && (
+        <p className="text-[12.5px] text-red-600 leading-snug">{expandError}</p>
+      )}
+      {!expandError && expansion && (
+        <p
+          className="text-[12.5px] text-proto-muted leading-snug"
+          title={expansion.check_units.join(", ")}
+        >
+          {`Check units (${expansion.provider}, ${
+            expansion.elapsed_ms
+          }ms): ${expansion.check_units.join(", ")}`}
+        </p>
+      )}
+
       <div className="w-full flex flex-col gap-2">
         <textarea
           value={queryText}
-          onChange={(e) => setQueryText(e.target.value)}
+          onChange={(e) => {
+            setQueryText(e.target.value);
+            setExpansion(null);
+          }}
           rows={6}
           // Dòng chú thích "Enter để tìm · Shift+Enter xuống dòng" đã bỏ khỏi
           // màn hình — nó chiếm một dòng vĩnh viễn cho một câu đọc một lần.
