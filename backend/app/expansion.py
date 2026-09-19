@@ -34,26 +34,56 @@ from app.translation import (
     _wait_for_rate_limit,
 )
 
-# Cùng prompt đã thắng A/B (variant "gem-B"): một call làm cả dịch lẫn mở rộng.
-# Quy tắc cứng giữ nguyên từ pipeline lean: không bịa tên/sự kiện, con số và
-# màu sắc giữ nguyên văn, chữ trên màn hình giữ nguyên ngữ trong units.
+# Prompt expansion sau khi soi thực tế (2026-09-19): bản đầu chỉ nói "ADD
+# cautious background context" nên Gemini chơi an toàn tới mức退化 thành dịch
+# — không lọc noise, không làm giàu. Bản này ghép hai quy tắc nhóm đã đúc kết:
+# luật CLEAN của policy visual_faithful (translation.py — bỏ wrapper kể chuyện)
+# và luật clean 2025 (bỏ tính từ cảm xúc, discriminator đứng trước).
 _EXPAND_SYSTEM = (
-    "You are given a Vietnamese video-retrieval query. First translate it to English, "
-    "then rewrite the translation by ADDING cautious background context if directly "
-    "implied (venue types, recency flags, category aliases), and produce English check "
-    "units (1-3 words each) that a verifier can use to say yes/no per frame. No invented "
-    "names or facts; counts and colors stay exact; on-screen text keeps its own language "
-    "in the units list.\n"
+    "You are preparing a Vietnamese video-retrieval query for a text-to-image search index.\n"
+    "Translate it into ONE fluent English search command, then curate it:\n\n"
+    "CLEAN — remove what hurts search:\n"
+    "- video-narration boilerplate ('the video begins with', 'the clip shows', "
+    "'đoạn video về', 'ta thấy', 'hãy tìm chính xác') — state the visual content directly\n"
+    "- subjective mood words no camera can match ('rực rỡ', 'ấn tượng', 'yên bình', "
+    "'majestic', 'impressive') and storytelling padding\n\n"
+    "ENRICH — add what the text directly implies:\n"
+    "- name the scene type (cooking tutorial, weather forecast, news report, "
+    "school lecture, traffic camera...)\n"
+    "- add a common retrieval alias for cultural/regional items "
+    "(lân sư rồng → lion dance; múa lân)\n"
+    "- add venue/recency flags when implied\n\n"
+    "KEEP — the retrieval anchors, exactly:\n"
+    "- every countable detail: counts, colors, clothing, positions, actions, "
+    "on-screen text (verbatim, keep its own language), camera viewpoint, temporal order\n"
+    "- every number, quantity and measurement in the original MUST appear in the output\n"
+    "- NEVER invent named entities, brands, numbers or facts\n\n"
+    "The search_query is ONE fluent, grammatical sentence (articles and prepositions "
+    "included) — never a keyword list.\n"
+    "Most discriminative details first; generic context last.\n"
+    "Also produce English check units (1-3 words each) that a verifier can use "
+    "to say yes/no per frame.\n"
     'Return EXACTLY this JSON, nothing else: {"search_query": str, "check_units": [str, ...]}'
 )
 
-# Hai bước của nhánh fallback: gtx dịch trước, model local rewrite sau.
+# Nhánh fallback hai bước: gtx dịch trước nên wrapper và tính từ cảm xúc còn
+# nguyên — nhánh rewrite này phải có đủ luật CLEAN, không chỉ luật ENRICH.
 _REWRITE_SYSTEM = (
     "You are given a Vietnamese video-retrieval query already translated to English. "
-    "Rewrite it by ADDING cautious background context if directly implied (venue types, "
-    "recency flags, category aliases), and produce English check units (1-3 words each) "
-    "that a verifier can use to say yes/no per frame. No invented names or facts; counts "
-    "and colors stay exact; on-screen text keeps its own language in the units list.\n"
+    "Rewrite it into ONE fluent English search command, curated for retrieval:\n\n"
+    "CLEAN — remove video-narration boilerplate ('the video begins with', 'the clip shows', "
+    "'đoạn video về', 'ta thấy', 'hãy tìm chính xác') and subjective mood words no camera "
+    "can match ('rực rỡ', 'majestic', 'impressive').\n\n"
+    "ENRICH — name the scene type if implied (cooking tutorial, weather forecast, news "
+    "report, school lecture...), add retrieval aliases for cultural items, add venue/recency "
+    "flags when implied.\n\n"
+    "KEEP every countable detail exactly: counts, colors, clothing, positions, actions, "
+    "on-screen text (verbatim, keep its own language), camera viewpoint, temporal order; "
+    "every number MUST appear in the output. "
+    "NEVER invent named entities, brands, numbers or facts. Most discriminative details "
+    "first. The search_query is ONE fluent, grammatical sentence — never a keyword list.\n"
+    "Also produce English check units (1-3 words each) that a verifier can use to say "
+    "yes/no per frame.\n"
     'Return EXACTLY this JSON, nothing else: {"search_query": str, "check_units": [str, ...]}'
 )
 
