@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 
 import type { BoardTask } from "../../api/board";
+import { expandQuery, type ExpansionResult } from "../../api/expansion";
 import { taskQueryForSearch } from "../../helpers/taskBrief";
 import { useQueryStore } from "../../store/queryStore";
 
@@ -41,6 +42,34 @@ export default function TaskBrief({
   const [expanded, setExpanded] = useState(false);
   const isPopup = variant === "popup";
 
+  // Expand: đề bài → câu EN đã mở rộng, ghi thẳng xuống ô search (cùng cơ chế
+  // với nút "Chép đề bài" bên cạnh), và treo kèm check_units dưới đề để phân
+  // tích lúc soi kết quả. Chỉ làm ở biến thể page — trong popup người ta đang
+  // xem video, không phải đang soạn truy vấn.
+  const [expansion, setExpansion] = useState<ExpansionResult | null>(null);
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+
+  const handleExpand = async () => {
+    if (expanding || !task.query_text) return;
+    setExpanding(true);
+    setExpandError(null);
+    try {
+      const result = await expandQuery(
+        task.query_text,
+        task.type.toUpperCase()
+      );
+      useQueryStore.getState().setQueryText(result.eng_query);
+      setExpansion(result);
+    } catch (err) {
+      setExpandError(
+        err instanceof Error ? err.message : "Không mở rộng được đề bài"
+      );
+    } finally {
+      setExpanding(false);
+    }
+  };
+
   return (
     <div
       className={
@@ -73,15 +102,26 @@ export default function TaskBrief({
         </button>
 
         {!isPopup && (
-          <button
-            type="button"
-            className="text-[12.5px] text-proto-primary-active underline"
-            onClick={() =>
-              useQueryStore.getState().setQueryText(taskQueryForSearch(task))
-            }
-          >
-            Chép đề bài xuống ô search
-          </button>
+          <>
+            <button
+              type="button"
+              className="text-[12.5px] text-proto-primary-active underline"
+              onClick={handleExpand}
+              disabled={expanding}
+              title="Dịch + mở rộng đề bài (Gemini, fallback Ollama local) rồi chép xuống ô search"
+            >
+              {expanding ? "Đang mở rộng..." : "Expand"}
+            </button>
+            <button
+              type="button"
+              className="text-[12.5px] text-proto-primary-active underline"
+              onClick={() =>
+                useQueryStore.getState().setQueryText(taskQueryForSearch(task))
+              }
+            >
+              Chép đề bài xuống ô search
+            </button>
+          </>
         )}
       </div>
 
@@ -92,6 +132,28 @@ export default function TaskBrief({
       >
         {task.query_text}
       </div>
+
+      {/* Sản phẩm của nút Expand: check_units để soi bằng mắt khi phân tích kết
+          quả tìm kiếm, kèm nhãn provider để biết đường nào đang phục vụ
+          (gemini hay fallback ollama). Chỉ hiện sau khi bấm — không phải
+          thành phần cố định của đề bài. */}
+      {expandError && (
+        <p className="text-[12.5px] text-red-600 leading-snug mt-1">
+          {expandError}
+        </p>
+      )}
+      {!expandError && expansion && (
+        <div className="mt-1">
+          <p
+            className="text-[12.5px] text-proto-muted leading-snug"
+            title={expansion.check_units.join(", ")}
+          >
+            {`Check units (${expansion.provider}, ${
+              expansion.elapsed_ms
+            }ms): ${expansion.check_units.join(", ")}`}
+          </p>
+        </div>
+      )}
 
       {/* Dãy chip E1..EN đã bỏ.
 
