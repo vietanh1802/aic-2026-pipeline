@@ -38,6 +38,19 @@ export interface SearchResult {
   demo?: boolean;
 }
 
+/**
+ * Per-video text-signal annotation — matches backend's VideoAnnotation
+ * dataclass (backend/app/text_signal.py). Purely additive: it never removes
+ * a result or changes a rank, see SearchResponse.video_annotations below.
+ */
+export interface VideoAnnotation {
+  matched: boolean;
+  score: number;
+  sources: string[];
+  snippets: string[];
+  mode: string;
+}
+
 export interface SearchResponse {
   total_results: number;
   returned_results: number;
@@ -47,6 +60,11 @@ export interface SearchResponse {
   max_distance: number;
   // true nếu backend đang chạy demo mode (chưa có beit3.index/clip.index thật)
   demo_mode?: boolean;
+  // Present only on /ensemble-search when text_filter was non-empty — keyed
+  // by video_id. No frame is ever dropped because of this; see main.py.
+  video_annotations?: Record<string, VideoAnnotation>;
+  text_filter_active?: boolean;
+  text_filter_mode?: string;
 }
 
 /** One OCR text hit. Same shape as SearchResult, so the grid is reused. */
@@ -240,13 +258,17 @@ class VideoSearchApi {
     query: string,
     limit = 100,
     topM = 50,
-    useRerank = true
+    useRerank = true,
+    textFilter = "",
+    textFilterMode = "substring"
   ): Promise<SearchResponse> {
     return this.post<SearchResponse>("/ensemble-search", {
       query,
       limit,
       top_m: topM,
       use_rerank: useRerank,
+      text_filter: textFilter,
+      text_filter_mode: textFilterMode,
     });
   }
 

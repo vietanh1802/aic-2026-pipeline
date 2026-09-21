@@ -9,6 +9,9 @@ export interface DropdownOption {
   leadingIcon?: React.ReactNode;
   trailingIcon?: React.ReactNode;
   disabled?: boolean;
+  /** One-line explanation shown under the label, in the OPEN dropdown only —
+   * the closed trigger button still shows just `label`. */
+  description?: string;
 }
 
 interface DropdownProps {
@@ -244,7 +247,14 @@ const Dropdown: React.FC<DropdownProps> = ({
                     {option.leadingIcon}
                   </span>
                 )}
-                <span className="flex-1 truncate">{option.label}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate">{option.label}</span>
+                  {option.description && (
+                    <span className="block truncate text-[11px] text-gray-500">
+                      {option.description}
+                    </span>
+                  )}
+                </span>
                 {option.trailingIcon && (
                   <span
                     className={`flex-shrink-0 ${sizeConfig[size].icon} w-6`}

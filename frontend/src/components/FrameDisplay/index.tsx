@@ -4,6 +4,9 @@ import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loadin
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
+import TextSignalBadge from "../TextSignalBadge";
+import { useSearchStore } from "../../store/useSearchStore";
+import { useQueryStore } from "../../store/queryStore";
 
 /**
  * The OCR text read off this frame — only present on OCR-route results.
@@ -208,6 +211,14 @@ export default function FrameDisplay({
   highlightFrame,
   highlightLabel,
 }: FrameDisplayProps2) {
+  // Text-signal annotation (ASR/OCR match) from /ensemble-search, read
+  // directly from the stores rather than threaded through as props — purely
+  // additive metadata, so every existing <FrameDisplay .../> call site is
+  // unaffected. null/missing -> TextSignalBadge renders nothing.
+  const videoAnnotations = useSearchStore((state) => state.videoAnnotations);
+  const textFilter = useQueryStore((state) => state.textFilter);
+  const textFilterMode = useQueryStore((state) => state.textFilterMode);
+
   const timestamp = results.map(frameTimestamp);
   // The ramp is normalised across the results actually on screen. Raw distance
   // spans a narrow band (a measured run went 100.0 to 86.15), so without this
@@ -308,6 +319,20 @@ export default function FrameDisplay({
                   {result.has_image !== false && (
                     <div className="hidden absolute inset-0">
                       <MissingFrame name={result.name} />
+                    </div>
+                  )}
+                  {/* Text-signal badge — overlaid on the image corner rather
+                      than inserted into the metadata block below, so it adds
+                      no height to the card (same convention as TRAKE's "tay"
+                      badge in CandidateResults). */}
+                  {videoAnnotations && Object.keys(videoAnnotations).length > 0 && (
+                    <div className="absolute top-0 right-0 mt-1 mr-1 z-20">
+                      <TextSignalBadge
+                        videoId={videoOf(result)}
+                        annotation={videoAnnotations[videoOf(result)]}
+                        filterQuery={textFilter}
+                        mode={textFilterMode}
+                      />
                     </div>
                   )}
                 </div>

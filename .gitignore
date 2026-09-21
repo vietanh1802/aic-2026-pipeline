@@ -130,6 +130,23 @@ data_raw/round1_queries.json
 # là của ban tổ chức, không phải nguồn của repo — repo chỉ giữ công cụ đọc nó.
 data_raw/SOTUYEN2-bo-de-thi/
 
+# Đề ba vòng sơ tuyển (SOTUYEN1/2/3-bo-de-thi) + toàn bộ CSV nhóm đã nộp
+# (round1/2/3/submission). Cùng lý do: của ban tổ chức và của đội, không phải
+# nguồn của repo.
+#
+# ĐÃ CHẮT RA rồi: backend/app/evaluation/seeds/round3-v1.json là bộ nhãn suy từ
+# thư mục này (video + khoảng khung + đáp án QA), và file đó CÓ trong repo. Mất
+# thư mục gốc thì benchmark vẫn chạy; chỉ không dựng lại nhãn từ đầu được nữa.
+data_raw/ans_aic2026_sotuyen/
+
+# ===== Kết quả ASR (206 MB) =====
+# e5_embeddings.npy 103 MB · windows.jsonl 74 MB · bm25/ 29 MB — lời thoại đã
+# tách cửa sổ, nhúng E5 và dựng chỉ mục BM25 cho 873 video.
+#
+# Vượt hẳn ngưỡng 100 MB mà GitHub chặn. Muốn đưa lên máy chủ thì đi đường S3
+# (deploy/p6/ssm-sync-indexes.sh), không đi qua git.
+data_raw/asr_artifacts/
+
 # Bài nộp vòng sơ tuyển do BTC/đội giữ, không phải nguồn của repo.
 aic2026-sotuyen/
 
@@ -165,3 +182,13 @@ data_raw/L25_V001_configs.json
 
 # Paper Vintern-1B. Tải lại từ arxiv.org/abs/2408.12480 khi cần.
 docs/2408.12480v2.pdf
+
+# Báo cáo kỹ thuật nộp BTC — tài liệu của đội, không phải nguồn của repo.
+# Bộ khung LaTeX được viết trên Overleaf; ba file md là ghi chú và kế hoạch
+# viết, dùng nội bộ rồi thôi.
+technical_report/
+technical_report.zip
+docs/bao-cao-ky-thuat-ke-hoach.md
+docs/bao-cao-ky-thuat-mau.md
+docs/cac-huong-truy-van.md
+docs/logic-cat-frame.md

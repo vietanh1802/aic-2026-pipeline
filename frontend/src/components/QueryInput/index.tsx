@@ -1,12 +1,16 @@
 "use client";
+import { useState } from "react";
+import { Filter, X } from "lucide-react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import {
   useQueryStore,
   type SearchType,
+  type TextFilterMode,
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
+import { expandQuery, type ExpansionResult } from "../../api/expansion";
 
 interface QueryInputProps {
   doSearch: () => void;
@@ -42,6 +46,16 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const setQueryTranslated = useQueryStore(
     (state) => state.setQueryTranslated
   );
+
+  // ── Text-signal filter (ASR/OCR annotation, /ensemble-search only) ────────
+  const textFilter = useQueryStore((state) => state.textFilter);
+  const setTextFilter = useQueryStore((state) => state.setTextFilter);
+  const textFilterMode = useQueryStore((state) => state.textFilterMode);
+  const setTextFilterMode = useQueryStore((state) => state.setTextFilterMode);
+  // Hidden by default; starts open if a filter is already set (e.g. this
+  // component remounted). Stays open until the user clicks the toggle again
+  // — it does not auto-collapse just because the field is empty.
+  const [filterRowOpen, setFilterRowOpen] = useState(textFilter.trim() !== "");
   // Cụm tuỳ chọn (Show Top, Top-M, Rerank, Language, Translate, Search Type)
   // trước đây gấp sau nút "Tuỳ chọn", đóng sẵn. Bỏ nút, để hiện thường trực:
   // Search Type nằm trong cụm đó, mà chuyển sang TRAKE hay OCR là việc làm
@@ -85,6 +99,32 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       // Dịch hỏng thì giữ nguyên câu đang gõ. Ném ra ngoài sẽ thành lỗi
       // không ai bắt, mà thứ người dùng vừa gõ thì biến mất.
       console.error("Không dịch được:", err);
+    }
+  };
+
+  // Expand: giống Translate ở chỗ ghi thẳng vào ô nhập, khác ở chỗ đi qua
+  // backend (Gemini/Ollama) thay vì gtx trong trình duyệt. Kết quả kèm
+  // check_units — hiện một dòng mờ dưới cụm nút, biến mất ngay khi người dùng
+  // sửa câu, theo cùng triết lý "không để UI cố định chỉ để đọc một lần".
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [expansion, setExpansion] = useState<ExpansionResult | null>(null);
+
+  const handleExpand = async () => {
+    if (!queryText || expanding) return;
+    setExpanding(true);
+    setExpandError(null);
+    try {
+      const result = await expandQuery(queryText, "KIS");
+      setQueryText(result.eng_query);
+      setExpansion(result);
+    } catch (err) {
+      setExpandError(
+        err instanceof Error ? err.message : "Không mở rộng được câu truy vấn"
+      );
+      console.error("Không mở rộng được:", err);
+    } finally {
+      setExpanding(false);
     }
   };
 
@@ -138,6 +178,33 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     { id: 0, label: "BEiT3", value: "beit3" as ModelName },
     { id: 1, label: "CLIP", value: "clip" as ModelName },
   ];
+
+  const textFilterModeOptions: DropdownOption[] = [
+    {
+      id: 0,
+      label: "Substring",
+      value: "substring" as TextFilterMode,
+      description: "exact text match, diacritics ignored",
+    },
+    {
+      id: 1,
+      label: "Regex",
+      value: "regex" as TextFilterMode,
+      description: "pattern match, e.g. (ngò|ngo) or đường\\s+\\w+",
+    },
+    {
+      id: 2,
+      label: "BM25",
+      value: "bm25" as TextFilterMode,
+      description: "semantic relevance score across transcript",
+    },
+  ];
+
+  const textFilterPlaceholder = {
+    substring: "e.g. ngò, quán trọ, 2018",
+    regex: "e.g. (ngò|ngo), đường\\s+\\w+",
+    bm25: "e.g. khu vườn trái cây miền Tây",
+  }[textFilterMode];
 
   return (
     // Không còn `border rounded-xl`: khung bao ngoài giờ là cột trái cố định
@@ -262,6 +329,16 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                   Translate
                 </Button>
               </div>
+              <div>
+                <Button
+                  className="h-full bg-gray-500 hover:bg-gray-700"
+                  onClick={handleExpand}
+                  disabled={expanding || disabled}
+                  title="Dịch + mở rộng qua backend (Gemini, fallback Ollama local)"
+                >
+                  {expanding ? "Đang mở rộng..." : "Expand"}
+                </Button>
+              </div>
             </>
           )}
 
@@ -277,6 +354,58 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           </div>
         </div>
       </div>
+
+      {/* Text-signal filter — additive ASR/OCR annotation, /ensemble-search
+          only (backend never applies it to single/temporal/trake/ocr), so the
+          toggle only shows for that search type to avoid a control that
+          silently does nothing. Hidden by default: most searches don't need
+          it, and showing it always would push the textarea down for everyone. */}
+      {searchType === "ensemble" && (
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            className="flex items-center gap-1 text-[12.5px] font-semibold text-proto-primary-active w-fit"
+            onClick={() => setFilterRowOpen((open) => !open)}
+          >
+            <Filter size={13} />
+            Text filter
+          </button>
+
+          {filterRowOpen && (
+            <div
+              className={`flex items-center gap-2 rounded-[8px] p-1.5 transition-colors ${
+                textFilter.trim() !== "" ? "bg-proto-primary/10" : ""
+              }`}
+            >
+              <Dropdown
+                options={textFilterModeOptions}
+                value={textFilterMode}
+                onChange={(opt) => setTextFilterMode(opt.value as TextFilterMode)}
+                dropDownWidth={130}
+                dropDirection="down"
+                size="sm"
+              />
+              <input
+                type="text"
+                value={textFilter}
+                onChange={(e) => setTextFilter(e.target.value)}
+                placeholder={textFilterPlaceholder}
+                className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-white px-2 py-1.5 text-[12.5px] text-proto-ink"
+              />
+              {textFilter !== "" && (
+                <button
+                  type="button"
+                  onClick={() => setTextFilter("")}
+                  title="Xoá bộ lọc"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-proto-line bg-white text-proto-muted"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Hai dòng gợi ý cú pháp cho Temporal/TRAKE đã bỏ ("Nhập đúng 2 đoạn,
           cách nhau bằng dấu ." và bản N đoạn của TRAKE). Cùng lý do với đoạn
@@ -301,10 +430,30 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
           Enter vẫn là Search như cũ, nên `preventDefault` — nếu không nó chèn
           một dòng trống rồi mới tìm. Shift+Enter mới xuống dòng. */}
+      {/* Kết quả Expand: chỉ hiện ngay sau khi bấm và biến mất khi câu trong
+          ô nhập được sửa. Hai dòng trở xuống là đã chiếm chỗ vĩnh viễn —
+          đúng thứ mà hồi 4.2.0 đã dọn cho khối Dịch. */}
+      {expandError && (
+        <p className="text-[12.5px] text-red-600 leading-snug">{expandError}</p>
+      )}
+      {!expandError && expansion && (
+        <p
+          className="text-[12.5px] text-proto-muted leading-snug"
+          title={expansion.check_units.join(", ")}
+        >
+          {`Check units (${expansion.provider}, ${
+            expansion.elapsed_ms
+          }ms): ${expansion.check_units.join(", ")}`}
+        </p>
+      )}
+
       <div className="w-full flex flex-col gap-2">
         <textarea
           value={queryText}
-          onChange={(e) => setQueryText(e.target.value)}
+          onChange={(e) => {
+            setQueryText(e.target.value);
+            setExpansion(null);
+          }}
           rows={6}
           // Dòng chú thích "Enter để tìm · Shift+Enter xuống dòng" đã bỏ khỏi
           // màn hình — nó chiếm một dòng vĩnh viễn cho một câu đọc một lần.

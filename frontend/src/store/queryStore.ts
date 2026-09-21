@@ -18,6 +18,10 @@ export type SearchType = "ensemble" | "single" | "temporal" | "trake" | "ocr";
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 
+// Matches backend's TextMatchMode (backend/app/text_signal.py). Only applies
+// to /ensemble-search — see EnsembleSearchRequest.text_filter_mode.
+export type TextFilterMode = "substring" | "regex" | "bm25";
+
 export interface QueryStore {
   queryType: QueryType;
   setQueryType: (type: QueryType) => void;
@@ -52,6 +56,14 @@ export interface QueryStore {
   setTranslateLang: (lang: TranslateLanguage) => void;
   queryTranslated: string;
   setQueryTranslated: (text: string) => void;
+
+  // ── Text-signal filter (ASR/OCR annotation, /ensemble-search only) ────────
+  // Purely additive metadata on the results — never drops a frame. Empty
+  // string disables it, matching the backend's own default.
+  textFilter: string;
+  setTextFilter: (value: string) => void;
+  textFilterMode: TextFilterMode;
+  setTextFilterMode: (mode: TextFilterMode) => void;
 }
 
 export const useQueryStore = create<QueryStore>((set) => ({
@@ -88,6 +100,11 @@ export const useQueryStore = create<QueryStore>((set) => ({
   setTranslateLang: (lang) => set({ translateLang: lang }),
   queryTranslated: "",
   setQueryTranslated: (text) => set({ queryTranslated: text }),
+
+  textFilter: "",
+  setTextFilter: (value) => set({ textFilter: value }),
+  textFilterMode: "substring",
+  setTextFilterMode: (mode) => set({ textFilterMode: mode }),
 }));
 
 // NOTE: SearchResult/SearchState trùng lặp với store/useSearchStore.ts đã bị

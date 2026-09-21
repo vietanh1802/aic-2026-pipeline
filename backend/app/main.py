@@ -47,6 +47,7 @@ from app.routers import (
     auth as auth_router,
     board as board_router,
     evaluation as evaluation_router,
+    expansion as expansion_router,
     export as export_router,
     packs as packs_router,
     rounds as rounds_router,
@@ -55,6 +56,10 @@ from app.routers import (
 from app.evaluation.runner import interrupt_incomplete_runs
 from app.version import SHORT_COMMIT, VERSION
 from app import ocr_search as ocr_route
+from app import asr_text as _asr_text
+from app import text_signal as _text_signal
+from app.text_signal import TextMatchMode, annotate_videos
+from dataclasses import asdict
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
 # startup dict forever and every OCR result would lose video/timestamp.
@@ -96,6 +101,9 @@ class SearchResultEx(SearchResult):
 
 class SearchResponseEx(SearchResponse):
     results: List[SearchResultEx]
+    video_annotations: Optional[dict] = None
+    text_filter_active: bool = False
+    text_filter_mode: Optional[str] = None
 
 
 class EnsembleSearchRequest(BaseModel):
@@ -105,6 +113,17 @@ class EnsembleSearchRequest(BaseModel):
                              description="Top-M mỗi model trước khi gộp (Alg.3, paper dùng 50)")
     use_rerank: bool = Field(True,
                              description="Bật Alg.2 rerank lân cận cho TỪNG model trước khi ensemble")
+    text_filter: str = Field(
+        default="",
+        description=(
+            "Term, phrase, or pattern to annotate results with. "
+            "Empty string disables annotation."
+        )
+    )
+    text_filter_mode: TextMatchMode = Field(
+        default=TextMatchMode.substring,
+        description="How to match: substring | regex | bm25"
+    )
 
     class Config:
         json_schema_extra = {"example": {
@@ -371,6 +390,9 @@ def _run_warmup() -> None:
         # Missing OCR files only print a warning — they must never flip the
         # whole warm-up to failed and take the visual route down with them.
         ocr_route.preload()
+        # Same reasoning as ocr_route.preload() above: a missing ASR index
+        # must not fail warm-up or take the visual route down with it.
+        _asr_text.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
@@ -425,6 +447,7 @@ app.include_router(export_router.router)
 app.include_router(rounds_router.router)
 app.include_router(search_state_router.router)
 app.include_router(evaluation_router.router)
+app.include_router(expansion_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is
@@ -492,7 +515,31 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
     try:
         results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
                                   use_rerank=req.use_rerank)
-        return _make_response(results, "ensemble", t0)
+
+        response = _make_response(results, "ensemble", t0)
+
+        # Text-signal annotation (additive metadata only -- see text_signal.py).
+        # Off by default: an empty text_filter changes nothing, so existing
+        # callers see identical results. No frames are removed and no ranks
+        # change; the UI decides what to do with the per-video annotation.
+        if req.text_filter.strip():
+            frame_names: dict[str, list[str]] = {}
+            for frame in results:
+                frame_names.setdefault(frame["video"], []).append(frame["name"])
+
+            annotations = annotate_videos(
+                video_ids=list(frame_names.keys()),
+                filter_query=req.text_filter,
+                mode=req.text_filter_mode,
+                frame_names=frame_names,
+            )
+            response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
+            response.text_filter_active = True
+            response.text_filter_mode = req.text_filter_mode.value
+        else:
+            response.text_filter_active = False
+
+        return response
     except Exception as e:
         raise HTTPException(500, f"Ensemble search error: {e}")
 
@@ -711,7 +758,8 @@ def ocr_text_endpoint(name: str):
 
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
-    return {**system_status(), "warmup": _warm, "ocr": ocr_route.status()}
+    return {**system_status(), "warmup": _warm, "ocr": ocr_route.status(),
+            "asr_text": _asr_text.status(), "text_signal": _text_signal.status()}
 
 
 @app.get("/health")
