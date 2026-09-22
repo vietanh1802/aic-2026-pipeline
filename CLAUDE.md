@@ -1,159 +1,237 @@
 # CLAUDE.md
 
-Ghi chú cho Claude Code làm việc trên repo này. Đọc hết trước khi sửa gì.
-
-## Quy tắc bắt buộc của chủ repo
-
-1. **Trả lời bằng tiếng Việt.** Mọi câu trả lời, mọi giải thích.
-2. **Code pipeline/thí nghiệm phải viết trong notebook, không tạo file `.py` rời.**
-   Ngoại lệ duy nhất: backend và frontend — hai phần đó là ứng dụng thật, sống
-   trong file thật.
-3. **Notebook mới phải có số thứ tự trong tên** để phân biệt (vd `78_ocr_scene_merge.ipynb`).
-4. **Không xoá cách cũ — comment nó lại**, kèm lý do vì sao đổi. Hàm và biến
-   viết mới thì **đặt tên bằng tiếng Anh**, kể cả biến. Chú thích thì tiếng Việt
-   hoặc tiếng Anh đều được, miễn nói được *vì sao*, không phải *làm gì*.
-5. **Đừng phức tạp hoá.** Chủ repo đã nhắc chuyện này. Làm đúng thứ được yêu
-   cầu, không dựng thêm tầng trừu tượng cho tương lai giả định.
-6. **KHÔNG BAO GIỜ commit hai đường dẫn này** — chúng là file test cấp quyền cho
-   một tài khoản AWS khác vào S3 của chủ repo, đã nằm trong `.gitignore`:
-   - `bucket-policy-backup/`
-   - `deploy/p6/iam-operator-policy.json`
-
-## Dự án là gì
-
-**Bquerium** — công cụ tra cứu khoảnh khắc video cho **AI Challenge HCMC 2026**.
-Nhóm 5 người + 1 tài khoản admin ngồi thi cùng lúc: gõ mô tả cảnh bằng tiếng
-Việt/Anh, hệ thống trả về keyframe khớp, người dùng chốt khung rồi nộp danh sách
-xếp hạng.
-
-Ba loại câu, mỗi loại chấm khác nhau — quyết định gần như mọi lựa chọn giao diện:
-
-| Loại | Nộp gì | Chấm |
-| --- | --- | --- |
-| **KIS** | `video, frame` | Đúng/sai cả dòng |
-| **Q&A** | `video, frame, đáp án chữ` | Đáp án chữ mới là thứ được chấm |
-| **TRAKE** | `video, frame_1..frame_N` | **Theo từng mốc**: sai một mốc mất 1/N, sai video mất trắng |
-
-Điểm là **R@k** — tính trên k dòng đầu. Nên **thứ tự dòng là dữ liệu**, không
-phải trang trí: mọi chỗ sinh dòng tự động đều phải gửi tuần tự để giữ đúng thứ
-hạng, không `Promise.all`.
-
-## Bố cục repo
-
-```
-backend/          FastAPI + SQLite. Tìm kiếm + cộng tác (giỏ đáp án, board, export).
-  app/main.py       các endpoint tìm kiếm (ensemble/single/temporal/trake/ocr)
-  app/preprocess.py LÕI TRUY XUẤT — FAISS/BEiT3/CLIP. Không sửa (INV-1 của spec).
-  app/routers/      auth, packs, board, answers, export, rounds, search_state
-  app/db/           schema.sql (baseline) + migrations.py (bước đánh số)
-  tests/            pytest, 152 test
-frontend/         React 19 + TS + Vite + Tailwind v4 + Zustand
-  src/App.tsx       màn tìm kiếm (file lớn nhất)
-  src/Root.tsx      toàn bộ định tuyến — 6 màn, không dùng router library
-  src/components/   AppNav, Basket/BasketBody, VideoPopUp, CandidateResults...
-  src/pages/        Board, Evaluation, Export, ImportPack, Login, ChangePassword
-  src/store/        useSearchStore, queryStore, authStore, popupStore, healthStore,
-                    pickedFrameStore
-drive-video-proxy/ Node/Express, phát video từ Google Drive (HTTP Range)
-notebooks/        pipeline offline: cắt keyframe, OCR, dựng index
-deploy/p6/        script SSM deploy lên EC2
-docs/             spec và thiết kế; `docs/superpowers/specs/` là nguồn đáng tin
-VERSION           một dòng semver — CI CHẶN nếu không tăng
-```
-
-`README.md` mô tả các endpoint **đã bị xoá** (`/text-search`, `/faiss-search`,
-`/combined-search`, `/filter-search`). Đừng tin nó; đọc `backend/app/main.py`.
-
-## Lệnh
-
-```bash
-# backend
-cd backend && uvicorn app.main:app --reload          # cổng 8000
-cd backend && python -m pytest -q --basetemp=<thư mục ghi được>
-cd backend && python -m ruff check app
-
-# frontend
-cd frontend && npm run dev                            # cổng 5173
-cd frontend && npx tsc -b && npm run lint && npm test && npm run build
-```
-
-**pytest trên Windows:** chạy trần sẽ ra ~83 lỗi `PermissionError` ở
-`C:\...\Temp\pytest-of-Windows`. Đó là quyền thư mục tạm, **không phải test
-hỏng** — thêm `--basetemp` trỏ vào chỗ ghi được là hết.
-
-Tài khoản seed: `admin`, `vanh`, `bang`, `nam`, `an`, `phat` — mật khẩu mặc định
-`password` (xem `backend/scripts/seed_team.py`).
-
-## Deploy
-
-Đẩy lên nhánh `staging` là chạy `.github/workflows/deploy.yml`:
-
-```
-version-guard  →  check-frontend (lint, tsc, test, build)  →  deploy-frontend (Cloudflare Pages)
-               →  check-backend  (ruff, import, pytest)    →  deploy-backend  (GHCR + SSM lên EC2)
-                                                              → smoke test → tự rollback nếu hỏng
-```
-
-**Trước khi push phải sửa `VERSION`.** Cổng `version-guard` so với VERSION mà
-`staging` đang có; giữ nguyên hoặc lùi số là CI đỏ ngay bước đầu. Bump xong thì
-`git add -A` (nhớ file bị xoá), commit, `git push origin staging`.
-
-Sau khi web lên, nhìn góc phải thanh nav phải thấy đúng số phiên bản. Còn số cũ
-là trình duyệt cache — Ctrl+Shift+R.
-
-## Những chỗ đã cắn người khác
-
-**Migration.** Cột/bảng thêm trong `migrations.py` **không được** khai lại trong
-`schema.sql`. `schema.sql` toàn `IF NOT EXISTS` nên `ALTER` ở đó chạy lại lần hai
-là `duplicate column name` và **toàn bộ test đỏ**. `CREATE TABLE IF NOT EXISTS`
-thì an toàn cả hai nơi. Không bao giờ sửa hay đánh số lại một bước đã ship —
-thêm bước mới.
-
-**Export.** File nộp là CSV **không bọc nháy** (`L05_V005, 888, màu xanh`). Tuyệt
-đối không dùng `csv.writer`: nó tuân RFC 4180 nên gặp dấu nháy trong đáp án Q&A
-sẽ bọc cả trường, ban tổ chức đọc ra chuỗi khác. Ghép trường bằng tay.
-`Content-Disposition` phải theo RFC 6266 (`filename=` ASCII + `filename*=UTF-8''…`)
-— nhãn vòng thi có dấu tiếng Việt sẽ làm latin-1 nổ 500.
-
-**Xác minh code đã chạy trên dev server.** Vite **xoá comment** khi phục vụ
-module. Grep comment để kiểm tra sẽ báo "chưa có" cho code đang chạy. Luôn grep
-**code**, không grep chú thích:
-```bash
-curl -s "http://localhost:5173/src/App.tsx" | grep -c "tenBienThat"
-```
-
-**Heredoc trên Windows.** `python - <<'PY'` đọc stdin bằng cp1252, chuỗi tiếng
-Việt bị nát và script âm thầm không làm gì. Script có tiếng Việt thì viết ra file
-bằng công cụ Write rồi chạy, hoặc dùng `io.open(..., encoding="utf-8")` cho mọi
-đọc/ghi.
-
-**`npm ci` xoá sạch `node_modules`** và làm chết dev server đang chạy. Trên máy
-chủ repo dùng `npm install`.
-
-**Vòng lặp vô hạn.** Các generator rải frame trong `backend/app/answers/autofill.py`
-lặp `while produced < limit`. Nếu không có gì để sinh thì `produced` đứng yên và
-nó quay mãi — pytest treo. Luôn lọc trước danh sách nguồn và `return` sớm khi rỗng.
-
-## Mô hình dữ liệu cần nhớ
-
-- `answers.author_id` = **chủ danh sách**; `answers.created_by` = ai tạo dòng đó.
-  Hai cái khác nhau, và mọi đường ghi phải khoá theo `author_id` — thiếu chỗ nào
-  là người này sửa được bài người kia.
-- `tasks.chosen_author_id` = danh sách của ai sẽ được nộp. `NULL` = chưa chọn.
-- Câu chưa ai làm thì xuất ra **file rỗng**, không phải lỗi. Chỉ "có bài nhưng
-  chưa chọn người" mới từ chối.
-- Ảnh keyframe luôn nằm trên nền `--proto-dark`. Nền có màu làm lệch cảm nhận
-  màu trong ảnh, mà so màu giữa hai khung mới là việc chính.
-
-## Thói quen làm việc mà chủ repo đã xác nhận
-
-- **Kiểm bằng kịch bản gọi API thật** với backend đang chạy, không chỉ unit test.
-  Nhiều lỗi trong repo này chỉ lộ ra khi đi đúng luồng người dùng.
-- Sửa xong chạy đủ: `npx tsc -b`, `npm run lint`, `npm test`, `pytest`, `ruff`.
-- Sửa UI xong thì kiểm module Vite đang phục vụ như trên.
-- Xoá một tính năng thì **để lại chú thích nói vì sao bỏ và dùng gì thay** —
-  đừng để chỗ đó trống trơn.
+Working conventions for this repo. Follow these for every file you create or
+edit here, not just when explicitly reminded.
 
 ---
 
-Sửa file này khi có quy tắc mới hoặc khi phát hiện một cái bẫy tốn thời gian.
+## Language and punctuation
+
+Always use English. Code, comments, docstrings, Markdown, variable names,
+everything. Use an en dash (-) where a dash is needed. Never use an em dash.
+
+---
+
+## File headers
+
+Every source file starts with a one-line comment giving its own path
+relative to the repo root, before any imports :
+
+```python
+# backend/app/text_signal.py
+
+import re
+```
+
+```typescript
+// frontend/src/components/TextSignalBadge.tsx
+
+import React from 'react'
+```
+
+This is not optional decoration - when a file is opened in isolation (a diff,
+a search hit, a pasted snippet), the header is the only thing that says where
+it lives.
+
+---
+
+## Documentation and comments
+
+Comments and docstrings exist to make the *next* reader (including future
+you, or Claude in a later session) understand the code quickly without
+re-deriving it. Write them generously where intent isn't obvious :
+
+- Every module that isn't trivial gets a short docstring or top comment
+  explaining what it's for and how it fits into the pipeline - e.g. "loads
+  the gzipped ASR index at startup; degrades gracefully if the file is
+  missing" tells a reader in one line what would otherwise take a full read
+  of the module to figure out.
+- Non-obvious decisions get a comment explaining *why*, not what : "diacritics
+  kept in the BM25 vocab - stripping them breaks lookup against the indexed
+  artifact" is worth writing down; `x += 1  # increment x` is not.
+- Fallback branches, retry logic, and anything that silently changes
+  behavior under failure need a comment saying what triggers the fallback
+  and what the consequence is downstream.
+- Don't narrate obvious operations. The line between "helpful" and
+  "clutter" is whether a competent reader would otherwise have to stop and
+  think - if yes, write the comment; if the code already says it, don't.
+
+Prefer real documentation (module docstrings, function docstrings for
+anything with non-trivial inputs/outputs) over relying on the code being
+self-explanatory. Terse code and clear documentation are not in tension -
+the code stays compact, the comments carry the reasoning.
+
+---
+
+## Code style
+
+Compact, horizontally readable. Spaces around operators and type
+annotations :
+
+```python
+n_matched  = sum(1 for r in results if r['matched'])
+axis       : int   = 1
+threshold  : float = 0.7
+```
+
+```python
+{"key" : value, "mode" : "bm25"}
+```
+
+Space before the colon in control structures and definitions :
+
+```python
+def annotate_videos(query : str, mode : str) -> dict :
+    ...
+
+if text_filter_active :
+    ...
+
+for video_id in candidates :
+    ...
+```
+
+Spaced slicing :
+
+```python
+results[ : 10]
+tokens[start : end]
+```
+
+Align related assignments and dictionary colons within the same block :
+
+```python
+BM25_INDEX_PATH = Path('indexes/bm25.json')
+ASR_INDEX_PATH  = Path('indexes/asr_text_index.json.gz')
+CACHE_SIZE      = 512
+```
+
+Two blank lines before top-level function/class definitions, one blank line
+between other logical blocks. No blank line after the final statement in a
+function body or notebook cell.
+
+Keep short lists, dicts, comprehensions, paths, and method chains on one
+line. Break only when a line is genuinely too long, and when wrapping, group
+arguments logically rather than one item per line. Use meaningful
+intermediate variables instead of deeply nested calls.
+
+These rules apply to code and code-adjacent content (scripts, notebooks,
+config, inline snippets in explanations). They do not apply to prose,
+Markdown write-ups, or commit messages.
+
+---
+
+## Simplicity
+
+Default to the simplest implementation that correctly does the task. No
+extra classes, wrapper layers, config systems, CLIs, logging frameworks, or
+defensive machinery unless there's a concrete, immediate reason.
+
+A helper function earns its place by removing real duplication or making
+the main flow clearly easier to follow. If it's called once and doesn't
+simplify anything, inline it.
+
+Don't catch broad exceptions without a specific recovery action, and never
+silently swallow an error. The one confirmed exception in this repo: a
+side-feature (annotation, filter extraction) that fails must not take the
+core search response down with it - wrap *that specific call* narrowly and
+say in a comment why it's isolated (see "annotation block has its own
+try/except" pattern already in `main.py`).
+
+Don't add metrics, reports, validation, or configurability that wasn't
+asked for. Default to the simple approach and mention a hardened
+alternative only if it's actually relevant.
+
+---
+
+## Notebooks
+
+Run Python directly in the notebook process - no `subprocess`, shell
+wrappers, or CLI calls for code that can be called as a function.
+
+One clear stage per code cell. No blank line after the final statement of a
+cell. Long-running cells show visible progress (`tqdm`, per-item prints).
+Errors surface directly, not swallowed behind broad excepts.
+
+Markdown between cells is short and explains *why*, not *what*. Don't
+narrate obvious operations ("now we load the file"). Organize around the
+actual workflow (`## 2. Build the ASR index`, `### 2.1 Timestamp overlap`),
+not one heading per cell.
+
+Give each new analysis/build notebook a clear, descriptive filename so it's
+identifiable without opening it.
+
+---
+
+## Repo layout (confirmed from the codebase so far)
+
+```
+backend/
+  app/
+    main.py              - FastAPI endpoints; EnsembleSearchRequest / SearchResponseEx;
+                            annotation block wrapped in its own try/except so a
+                            side-feature failure never produces a 500
+    preprocess.py         - core retrieval (FAISS / CLIP / BEiT3) - do not modify
+                            casually; this is the ranking invariant everything
+                            else builds on top of
+    asr_text.py            - loads asr_text_index.json.gz at startup, O(1) frame
+                            lookup, degrades gracefully if the file is missing
+    text_signal.py          - annotate_videos(); substring / regex / bm25 modes,
+                            post-retrieval only - never changes rankings
+    filter_extraction.py    - Gemini-based ASR/OCR filter term extraction from
+                            query text, cached (see cache note below)
+    expansion.py             - query expansion; filter_extraction.py shares its
+                            provider/retry/pacing chain
+  tests/
+
+scripts/
+  build_asr_text_index.py   - offline index builder (windows.jsonl + fps_map.json
+                            + CLIP/BEiT3 mappings -> gzipped JSON), deterministic
+  generate_filter_terms.py   - offline Gemini annotation of seed files, idempotent,
+                            rate-limited, skips writing on provider failure so
+                            failed queries stay retryable
+
+frontend/
+  src/
+    components/
+      TextSignalBadge.tsx    - colored-dot annotation + hover popover
+      FrameDisplay.tsx        - mounts the badge on each result card
+      QueryInput.tsx           - text-filter row + mode selector
+      DropDown.tsx              - controlled dropdown, optional description field
+    store/
+      queryStore.ts              - textFilter / textFilterMode state
+      useSearchStore.ts           - videoAnnotations state
+    App.tsx                        - wires filter state into the search call
+    types/api.ts                    - VideoAnnotation, SearchResponse types
+```
+
+> Deploy steps, environment/test commands, seed accounts, and any
+> migration/versioning conventions specific to this repo aren't captured
+> here yet - add them once confirmed rather than assuming they match a
+> different project.
+
+---
+
+## Things already known to bite here
+
+- **`preprocess.py` is the retrieval core.** Don't touch it for feature
+  work; if a change seems to require it, that's a signal to re-scope the
+  feature, not the file.
+- **Side-features must fail closed.** Annotation/filter-extraction errors
+  are caught narrowly so they degrade the extra signal, never the base
+  search response.
+- **BM25 vocabulary keeps diacritics.** Stripping them before tokenizing
+  silently looks up the wrong term - confirmed from artifact inspection,
+  don't "clean up" this behavior.
+- **ASR on Vietnamese-language video can garble embedded English terms**
+  (Whisper transcription artifact). Treat English filter terms as OCR-only
+  unless there's specific evidence the ASR actually caught them.
+- **Frontend derived state must be cleared eagerly.** `queryStore` setters
+  clear `videoAnnotations` immediately when the filter field changes, so
+  stale badges never linger while the user is still typing - keep that
+  pattern for any new derived-from-query state.
+
+---
+
+Update this file when a new rule is needed or a real time-sink is
+discovered - don't let it drift from what the repo actually does.
