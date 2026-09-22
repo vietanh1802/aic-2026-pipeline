@@ -1,6 +1,7 @@
 // src/store/queryStore.ts
 import { create } from "zustand";
 import type { ModelName } from "../types/api";
+import { useSearchStore } from "./useSearchStore";
 
 export type QueryType = "text" | "image" | "audio";
 
@@ -102,9 +103,17 @@ export const useQueryStore = create<QueryStore>((set) => ({
   setQueryTranslated: (text) => set({ queryTranslated: text }),
 
   textFilter: "",
-  setTextFilter: (value) => set({ textFilter: value }),
+  setTextFilter: (value) => {
+    set({ textFilter: value });
+    // Badges on screen describe the PREVIOUS filter query — clear them so
+    // they never linger next to a field the user has since edited.
+    useSearchStore.getState().setVideoAnnotations(null);
+  },
   textFilterMode: "substring",
-  setTextFilterMode: (mode) => set({ textFilterMode: mode }),
+  setTextFilterMode: (mode) => {
+    set({ textFilterMode: mode });
+    useSearchStore.getState().setVideoAnnotations(null);
+  },
 }));
 
 // NOTE: SearchResult/SearchState trùng lặp với store/useSearchStore.ts đã bị

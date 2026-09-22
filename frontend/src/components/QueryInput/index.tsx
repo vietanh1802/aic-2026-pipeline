@@ -196,7 +196,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
       id: 2,
       label: "BM25",
       value: "bm25" as TextFilterMode,
-      description: "semantic relevance score across transcript",
+      description: "lexical relevance score across transcript",
     },
   ];
 

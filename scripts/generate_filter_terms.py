@@ -131,6 +131,7 @@ def main() -> int :
     queries = seed.get("queries", [])
     processed = 0
     skipped = 0
+    failed = 0
     confidence_counts = {"high" : 0, "medium" : 0, "none" : 0}
 
     for query in queries :
@@ -139,6 +140,11 @@ def main() -> int :
             continue
 
         result = extract_filter_terms(query["query_vi"], query["task_type"])
+        if result.provider == "none" :
+            failed += 1
+            print(f"{query['id']}  {query['task_type']}  [SKIPPED -- no provider]")
+            continue
+
         query["filter_terms"] = {
             "asr_terms" : result.asr_terms,
             "ocr_terms" : result.ocr_terms,
@@ -165,6 +171,7 @@ def main() -> int :
     print()
     print(f"Processed: {processed} queries")
     print(f"Skipped (already annotated): {skipped}")
+    print(f"Failed (no provider): {failed}")
     print(
         f"Results: {confidence_counts['high']} high, "
         f"{confidence_counts['medium']} medium, {confidence_counts['none']} none"

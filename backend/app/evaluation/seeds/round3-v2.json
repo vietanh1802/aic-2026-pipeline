@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "dataset": {
     "slug": "round3",
     "display_name": "AI Challenge 2026 - Round 3",

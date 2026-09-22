@@ -522,22 +522,31 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
         # Off by default: an empty text_filter changes nothing, so existing
         # callers see identical results. No frames are removed and no ranks
         # change; the UI decides what to do with the per-video annotation.
-        if req.text_filter.strip():
-            frame_names: dict[str, list[str]] = {}
-            for frame in results:
-                frame_names.setdefault(frame["video"], []).append(frame["name"])
+        #
+        # Guarded in its own try/except: annotation is metadata on top of the
+        # visual results, so a failure here must not turn a working search
+        # into an HTTP 500 -- the visual results still have to reach the user.
+        try:
+            if req.text_filter.strip():
+                frame_names: dict[str, list[str]] = {}
+                for frame in results:
+                    frame_names.setdefault(frame["video"], []).append(frame["name"])
 
-            annotations = annotate_videos(
-                video_ids=list(frame_names.keys()),
-                filter_query=req.text_filter,
-                mode=req.text_filter_mode,
-                frame_names=frame_names,
-            )
-            response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
-            response.text_filter_active = True
-            response.text_filter_mode = req.text_filter_mode.value
-        else:
+                annotations = annotate_videos(
+                    video_ids=list(frame_names.keys()),
+                    filter_query=req.text_filter,
+                    mode=req.text_filter_mode,
+                    frame_names=frame_names,
+                )
+                response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
+                response.text_filter_active = True
+                response.text_filter_mode = req.text_filter_mode.value
+            else:
+                response.text_filter_active = False
+        except Exception as annotation_err:
+            print(f"[text_signal] annotation failed: {annotation_err}")
             response.text_filter_active = False
+            response.video_annotations = None
 
         return response
     except Exception as e:

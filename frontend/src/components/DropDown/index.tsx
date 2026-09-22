@@ -67,6 +67,15 @@ const Dropdown: React.FC<DropdownProps> = ({
     },
   };
 
+  // Keeps the dropdown a proper controlled component: when a caller resets
+  // `value` programmatically (e.g. App.tsx's useEffect resetting
+  // textFilterMode), the trigger button must follow it instead of still
+  // showing whatever the user last clicked.
+  useEffect(() => {
+    const match = options.find((opt) => opt.value === value);
+    if (match) setSelectedOption(match);
+  }, [value, options]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (

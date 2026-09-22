@@ -147,6 +147,11 @@ data_raw/ans_aic2026_sotuyen/
 # (deploy/p6/ssm-sync-indexes.sh), không đi qua git.
 data_raw/asr_artifacts/
 
+# scripts/asr_oracle.py sinh ra khi chạy cục bộ — chỉ mục ASR text để tra oracle,
+# dựng lại được từ data_raw/asr_artifacts/, không phải nguồn của repo.
+scripts/asr_text_index.json
+scripts/asr_text_index.json.gz
+
 # Bài nộp vòng sơ tuyển do BTC/đội giữ, không phải nguồn của repo.
 aic2026-sotuyen/
 
