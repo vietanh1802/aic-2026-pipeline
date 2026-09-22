@@ -1,6 +1,7 @@
 // useSearchStore.ts
 
 import { create } from "zustand";
+import type { VideoAnnotation } from "../types/api";
 
 interface SearchResult {
   frame: string;
@@ -43,6 +44,15 @@ interface SearchState {
   focusVideos: string[];
   toggleFocusVideo: (videoId: string) => void;
   clearFocus: () => void;
+
+  /**
+   * Per-video text-signal annotations from the last /ensemble-search response
+   * (video_id -> VideoAnnotation). null when text_filter was empty or the
+   * last search wasn't ensemble — TextSignalBadge treats null the same as a
+   * missing entry and renders nothing.
+   */
+  videoAnnotations: Record<string, VideoAnnotation> | null;
+  setVideoAnnotations: (annotations: Record<string, VideoAnnotation> | null) => void;
 }
 
 export const useSearchStore = create<SearchState>((set) => ({
@@ -62,6 +72,9 @@ export const useSearchStore = create<SearchState>((set) => ({
         : [...state.focusVideos, videoId],
     })),
   clearFocus: () => set({ focusVideos: [] }),
+
+  videoAnnotations: null,
+  setVideoAnnotations: (annotations) => set({ videoAnnotations: annotations }),
 }));
 
 type isQueryStore = {

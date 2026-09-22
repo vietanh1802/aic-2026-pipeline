@@ -9,6 +9,9 @@ export interface DropdownOption {
   leadingIcon?: React.ReactNode;
   trailingIcon?: React.ReactNode;
   disabled?: boolean;
+  /** One-line explanation shown under the label, in the OPEN dropdown only —
+   * the closed trigger button still shows just `label`. */
+  description?: string;
 }
 
 interface DropdownProps {
@@ -63,6 +66,15 @@ const Dropdown: React.FC<DropdownProps> = ({
       icon: "w-6 h-6",
     },
   };
+
+  // Keeps the dropdown a proper controlled component: when a caller resets
+  // `value` programmatically (e.g. App.tsx's useEffect resetting
+  // textFilterMode), the trigger button must follow it instead of still
+  // showing whatever the user last clicked.
+  useEffect(() => {
+    const match = options.find((opt) => opt.value === value);
+    if (match) setSelectedOption(match);
+  }, [value, options]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -244,7 +256,14 @@ const Dropdown: React.FC<DropdownProps> = ({
                     {option.leadingIcon}
                   </span>
                 )}
-                <span className="flex-1 truncate">{option.label}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate">{option.label}</span>
+                  {option.description && (
+                    <span className="block truncate text-[11px] text-gray-500">
+                      {option.description}
+                    </span>
+                  )}
+                </span>
                 {option.trailingIcon && (
                   <span
                     className={`flex-shrink-0 ${sizeConfig[size].icon} w-6`}

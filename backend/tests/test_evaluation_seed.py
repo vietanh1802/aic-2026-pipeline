@@ -10,9 +10,9 @@ ROUND1 = SEEDS_DIR / "round1-v2.json"
 ROUND2 = SEEDS_DIR / "round2-v1.json"
 ROUND3 = SEEDS_DIR / "round3-v1.json"
 
-# 25 + 30 + 35. Round 3 is 35 and not 36: question 34 is omitted because the
-# team chose the wrong video for it, so its submission cannot serve as a label.
-TOTAL_QUERIES = 90
+# 24 + 29 + 33, the current (highest-version) seed per round: round1-v3,
+# round2-v2, round3-v2 -- see import_all_seeds()'s _discover_current_seed_files().
+TOTAL_QUERIES = 86
 
 
 def _count(conn, table : str) -> int :
@@ -28,7 +28,7 @@ def test_seed_files_are_present() :
 def test_import_all_seeds_registers_every_round(conn) :
     results = import_all_seeds(conn)
     versions = {result["dataset_version"] for result in results}
-    assert versions == {"round1-v2", "round2-v1", "round3-v1"}
+    assert versions == {"round1-v3", "round2-v2", "round3-v2"}
 
     assert _count(conn, "evaluation_datasets") == 3
     assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
@@ -56,15 +56,15 @@ def test_task_counts_match_the_declared_breakdown(conn) :
         """
     ).fetchall()
     counts = {(row["version"], row["task_type"]) : row["n"] for row in rows}
-    assert counts[("round1-v2", "KIS")] == 20
-    assert counts[("round1-v2", "QA")] == 4
-    assert counts[("round1-v2", "TRAKE")] == 1
-    assert counts[("round2-v1", "KIS")] == 19
-    assert counts[("round2-v1", "QA")] == 9
-    assert counts[("round2-v1", "TRAKE")] == 2
-    assert counts[("round3-v1", "KIS")] == 26
-    assert counts[("round3-v1", "QA")] == 8
-    assert counts[("round3-v1", "TRAKE")] == 1
+    assert counts[("round1-v3", "KIS")] == 19
+    assert counts[("round1-v3", "QA")] == 4
+    assert counts[("round1-v3", "TRAKE")] == 1
+    assert counts[("round2-v2", "KIS")] == 19
+    assert counts[("round2-v2", "QA")] == 8
+    assert counts[("round2-v2", "TRAKE")] == 2
+    assert counts[("round3-v2", "KIS")] == 25
+    assert counts[("round3-v2", "QA")] == 6
+    assert counts[("round3-v2", "TRAKE")] == 2
 
 
 # Round 3 keeps the original question numbers as ordinals, so 34 is simply

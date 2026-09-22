@@ -415,8 +415,14 @@ function App({
       useRerank,
       singleModel,
       ocrStripDiacritics,
+      textFilter,
+      textFilterMode,
     } = useQueryStore.getState();
     setIsLoading(true);
+    // Annotations from the PREVIOUS search must not linger onto results from
+    // a route that never sets them (single/temporal/trake/ocr) or a fresh
+    // ensemble search with no filter active.
+    useSearchStore.getState().setVideoAnnotations(null);
     // Đồng hồ cho hai tuyến temporal/TRAKE: backend chỉ trả processing_time ở
     // các tuyến ảnh, nên ở đó đo bằng đồng hồ trình duyệt (có tính cả thời gian
     // truyền, chênh không đáng kể so với vài giây chạy DP).
@@ -509,11 +515,14 @@ function App({
               queryText,
               Number(resultLimit),
               topM,
-              useRerank
+              useRerank,
+              textFilter,
+              textFilterMode
             );
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
+      useSearchStore.getState().setVideoAnnotations(response.video_annotations ?? null);
       setSummary({
         count: response.results.length,
         unit: "frames",
@@ -591,6 +600,15 @@ function App({
       setHasQueried(true);
     }
   }, [results, hasQueried, setHasQueried, queryText, isLoading]);
+
+  // A text filter found relevant for one task's video content has no bearing
+  // on the next task — clear it back to defaults whenever a different task
+  // opens. Translate/Expand deliberately do NOT do this (they only touch
+  // queryText), so this effect is scoped to just these two fields.
+  useEffect(() => {
+    useQueryStore.getState().setTextFilter("");
+    useQueryStore.getState().setTextFilterMode("substring");
+  }, [activeTask?.id]);
 
   // Everything below renders `shownResults`, never `results`, so the grid, the
   // grouping and the count all agree about what is on screen.
