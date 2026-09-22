@@ -1,4 +1,6 @@
+# backend/tests/test_text_signal.py
 import json
+import os
 
 import numpy as np
 import pytest
@@ -222,3 +224,67 @@ def test_bm25_missing_index_falls_back_to_substring_gracefully(tmp_path, monkeyp
     result = annotate_videos(["V1"], "meo", TextMatchMode.bm25, FRAME_NAMES)
     assert result["V1"].matched is True  # substring fallback still finds it
     assert any("BM25 unavailable" in s for s in result["V1"].snippets)
+
+
+# ── status() reports BM25 unavailability with a real reason ──────────────
+
+def test_status_reports_bm25_unavailable_reason(tmp_path, monkeypatch) :
+    """Regression for the production sighting: bm25_ready=false but
+    bm25_unavailable_reason=null. That combination meant _load_bm25() had
+    never been ATTEMPTED (lazy load, nobody had run a bm25-mode query yet)
+    -- not that the reason was being lost on a real failure. Once a load is
+    attempted, a real failure must always leave a reason string behind."""
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", str(tmp_path / "does_not_exist"))
+
+    before = text_signal.status()
+    assert before["bm25_ready"] is False
+    assert before["bm25_unavailable_reason"] is None  # not attempted yet
+
+    annotate_videos(["V1"], "meo", TextMatchMode.bm25, {})  # triggers _load_bm25()
+
+    after = text_signal.status()
+    assert after["bm25_ready"] is False
+    assert after["bm25_unavailable_reason"] is not None
+    assert "FileNotFoundError" in after["bm25_unavailable_reason"]
+    assert after["bm25_documents"] == 0
+
+
+def test_preload_loads_bm25_eagerly(tmp_path, monkeypatch) :
+    """preload() (called from main.py's warm-up, same as
+    ocr_route.preload()/_asr_text.preload()) must populate status() WITHOUT
+    a bm25-mode request ever having been made -- that is the whole point of
+    moving BM25 off its old lazy-load path."""
+    release_dir = _write_synthetic_bm25_index(tmp_path)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+
+    assert text_signal.status()["bm25_ready"] is False  # nothing has loaded yet
+    text_signal.preload()
+    status = text_signal.status()
+    assert status["bm25_ready"] is True
+    assert status["bm25_documents"] == 4
+    assert status["bm25_unavailable_reason"] is None
+
+
+# ── ASR_RELEASE_DIR resolution against AIC_INDEX_DIR ──────────────────────
+
+def test_asr_release_dir_resolves_under_aic_index_dir(monkeypatch) :
+    monkeypatch.setenv("AIC_INDEX_DIR", os.path.join("opt", "aic", "indexes"))
+    monkeypatch.delenv("AIC_ASR_RELEASE_DIR", raising=False)
+    resolved = text_signal._resolve_asr_release_dir()
+    assert resolved == os.path.join("opt", "aic", "indexes", "asr")
+
+
+def test_asr_release_dir_explicit_override_wins(monkeypatch) :
+    monkeypatch.setenv("AIC_INDEX_DIR", os.path.join("opt", "aic", "indexes"))
+    monkeypatch.setenv("AIC_ASR_RELEASE_DIR", os.path.join("custom", "path"))
+    resolved = text_signal._resolve_asr_release_dir()
+    assert resolved == os.path.join("custom", "path")
+
+
+def test_asr_release_dir_falls_back_to_local_indexes_dir_without_aic_index_dir(monkeypatch) :
+    monkeypatch.delenv("AIC_INDEX_DIR", raising=False)
+    monkeypatch.delenv("AIC_ASR_RELEASE_DIR", raising=False)
+    resolved = text_signal._resolve_asr_release_dir()
+    expected = os.path.join(
+        os.path.dirname(os.path.abspath(text_signal.__file__)), "indexes", "asr")
+    assert resolved == expected

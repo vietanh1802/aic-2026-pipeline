@@ -1,8 +1,10 @@
 "use client";
+// frontend/src/components/QueryInput/index.tsx
 import { useState } from "react";
 import { Filter, X } from "lucide-react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
+import TextIndexStatus from "../TextIndexStatus";
 import {
   useQueryStore,
   type SearchType,
@@ -362,14 +364,17 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           it, and showing it always would push the textarea down for everyone. */}
       {searchType === "ensemble" && (
         <div className="flex flex-col gap-1.5">
-          <button
-            type="button"
-            className="flex items-center gap-1 text-[12.5px] font-semibold text-proto-primary-active w-fit"
-            onClick={() => setFilterRowOpen((open) => !open)}
-          >
-            <Filter size={13} />
-            Text filter
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              className="flex items-center gap-1 text-[12.5px] font-semibold text-proto-primary-active w-fit"
+              onClick={() => setFilterRowOpen((open) => !open)}
+            >
+              <Filter size={13} />
+              Text filter
+            </button>
+            <TextIndexStatus />
+          </div>
 
           {filterRowOpen && (
             <div

@@ -1,3 +1,4 @@
+# backend/app/main.py
 # -*- coding: utf-8 -*-
 """
 main.py – FastAPI backend, thuần theo arXiv 2504.08384
@@ -27,6 +28,7 @@ immediately — an RRF blend would smear out exactly that advantage. Blending
 (OCR / ASR / caption / tag -> BM25 -> RRF) waits until Q5/Q6 are settled.
 """
 
+import logging
 import os
 import threading
 import time
@@ -358,6 +360,8 @@ class TrakeSearchTextResponse(BaseModel):
 #  App
 # ─────────────────────────────────────────────────────────────────────────────
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "images"))
 
@@ -393,6 +397,12 @@ def _run_warmup() -> None:
         # Same reasoning as ocr_route.preload() above: a missing ASR index
         # must not fail warm-up or take the visual route down with it.
         _asr_text.preload()
+        # BM25 used to load lazily, on the first bm25-mode request -- which
+        # meant a broken path sat unnoticed in /status (bm25_ready: false,
+        # bm25_unavailable_reason: null, because nothing had tried loading it
+        # yet) until someone's first live query during competition. Eager
+        # like the two above; _load_bm25() already swallows its own failure.
+        _text_signal.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
@@ -543,8 +553,12 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
                 response.text_filter_mode = req.text_filter_mode.value
             else:
                 response.text_filter_active = False
-        except Exception as annotation_err:
-            print(f"[text_signal] annotation failed: {annotation_err}")
+        except Exception:
+            # logger.exception() captures the full traceback, not just str(e) --
+            # a print() here previously threw away exactly the information
+            # needed to tell "the text index never loaded" apart from "this
+            # query genuinely crashed the annotation code".
+            logger.exception("[text_signal] annotation failed")
             response.text_filter_active = False
             response.video_annotations = None
 

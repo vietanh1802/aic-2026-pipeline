@@ -1,3 +1,4 @@
+# backend/app/text_signal.py
 # -*- coding: utf-8 -*-
 """
 text_signal.py — per-video text-match annotation engine (ASR + OCR)
@@ -20,8 +21,8 @@ Three modes, `TextMatchMode`:
                unpredictably against a string that no longer resembles what
                the user typed.
   bm25      -- ranked relevance against the prebuilt ASR BM25 index
-               (artifacts/asr/releases/.../bm25/). Falls back to substring,
-               with a note in the snippet, if that index isn't present.
+               (<AIC_INDEX_DIR>/asr/bm25/). Falls back to substring, with a
+               note in the snippet, if that index isn't present.
 
 BM25 token format -- confirmed, not assumed
 --------------------------------------------
@@ -57,10 +58,32 @@ from app import asr_text
 from app import ocr_search
 from app.ocr_search import _strip_marks
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_ASR_RELEASE_DIR = os.path.join(
-    REPO_ROOT, "artifacts", "asr", "releases", "aic2026-full-20260817-r01")
-ASR_RELEASE_DIR = os.environ.get("AIC_ASR_RELEASE_DIR", DEFAULT_ASR_RELEASE_DIR)
+def _resolve_asr_release_dir() -> str :
+    """<AIC_INDEX_DIR>/asr -- same fallback pattern as asr_text.py's ASR_DIR
+    and ocr_search.py's OCR_DIR, so the BM25 release rides the exact road
+    that already gets ASR/OCR data onto the box (AIC_INDEX_DIR is bind-mounted
+    from /opt/aic/indexes -- see docker-compose.yml -- and synced from
+    s3://aic2026-artifacts/indexes/ -- see deploy/p6/ssm-sync-indexes.sh).
+
+    The OLD default computed this from the module's own __file__ location
+    (three dirname() calls up to what it assumed was the repo root, then
+    artifacts/asr/releases/...), which resolves to /srv/artifacts/... inside
+    the deployed container -- a path nothing in the Dockerfile or
+    docker-compose.yml ever creates, mounts, or copies into. BM25 was
+    therefore unreachable in production regardless of what the EC2 host
+    held. Same class of bug ocr_search.py's own comments describe already
+    having been hit and fixed once for OCR (see OCR_DIR below).
+
+    AIC_ASR_RELEASE_DIR still overrides the whole result, same as
+    AIC_OCR_DIR overrides ocr_search.py's OCR_DIR."""
+    index_dir = os.environ.get(
+        "AIC_INDEX_DIR",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "indexes"))
+    default = os.path.join(index_dir, "asr")
+    return os.environ.get("AIC_ASR_RELEASE_DIR", default)
+
+
+ASR_RELEASE_DIR = _resolve_asr_release_dir()
 
 BM25_K1 = 1.5
 BM25_B = 0.75
@@ -387,6 +410,22 @@ def annotate_videos(
     except Exception as e :
         return {video_id : VideoAnnotation(False, 0.0, [], [f"Error: {e}"], mode.value)
                 for video_id in video_ids}
+
+
+def preload() -> None :
+    """Load the BM25 index at startup, same reasoning as asr_text.preload()
+    and ocr_search.preload(): a broken path (or a genuinely missing index)
+    should show up in /status right after warm-up, not silently on a team
+    member's first live BM25 query during competition. Previously BM25 only
+    loaded lazily on the first bm25-mode request, which is why a broken path
+    could sit unnoticed with bm25_unavailable_reason still null -- nothing
+    had triggered _load_bm25() yet.
+
+    _load_bm25() already swallows its own failure into
+    _bm25_unavailable_reason (see below) and never raises, so this needs no
+    try/except of its own -- unlike ocr_route.preload()/_asr_text.preload()
+    in main.py, which wrap a _load() that DOES raise on failure."""
+    _load_bm25()
 
 
 def status() -> dict :
