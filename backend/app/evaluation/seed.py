@@ -175,5 +175,29 @@ def import_seed(conn : sqlite3.Connection, seed_path : Path) -> dict[str, Any] :
     }
 
 
+def _discover_current_seed_files(seeds_dir : Path) -> list[Path] :
+    """One file per round: for each dataset.slug, the file carrying the
+    HIGHEST dataset.version (round1-v2.json superseded by round1-v3.json,
+    etc.) -- not a hardcoded filename list, so a future round/version just
+    works. Same approach as scripts/generate_filter_terms.py's own
+    _discover_current_seed_files(), ported here so import_all_seeds() doesn't
+    import a round's superseded versions alongside its current one."""
+    best : dict[str, tuple[str, Path]] = {}
+    for path in sorted(seeds_dir.glob("*.json")) :
+        try :
+            with open(path, encoding = "utf-8") as f :
+                dataset = json.load(f).get("dataset") or {}
+        except (json.JSONDecodeError, OSError) :
+            continue
+        slug = dataset.get("slug")
+        version = dataset.get("version")
+        if not slug or not version :
+            continue
+        current = best.get(slug)
+        if current is None or version > current[0] :
+            best[slug] = (version, path)
+    return [path for _, path in sorted(best.values(), key = lambda pair : pair[1].name)]
+
+
 def import_all_seeds(conn : sqlite3.Connection, seeds_dir : Path = SEEDS_DIR) -> list[dict[str, Any]] :
-    return [import_seed(conn, path) for path in sorted(seeds_dir.glob("*.json"))]
+    return [import_seed(conn, path) for path in _discover_current_seed_files(seeds_dir)]
