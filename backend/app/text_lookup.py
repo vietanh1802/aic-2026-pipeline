@@ -68,6 +68,15 @@ class TextHit :
     # document (window) that decided the video's rank; None for OCR.
     exact_phrase  : Optional[bool] = None
     doc_id        : Optional[int] = None
+    # CORPUS-ONLY video rank and matched-video count, for display ("#3 of 412
+    # videos"). `rank` stays the raw rank: for ASR it also counts the K01-K20
+    # videos that can never be shown (BM25 covers 1,478 videos, the corpus 873).
+    # Set by _lookup_asr() (position among the corpus videos, in raw rank order)
+    # and by lookup_text_batch() for OCR (dense video rank: order of first
+    # appearance in the frame-ranked hits); None wherever a source has no video
+    # ranking (substring/regex ASR scans).
+    corpus_video_rank      : Optional[int] = None
+    corpus_videos_matched  : Optional[int] = None
 
 
 def lookup_text(
@@ -114,6 +123,8 @@ def lookup_text_batch(
                 else _lookup_asr(term, "corpus", None, only_videos=set(video_ids)))
     except Exception :
         hits = []
+    if source == "ocr" :
+        _set_dense_video_ranks(hits)
     out : dict[str, list[TextHit]] = {video_id : [] for video_id in video_ids}
     wanted = set(video_ids)
     for hit in hits :
@@ -123,6 +134,18 @@ def lookup_text_batch(
 
 
 # ── OCR ──────────────────────────────────────────────────────────────────
+
+def _set_dense_video_ranks(hits : list[TextHit]) -> None :
+    """Fill corpus_video_rank / corpus_videos_matched for OCR hits: videos are
+    ranked by first appearance in the frame-ranked hit list (a video's rank is
+    that of its best frame), so two frames of one video never take two ranks."""
+    order : dict[str, int] = {}
+    for hit in hits :
+        order.setdefault(hit.video_id, len(order) + 1)
+    for hit in hits :
+        hit.corpus_video_rank = order[hit.video_id]
+        hit.corpus_videos_matched = len(order)
+
 
 def _lookup_ocr(term : str, scope : str, video_id : Optional[str]) -> list[TextHit] :
     allowed = set(preprocess.frames_for_video(video_id)) if scope == "video" else None
@@ -263,9 +286,11 @@ def _lookup_asr(
 
     only_videos (default None = every video, today's behaviour): rank
     enumeration still runs over ALL scored videos, so ranks and total_matched
-    are identical, but the corpus-membership check, the frame resolution and the
-    hit creation happen only for the videos in the set. The hits returned for
-    those videos are the same ones a full run would return for them."""
+    are identical, but the frame resolution and the hit creation happen only
+    for the videos in the set. The hits returned for those videos are the same
+    ones a full run would return for them. (The corpus-membership check still
+    runs for every scored video, because corpus_video_rank counts them; it is a
+    dictionary lookup, the frame resolution was the expensive part.)"""
     text_signal._load_bm25()
     if not text_signal._bm25_loaded :
         return []
@@ -280,14 +305,24 @@ def _lookup_asr(
     total_matched = len(scored)
 
     hits : list[TextHit] = []
+    corpus_rank = 0
     for rank, (vid, _score) in enumerate(scored, 1) :
+        if scope == "corpus" :
+            if not preprocess.frames_for_video(vid) :
+                continue  # outside the 873-video visual corpus
+            # Counted for EVERY corpus video, requested or not: the corpus-only
+            # rank of a requested video is the number of corpus videos ranked
+            # ahead of it, so this membership test cannot be made lazy.
+            corpus_rank += 1
         if (only_videos is not None) and (vid not in only_videos) :
             continue
-        if scope == "corpus" and not preprocess.frames_for_video(vid) :
-            continue  # outside the 873-video visual corpus
         doc_id = best_windows[vid][1]
         frame_name = _nearest_keyframe(vid, float(text_signal._bm25_doc_start_s[doc_id]))
         if frame_name is None :
             continue
-        hits.append(TextHit(vid, frame_name, "exact", rank, total_matched, doc_id=doc_id))
+        hits.append(TextHit(vid, frame_name, "exact", rank, total_matched, doc_id=doc_id,
+                            corpus_video_rank=(corpus_rank if scope == "corpus" else None)))
+    if scope == "corpus" :
+        for hit in hits :
+            hit.corpus_videos_matched = corpus_rank
     return hits

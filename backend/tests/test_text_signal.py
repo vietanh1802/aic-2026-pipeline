@@ -3,6 +3,7 @@ import json
 import os
 import re
 import unicodedata
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -263,6 +264,226 @@ def test_text_filter_length_cap_is_enforced_on_the_request() :
     assert EnsembleSearchRequest(query = "q", text_filter = "x" * cap).text_filter == "x" * cap
     with pytest.raises(ValidationError) :
         EnsembleSearchRequest(query = "q", text_filter = "x" * (cap + 1))
+
+
+# ── match detail: snippet, highlight, time, rank (popover data) ─────────────
+
+def _hit_texts(segments : list[list]) -> list[str] :
+    return [text for text, is_hit in segments if is_hit]
+
+
+def _plain(segments : list[list]) -> str :
+    return "".join(text for text, _is_hit in segments)
+
+
+def test_snippet_marks_hits_and_needs_no_ellipsis_for_short_text() :
+    text = "mot hai ba bon nam"
+    assert text_signal._snippet_segments(text, [(8, 10)]) == [["mot hai ", False], ["ba", True], [" bon nam", False]]
+
+
+def test_snippet_ellipsis_at_both_ends_at_one_end_and_at_neither() :
+    filler = "loi noi dai " * 12
+    text = filler + "cho meo " + filler
+    start = text.index("meo")
+    both = text_signal._snippet_segments(text, [(start, start + 3)])
+    assert both[0][0].startswith("…") and both[-1][0].endswith("…") and _hit_texts(both) == ["meo"]
+    assert len(_plain(both)) <= text_signal.SNIPPET_MAX_CHARS + 2 * text_signal._SNIPPET_EDGE_SLACK + 2
+
+    only_end = text_signal._snippet_segments(text, [(0, 3)])
+    assert not only_end[0][0].startswith("…") and only_end[-1][0].endswith("…")
+    only_start = text_signal._snippet_segments(text, [(len(text) - 6, len(text) - 2)])
+    assert only_start[0][0].startswith("…") and not only_start[-1][0].endswith("…")
+    neither = text_signal._snippet_segments("ngan gon", [(0, 4)])
+    assert "…" not in _plain(neither)
+
+
+def test_snippet_hit_at_the_very_start_and_the_very_end() :
+    assert text_signal._snippet_segments("meo dep", [(0, 3)]) == [["meo", True], [" dep", False]]
+    assert text_signal._snippet_segments("dep meo", [(4, 7)]) == [["dep ", False], ["meo", True]]
+
+
+def test_snippet_ellipsis_gets_its_own_segment_when_the_window_starts_or_ends_on_a_hit() :
+    text = "a" * 100 + "b" * 150 + "c" * 100  # a hit longer than the window
+    segments = text_signal._snippet_segments(text, [(100, 250)])
+    assert segments[0] == ["…", False] and segments[1][1] is True and segments[-1] == ["…", False]
+
+
+def test_snippet_prefers_the_densest_cluster_of_distinct_words() :
+    early = "thi " + "x " * 80        # one hit, far from the cluster
+    late = "thi hien tai " + "y " * 10
+    text = early + late
+    spans = [m.span() for m in text_signal._BM25_TOKEN_SPAN_RE.finditer(text) if m.group() in ("thi", "hien", "tai")]
+    assert _hit_texts(text_signal._snippet_segments(text, spans)) == ["thi", "hien", "tai"]
+
+
+def test_snippet_ties_go_to_more_spans_then_the_earliest() :
+    text = "meo " + "x " * 60 + "meo x meo " + "x " * 60 + "meo x meo"
+    spans = [m.span() for m in re.finditer("meo", text)]
+    segments = text_signal._snippet_segments(text, spans)
+    assert _hit_texts(segments) == ["meo", "meo"]  # the first pair of 2, not the lone "meo" at the start
+    assert segments[0][0].startswith("…")
+
+
+def test_snippet_repeated_occurrences_are_all_marked() :
+    text = "meo an ca, meo ngu, meo choi"
+    spans = [m.span() for m in re.finditer("meo", text)]
+    assert _hit_texts(text_signal._snippet_segments(text, spans)) == ["meo", "meo", "meo"]
+
+
+def test_snippet_empty_text_no_spans_and_hostile_spans_never_raise() :
+    assert text_signal._snippet_segments("", [(0, 1)]) == []
+    assert text_signal._snippet_segments("   \n ", [(0, 2)]) == []
+    assert text_signal._snippet_segments("abc def", []) == [["abc def", False]]
+    long_plain = text_signal._snippet_segments("word " * 60, [])  # no spans: the first characters, one plain segment
+    assert len(long_plain) == 1 and long_plain[0][1] is False and long_plain[0][0].endswith("…")
+    assert long_plain[0][0][:-1] == ("word " * 60)[: text_signal.SNIPPET_MAX_CHARS].rstrip()
+    hostile = [(-5, 2), (3, 3), (5, 1), (100, 200), (0, 100), (2, 4), (2, 4)]
+    segments = text_signal._snippet_segments("abcdef ghij", hostile)
+    assert _plain(segments).replace(" ", "") == "abcdefghij"
+
+
+def test_snippet_collapses_whitespace_after_slicing_so_hits_keep_their_boundaries() :
+    text = "dong mot\n\n  thit\nbo   ngon\n  qua"
+    start = text.index("thit")
+    segments = text_signal._snippet_segments(text, [(start, text.index("bo") + 2)])
+    assert segments == [["dong mot ", False], ["thit bo", True], [" ngon qua", False]]  # a hit split across a newline
+
+
+def test_token_spans_match_bm25_tokenize() :
+    for text in ["Người ta nấu thịt bò, nước sôi (2018)!", "THỂ THAO 1.5L a+b", "", "  ...  ", "đường-đi/đà nẵng"] :
+        assert [text[start : end].lower() for start, end in text_signal._token_spans(text)] == text_signal._bm25_tokenize(text)
+
+
+def test_moment_in_window_is_linear_and_clamped() :
+    assert text_signal._moment_in_window(100.0, 160.0, 200, 100) == 130.0
+    assert text_signal._moment_in_window(100.0, 160.0, 200, -50) == 100.0
+    assert text_signal._moment_in_window(100.0, 160.0, 200, 999) == 160.0
+    assert text_signal._moment_in_window(100.0, 160.0, 0, 5) == 130.0  # empty text: the middle
+
+
+@pytest.mark.parametrize("text, term, match_type, hit", [
+    ("nước sôi", "nuoc", "normalized", "nước"),
+    ("Nước sôi", "nước", "exact", "Nước"),
+    ("cả THỂ THAO hôm nay", "the thao", "normalized", "THỂ THAO"),
+    ("Đường đi", "duong", "normalized", "Đường"),
+    (unicodedata.normalize("NFD", "nước sôi"), "nuoc", "normalized", unicodedata.normalize("NFD", "nước")),
+    ("x aัb y", "ab", "normalized", "aัb"),
+])
+def test_highlight_is_computed_on_the_original_text(text, term, match_type, hit) :
+    segments = text_signal._snippet_segments(text, text_signal._substring_spans(text, term, match_type, False))
+    assert _hit_texts(segments) == [hit]
+    assert json.loads(json.dumps(segments, ensure_ascii=True)) == json.loads(json.dumps(segments, ensure_ascii=False)) == segments
+
+
+def test_highlight_survives_astral_characters_and_json_round_trips() :
+    text = "🙂 mon nước sôi 🙂"
+    exact = text_signal._snippet_segments(text, text_signal._substring_spans(text, "nước", "exact", False))
+    assert _hit_texts(exact) == ["nước"] and _plain(exact) == text
+    for ensure_ascii in (True, False) :
+        assert json.loads(json.dumps(exact, ensure_ascii=ensure_ascii)) == exact
+    # accent-insensitive on a text with a character above U+FFFF: no highlight, but a snippet
+    folded = text_signal._snippet_segments(text, text_signal._substring_spans(text, "nuoc", "normalized", False))
+    assert _hit_texts(folded) == [] and _plain(folded) == text
+
+
+def _detail_video(monkeypatch, asr : str = "", ocr : str = "", frame_idx : int = 100, fps : float = 25.0) :
+    name = f"V1-0000-{frame_idx}.jpg"
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", frame_idx, fps=fps)]})
+    _mock_asr_text(monkeypatch, {name : asr} if asr else {})
+    if ocr :
+        _set_ocr_text(name, ocr)
+    return name, {"V1" : [name]}
+
+
+def test_asr_substring_detail_uses_the_frame_time_and_ranks_nothing(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, asr="rau ngò rất tươi", frame_idx=100, fps=25.0)
+    detail = annotate_videos(["V1"], "ngo", TextMatchMode.substring, frames)["V1"].asr.detail
+    assert _hit_texts(detail.snippet) == ["ngò"] and _plain(detail.snippet) == "rau ngò rất tươi"
+    assert (detail.at_s, detail.start_s, detail.end_s, detail.time_approx) == (4.0, None, None, False)
+    assert (detail.rank, detail.total_matched, detail.exact_phrase) == (None, None, None)
+    assert (detail.matched_terms, detail.terms_total) == ([], 0)
+
+
+def test_regex_detail_highlights_the_pattern_matches(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, asr="gia 12 va 345 dong", frame_idx=50, fps=25.0)
+    detail = annotate_videos(["V1"], r"\d+", TextMatchMode.regex, frames)["V1"].asr.detail
+    assert _hit_texts(detail.snippet) == ["12", "345"]
+    assert (detail.at_s, detail.start_s, detail.end_s, detail.time_approx) == (2.0, None, None, False)
+    assert (detail.rank, detail.total_matched) == (None, None)
+
+
+def test_ocr_substring_detail_word_scatter_multiline_phrase_flag_and_rank(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, ocr="quan an\ncho o lon\nra", frame_idx=125, fps=25.0)
+    result = annotate_videos(["V1"], "an lon", TextMatchMode.substring, frames)["V1"]
+    detail = result.ocr.detail
+    assert _hit_texts(detail.snippet) == ["an", "an", "lon"]     # phrase absent: each WORD is marked, as a substring
+    assert _plain(detail.snippet) == "quan an cho o lon ra"      # newlines collapsed
+    assert (detail.at_s, detail.time_approx, detail.exact_phrase) == (5.0, False, False)
+    assert (detail.rank, detail.total_matched) == (1, 1)
+    assert result.asr.detail is None                              # no ASR match, no detail
+
+
+
+def test_ocr_whole_phrase_sets_exact_phrase_true_and_marks_the_phrase(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, ocr="Quán ăn Chợ Lớn", frame_idx=25)
+    ocr_search._haystack["with_marks"][name] = "quán ăn chợ lớn"  # the real haystack is lowercased
+    ocr_search._haystack["no_marks"][name] = "quan an cho lon"
+    detail = annotate_videos(["V1"], "chợ lớn", TextMatchMode.substring, frames)["V1"].ocr.detail
+    assert _hit_texts(detail.snippet) == ["Chợ Lớn"] and detail.exact_phrase is True
+
+
+def test_ocr_normalized_match_is_highlighted_on_the_accented_text(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, ocr="HỂ THAO va TIN TUC", frame_idx=25)
+    _set_ocr_text(name, "HỂ THAO va TIN TUC", no_marks="he thao va tin tuc")
+    detail = annotate_videos(["V1"], "he thao", TextMatchMode.substring, frames)["V1"].ocr.detail
+    assert _hit_texts(detail.snippet) == ["HỂ THAO"]
+
+
+def test_source_match_asdict_keeps_the_original_keys_and_adds_detail() :
+    plain = text_signal.SourceMatch("V1-0000-1.jpg", "exact", "here")
+    assert asdict(plain) == {"match_frame" : "V1-0000-1.jpg", "match_type" : "exact", "location" : "here", "detail" : None}
+    assert text_signal._NO_MATCH.detail is None and asdict(text_signal._NO_MATCH)["location"] == "none"
+
+
+def test_annotation_with_detail_is_json_serializable(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, asr="rau ngò 🙂 rất tươi", ocr="ngò gai")
+    result = annotate_videos(["V1"], "ngo", TextMatchMode.substring, frames)["V1"]
+    payload = json.loads(json.dumps(asdict(result), ensure_ascii=False))
+    assert set(payload) == {"matched", "score", "mode", "asr", "ocr"}
+    assert set(payload["asr"]) == {"match_frame", "match_type", "location", "detail"}
+    assert set(payload["asr"]["detail"]) == {"snippet", "matched_terms", "terms_total", "at_s", "start_s", "end_s",
+                                             "time_approx", "rank", "total_matched", "exact_phrase"}
+
+
+def test_a_failing_detail_leaves_the_annotation_intact_and_other_videos_unaffected(monkeypatch, caplog) :
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-100.jpg", "V1", 100)], "V2" : [_meta("V2-0000-100.jpg", "V2", 100)],
+                              "V3" : [_meta("V3-0000-100.jpg", "V3", 100)]})
+    _mock_asr_text(monkeypatch, {f"V{i}-0000-100.jpg" : "rau ngò rất tươi" for i in (1, 2, 3)})
+    real = text_signal.describe_match
+
+    def flaky(hit, source, mode, term, pattern=None) :
+        if hit.video_id in ("V1", "V2") :
+            raise RuntimeError("boom")
+        return real(hit, source, mode, term, pattern)
+
+    monkeypatch.setattr(text_signal, "describe_match", flaky)
+    frames = {f"V{i}" : [f"V{i}-0000-100.jpg"] for i in (1, 2, 3)}
+    with caplog.at_level("ERROR", logger=text_signal.logger.name) :
+        result = annotate_videos(["V1", "V2", "V3"], "ngo", TextMatchMode.substring, frames)
+    for video in ("V1", "V2") :
+        assert result[video].matched is True and result[video].asr.match_frame == f"{video}-0000-100.jpg"
+        assert result[video].asr.location == "here" and result[video].asr.detail is None
+    assert result["V3"].asr.detail is not None
+    assert sum("match detail failed" in record.getMessage() for record in caplog.records) == 1  # once per call
+
+
+def test_non_matching_videos_get_no_detail_and_do_no_detail_work(monkeypatch) :
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-100.jpg", "V1", 100)]})
+    _mock_asr_text(monkeypatch, {"V1-0000-100.jpg" : "khong lien quan"})
+    calls = []
+    monkeypatch.setattr(text_signal, "describe_match", lambda *args, **kwargs : calls.append(args))
+    result = annotate_videos(["V1"], "ngo", TextMatchMode.substring, {"V1" : ["V1-0000-100.jpg"]})["V1"]
+    assert result.matched is False and result.asr.detail is None and calls == []
 
 
 # ── regex mode ───────────────────────────────────────────────────────────

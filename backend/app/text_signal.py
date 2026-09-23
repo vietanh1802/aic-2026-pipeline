@@ -73,6 +73,7 @@ order -- rather than trusting an assumed physical_index numbering.
 
 import functools
 import json
+import logging
 import math
 import os
 import re
@@ -87,6 +88,8 @@ from app import asr_text
 from app import ocr_search
 from app import preprocess
 from app.ocr_search import _strip_marks
+
+logger = logging.getLogger(__name__)
 
 def _resolve_asr_release_dir() -> str :
     """<AIC_INDEX_DIR>/asr -- same fallback pattern as asr_text.py's ASR_DIR
@@ -125,13 +128,56 @@ BM25_B = 0.75
 # pin a request thread.
 TEXT_FILTER_MAX_CHARS = 200
 
+# Width of the snippet shown in the Text signal popover: the window holding the
+# matched words is about this many characters, its edges move to the nearest
+# whitespace within _SNIPPET_EDGE_SLACK. _MAX_HIGHLIGHT_SPANS bounds the work for
+# a regex or a one-letter term that matches almost every character.
+SNIPPET_MAX_CHARS = 90
+_SNIPPET_EDGE_SLACK = 10
+_MAX_HIGHLIGHT_SPANS = 200
+
 _BM25_TOKEN_RE = re.compile(r"[^0-9a-zA-ZÀ-ỹ]+")
+# The same character class, matching the tokens themselves instead of the gaps
+# between them, so a token's position in the ORIGINAL text can be found. Keep it
+# in step with _BM25_TOKEN_RE (test_token_spans_match_bm25_tokenize checks it).
+_BM25_TOKEN_SPAN_RE = re.compile(r"[0-9a-zA-ZÀ-ỹ]+")
 
 
 class TextMatchMode(str, Enum) :
     substring = "substring"
     regex = "regex"
     bm25 = "bm25"
+
+
+@dataclass
+class MatchDetail :
+    """HOW and WHERE one source matched a video, for the Text signal popover.
+    All fields are plain JSON types (asdict() and json.dumps() just work).
+
+    snippet        -- [[text, is_hit], ...] segments of the matched text; never
+                      ** markers or offsets (see the block comment further down)
+    matched_terms  -- bm25 only: distinct query tokens found in the chosen
+                      window, in query order; [] otherwise
+    terms_total    -- bm25 only: distinct query tokens; 0 otherwise
+    at_s           -- best-estimate moment, in seconds from the video start
+    start_s, end_s -- bm25 only: the transcript window's range; None otherwise
+    time_approx    -- True only for the bm25 estimate (position inside a 60 s
+                      window; frame-based sources report the frame's own time)
+    rank, total_matched -- CORPUS-ONLY video rank and matched-video count (bm25
+                      and OCR substring); None for the per-frame ASR substring
+                      and regex scans, which rank nothing
+    exact_phrase   -- OCR only: the frame holds the whole phrase, not its words
+                      scattered; None otherwise"""
+    snippet       : list[list]
+    matched_terms : list[str]
+    terms_total   : int
+    at_s          : float
+    start_s       : Optional[float]
+    end_s         : Optional[float]
+    time_approx   : bool
+    rank          : Optional[int]
+    total_matched : Optional[int]
+    exact_phrase  : Optional[bool]
 
 
 @dataclass
@@ -142,6 +188,9 @@ class SourceMatch :
     match_frame : Optional[str]
     match_type  : Optional[Literal["exact", "normalized"]]
     location    : Literal["here", "elsewhere", "none"]
+    # Added last with a default so existing SourceMatch(frame, type, location)
+    # calls and the shared _NO_MATCH keep working; only matched sources get one.
+    detail      : Optional[MatchDetail] = None
 
 
 _NO_MATCH = SourceMatch(None, None, "none")
@@ -158,14 +207,20 @@ class VideoAnnotation :
 
 # ── combining TextHits into a SourceMatch ───────────────────────────────
 
-def _best_match(hits : list, here : list[str]) -> SourceMatch :
-    """Pick one TextHit to represent a source. Preference order: an "exact"
+def _choose_hit(hits : list, here : list[str]) :
+    """The TextHit that represents a source. Preference order: an "exact"
     match_type beats "normalized" first; within the same match_type, a frame
     already in this query's result set ("here") beats one that is not."""
+    return min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
+                                      0 if h.frame_name in here else 1))
+
+
+def _best_match(hits : list, here : list[str]) -> SourceMatch :
+    """SourceMatch of the hit _choose_hit() picks (no detail: that is attached
+    by annotate_videos() only for matched sources)."""
     if not hits :
         return _NO_MATCH
-    best = min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
-                                      0 if h.frame_name in here else 1))
+    best = _choose_hit(hits, here)
     location = "here" if best.frame_name in here else "elsewhere"
     return SourceMatch(best.frame_name, best.match_type, location)
 
@@ -549,6 +604,241 @@ def _annotate_bm25(video_ids : list[str], query : str) -> dict[str, float] :
     return _normalize_bm25(_best_windows_bm25(video_ids, query), video_ids)
 
 
+# ── popover detail: HOW and WHERE a text match happened ─────────────────
+#
+# Each matched source of a video carries a MatchDetail (SourceMatch.detail): a
+# short snippet with the matched words marked, the moment in the video, which
+# query words matched (bm25), and the corpus-only rank. Everything below is pure
+# text/time arithmetic on data the lookup already produced -- no I/O -- so it
+# can be unit tested without an index.
+#
+# Highlight positions are computed on the ORIGINAL text and shipped as
+# [text, is_hit] segments, never as offsets: a Python code-point offset and a
+# JavaScript UTF-16 index disagree for characters above U+FFFF (an emoji in OCR
+# text), and folding (diacritics, decomposed text, "đ") would shift offsets
+# computed on folded text. The substring prefilter regex already matches the
+# raw text, so its spans need no mapping back.
+
+def _has_astral(text : str) -> bool :
+    """True when the text has a character above U+FFFF (a UTF-16 encoding is
+    then longer than 2 bytes per character) -- the same guard _substring_hits
+    uses before trusting the BMP-only mark class of _folded_pattern()."""
+    return len(text.encode("utf-16-le", "surrogatepass")) != 2 * len(text)
+
+
+def _token_spans(text : str) -> list[tuple[int, int]] :
+    """(start, end) of every BM25 token of the ORIGINAL text. Same character
+    class as _bm25_tokenize() (see _BM25_TOKEN_SPAN_RE); a token's text is
+    text[start:end].lower(), exactly what _bm25_tokenize() yields."""
+    return [match.span() for match in _BM25_TOKEN_SPAN_RE.finditer(text)]
+
+
+def _moment_in_window(start_s : float, end_s : float, text_length : int, char_position : float) -> float :
+    """Linear estimate of when a character position was spoken inside a
+    transcript window, assuming an even speaking rate over the window. It is an
+    ESTIMATE (the release has no word timestamps) and is clamped to the window;
+    an empty text gives the window's middle."""
+    low, high = min(start_s, end_s), max(start_s, end_s)
+    if text_length <= 0 :
+        return (low + high) / 2
+    fraction = min(max(char_position / text_length, 0.0), 1.0)
+    return min(max(low + fraction * (high - low), low), high)
+
+
+def _clean_spans(text_length : int, spans) -> list[tuple[int, int]] :
+    """Spans sorted by start, clamped to the text, empty/inverted ones dropped."""
+    clean = []
+    for span in spans :
+        start, end = max(0, int(span[0])), min(text_length, int(span[1]))
+        if start < end :
+            clean.append((start, end))
+    return sorted(clean)
+
+
+def _snippet_bounds(text : str, spans, max_chars : int = SNIPPET_MAX_CHARS) -> tuple[int, int] :
+    """[lo, hi) of the slice shown as the snippet. The window of about
+    max_chars that holds the most DISTINCT matched strings wins (ties: more
+    spans, then the earliest), is centred on its spans, and its edges move to
+    the nearest whitespace within _SNIPPET_EDGE_SLACK characters so words are
+    not cut. With no spans it is simply the first max_chars characters."""
+    length = len(text)
+    clean = _clean_spans(length, spans)
+    if not clean :
+        return 0, min(length, max_chars)
+
+    best_key, best_first, best_last, last = None, 0, 1, 0
+    for first in range(len(clean)) :
+        limit = clean[first][0] + max_chars
+        last = max(last, first + 1)  # a span longer than the window still counts on its own
+        while last < len(clean) and clean[last][1] <= limit :
+            last += 1
+        inside = clean[first : last]
+        key = (len({text[start : end].lower() for start, end in inside}), len(inside), -clean[first][0])
+        if (best_key is None) or (key > best_key) :
+            best_key, best_first, best_last = key, first, last
+
+    first_start = clean[best_first][0]
+    last_end = max(end for _start, end in clean[best_first : best_last])
+    extent = min(last_end - first_start, max_chars)
+    lo = max(0, first_start - (max_chars - extent) // 2)
+    hi = min(length, lo + max_chars)
+    lo = max(0, hi - max_chars)
+    for position in range(lo, max(lo - _SNIPPET_EDGE_SLACK, 0) - 1, -1) :
+        if position == 0 or text[position - 1].isspace() :
+            lo = position
+            break
+    for position in range(hi, min(hi + _SNIPPET_EDGE_SLACK, length) + 1) :
+        if position == length or text[position].isspace() :
+            hi = position
+            break
+    return lo, hi
+
+
+def _snippet_segments(text : str, spans, max_chars : int = SNIPPET_MAX_CHARS) -> list[list] :
+    """The snippet as [[text, is_hit], ...]. Truncation ellipses ("…") are
+    part of the text of the first / last non-hit segment (a separate non-hit
+    segment when the snippet starts or ends on a hit). Whitespace runs,
+    newlines included, collapse to one space AFTER slicing, so a hit that
+    spans a newline keeps its boundaries. Empty text gives []."""
+    if not text :
+        return []
+    length = len(text)
+    clean = _clean_spans(length, spans)
+    lo, hi = _snippet_bounds(text, clean, max_chars)
+
+    pieces : list[list] = []
+    cursor = lo
+    merged : list[list[int]] = []
+    for start, end in clean :
+        if merged and start <= merged[-1][1] :
+            merged[-1][1] = max(merged[-1][1], end)
+        else :
+            merged.append([start, end])
+    for start, end in merged :
+        start, end = max(start, lo), min(end, hi)
+        if start >= end :
+            continue
+        if start > cursor :
+            pieces.append([text[cursor : start], False])
+        pieces.append([text[start : end], True])
+        cursor = end
+    if cursor < hi :
+        pieces.append([text[cursor : hi], False])
+
+    pieces = [[re.sub(r"\s+", " ", piece), is_hit] for piece, is_hit in pieces]
+    if pieces and not pieces[0][1] :
+        pieces[0][0] = pieces[0][0].lstrip()
+    if pieces and not pieces[-1][1] :
+        pieces[-1][0] = pieces[-1][0].rstrip()
+    for previous, current in zip(pieces, pieces[1:]) :
+        if previous[0].endswith(" ") and current[0].startswith(" ") :
+            current[0] = current[0][1:]
+    pieces = [piece for piece in pieces if piece[0]]
+    if not any(piece[0].strip() for piece in pieces) :
+        return []  # nothing but whitespace (a "hit" on blanks is not worth showing)
+
+    if lo > 0 :
+        if pieces[0][1] :
+            pieces.insert(0, ["…", False])
+        else :
+            pieces[0][0] = "…" + pieces[0][0]
+    if hi < length :
+        if pieces[-1][1] :
+            pieces.append(["…", False])
+        else :
+            pieces[-1][0] = pieces[-1][0] + "…"
+    return pieces
+
+
+def _find_spans(text : str, chunk : str, folded : bool) -> list[tuple[int, int]] :
+    """Spans of `chunk` in the original text. Exact: a case-insensitive literal
+    search. Folded (an accent-insensitive match): the accent-tolerant pattern of
+    _substring_hits(), which matches the raw text, so nothing needs mapping
+    back; no spans for a term outside its audited scope or a text with a
+    character above U+FFFF (the caller then shows a snippet without highlight)."""
+    if not chunk :
+        return []
+    if not folded :
+        return [match.span() for match in re.finditer(re.escape(chunk), text, re.IGNORECASE)]
+    if _has_astral(text) :
+        return []
+    pattern = _folded_pattern(chunk)
+    return [] if pattern is None else [match.span() for match in pattern.finditer(text)]
+
+
+def _substring_spans(text : str, term : str, match_type : str, scatter : bool) -> list[tuple[int, int]] :
+    """Highlight spans for a substring-mode hit. scatter (OCR): when the whole
+    phrase is not in the text, ocr_search matched it because every WORD is, so
+    each word is highlighted on its own."""
+    folded = match_type != "exact"
+    phrase = _strip_marks(term).lower() if folded else term.strip()
+    spans = _find_spans(text, phrase, folded)
+    if (not spans) and scatter :
+        for word in dict.fromkeys(ocr_search._tokenize(phrase.lower())) :
+            spans += _find_spans(text, word, folded)
+    return spans[:_MAX_HIGHLIGHT_SPANS]
+
+
+def _regex_spans(pattern : Optional[re.Pattern], text : str) -> list[tuple[int, int]] :
+    spans : list[tuple[int, int]] = []
+    if pattern is None :
+        return spans
+    for match in pattern.finditer(text) :
+        if match.end() > match.start() :
+            spans.append(match.span())
+        if len(spans) >= _MAX_HIGHLIGHT_SPANS :
+            break
+    return spans
+
+
+def _describe_bm25(hit, term : str) -> MatchDetail :
+    """The best window's own text, its query tokens highlighted, and the moment
+    of the densest cluster estimated inside the 60 s window."""
+    text = _bm25_doc_texts[hit.doc_id]
+    query_tokens = list(dict.fromkeys(_bm25_tokenize(term)))
+    wanted = set(query_tokens)
+    spans, found = [], set()
+    for start, end in _token_spans(text) :
+        token = text[start : end].lower()
+        if token in wanted :
+            spans.append((start, end))
+            found.add(token)
+    lo, hi = _snippet_bounds(text, spans)
+    start_s, end_s = float(_bm25_doc_start_s[hit.doc_id]), float(_bm25_doc_end_s[hit.doc_id])
+    at_s = _moment_in_window(start_s, end_s, len(text), (lo + hi) / 2)
+    return MatchDetail(
+        snippet=_snippet_segments(text, spans), matched_terms=[t for t in query_tokens if t in found],
+        terms_total=len(query_tokens), at_s=round(at_s, 3), start_s=round(start_s, 3), end_s=round(end_s, 3),
+        time_approx=True, rank=hit.corpus_video_rank, total_matched=hit.corpus_videos_matched,
+        exact_phrase=None)
+
+
+def describe_match(hit, source : str, mode : TextMatchMode, term : str,
+                   pattern : Optional[re.Pattern] = None) -> MatchDetail :
+    """MatchDetail for the TextHit chosen to represent `source` ("asr" or
+    "ocr") of one video. Frame-based sources (substring, regex, OCR) report the
+    frame's own time; bm25 reports the estimate described in _describe_bm25().
+    rank / total_matched are the corpus-only video rank the hit carries (bm25
+    and OCR substring), None for the per-frame substring/regex ASR scans, which
+    rank nothing. May raise on inconsistent input: annotate_videos() isolates
+    that per source."""
+    from app import text_lookup  # deferred: text_lookup imports this module
+
+    if mode == TextMatchMode.bm25 :
+        return _describe_bm25(hit, term)
+
+    text = (asr_text.get_text if source == "asr" else ocr_search.get_text)(hit.frame_name)
+    if mode == TextMatchMode.regex :
+        spans = _regex_spans(pattern, text)
+    else :
+        spans = _substring_spans(text, term, hit.match_type, scatter=(source == "ocr"))
+    at_s = text_lookup._frame_idx(hit.frame_name) / preprocess.fps_for_video(hit.video_id)
+    return MatchDetail(
+        snippet=_snippet_segments(text, spans), matched_terms=[], terms_total=0, at_s=round(at_s, 3),
+        start_s=None, end_s=None, time_approx=False, rank=hit.corpus_video_rank,
+        total_matched=hit.corpus_videos_matched, exact_phrase=hit.exact_phrase)
+
+
 # ── entry point ──────────────────────────────────────────────────────────
 
 def annotate_videos(
@@ -593,9 +883,11 @@ def annotate_videos(
         ocr_hits_by_video = text_lookup.lookup_text_batch(query, source="ocr", video_ids=video_ids)
 
     out : dict[str, VideoAnnotation] = {}
+    detail_failure_logged = False
     for video_id in video_ids :
         here = frame_names.get(video_id, [])
         try :
+            ocr_hits : list = []
             if mode == TextMatchMode.bm25 :
                 asr_hits = asr_hits_by_video.get(video_id, [])
                 ocr_match = _NO_MATCH
@@ -611,6 +903,22 @@ def annotate_videos(
                 raise ValueError(f"unknown TextMatchMode: {mode}")
 
             asr_match = _best_match(asr_hits, here)
+
+            # The detail is decoration on an annotation that is already right:
+            # each source has its own try/except, so a failure (an odd text, a
+            # pattern) leaves that source without detail instead of blanking the
+            # video. Built only for matched sources and only for the ONE chosen
+            # hit, so it adds nothing for non-matching videos or extra frames.
+            for source, match, hits in (("asr", asr_match, asr_hits), ("ocr", ocr_match, ocr_hits)) :
+                if match.location == "none" :
+                    continue
+                try :
+                    match.detail = describe_match(_choose_hit(hits, here), source, mode, query, regex_pattern)
+                except Exception :
+                    if not detail_failure_logged :  # once per call, not once per video
+                        logger.exception("[text_signal] match detail failed (annotation kept without it)")
+                        detail_failure_logged = True
+
             matched = (asr_match.location != "none") or (ocr_match.location != "none")
             out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, mode.value, asr_match, ocr_match)
         except Exception :
