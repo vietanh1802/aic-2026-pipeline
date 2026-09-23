@@ -78,7 +78,7 @@ import math
 import os
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Literal, Optional
 
@@ -147,6 +147,14 @@ class TextMatchMode(str, Enum) :
     substring = "substring"
     regex = "regex"
     bm25 = "bm25"
+
+
+class OcrFilterMode(str, Enum) :
+    """Modes the OCR filter accepts. OCR has no BM25 index, so unlike
+    TextMatchMode there is no bm25 here: a request asking for it is rejected
+    (HTTP 422) by the request model instead of silently running something else."""
+    substring = "substring"
+    regex = "regex"
 
 
 @dataclass
@@ -839,35 +847,103 @@ def describe_match(hit, source : str, mode : TextMatchMode, term : str,
         total_matched=hit.corpus_videos_matched, exact_phrase=hit.exact_phrase)
 
 
-# ── entry point ──────────────────────────────────────────────────────────
+# ── entry points: independent ASR / OCR filters, and the legacy single filter ──
+#
+# One text_filter + one text_filter_mode used to drive BOTH sources. The split
+# entry point below runs each source with its OWN query and mode; the legacy
+# annotate_videos() is now a thin mapping onto it, so there is one engine and
+# the old behaviour cannot drift (test_text_signal.py keeps a verbatim copy of
+# the previous implementation and asserts identical output, detail included).
 
-def annotate_videos(
+def _mode_label(asr_mode : Optional[Enum], ocr_mode : Optional[Enum]) -> str :
+    """VideoAnnotation.mode / text_filter_mode of the split path: the active
+    source's own mode value when only one source is active, "mixed" when both
+    are (their modes are then in asr_filter_mode / ocr_filter_mode), "" when
+    neither is. A mode of None means that source is inactive."""
+    if (asr_mode is not None) and (ocr_mode is not None) :
+        return "mixed"
+    active = asr_mode if asr_mode is not None else ocr_mode
+    return active.value if active is not None else ""
+
+
+def _asr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optional[re.Pattern],
+              batch : dict[str, list]) -> list :
+    """TextHits of one video for the ASR source. bm25 comes from the
+    corpus-wide batch (one postings walk for all candidates), substring and
+    regex scan the video's own frames."""
+    if mode == TextMatchMode.bm25 :
+        return batch.get(video_id, [])
+    if mode == TextMatchMode.substring :
+        return _substring_hits(video_id, query, asr_text.get_text)
+    if mode == TextMatchMode.regex :
+        return _regex_hits(video_id, pattern, asr_text.get_text)
+    raise ValueError(f"unknown ASR mode: {mode}")
+
+
+def _ocr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optional[re.Pattern],
+              batch : dict[str, list]) -> list :
+    """TextHits of one video for the OCR source: substring comes from the
+    corpus-wide batch (ocr_search scans every frame once), regex scans the
+    video's own frames. There is no bm25 for OCR."""
+    if mode == TextMatchMode.substring :
+        return batch.get(video_id, [])
+    if mode == TextMatchMode.regex :
+        return _regex_hits(video_id, pattern, ocr_search.get_text)
+    raise ValueError(f"unknown OCR mode: {mode}")
+
+
+def annotate_videos_split(
         video_ids : list[str],
-        filter_query : str,
-        mode : TextMatchMode,
         frame_names : dict[str, list[str]],
+        asr_query : Optional[str],
+        asr_mode : Optional[Enum],
+        ocr_query : Optional[str],
+        ocr_mode : Optional[Enum],
+        mode_label : Optional[str] = None,
 ) -> dict[str, VideoAnnotation] :
-    """Never raises. An empty query, an unmatched query, and an internal
-    error all resolve to a valid (not-matched) annotation per video rather
-    than propagating an exception -- the caller is a search endpoint, and a
-    filtering feature must not be able to take the visual route down.
+    """Annotate videos with an ASR filter and an OCR filter that are
+    independent: each has its own query and mode (asr: substring | regex |
+    bm25, ocr: substring | regex -- TextMatchMode or OcrFilterMode members, only
+    their .value is read).
 
-    Each video is handled in its own try/except (unchanged from before): one
-    video's failure must not blank out every other video's real annotation."""
+    A source is INACTIVE, and yields _NO_MATCH for every video, when its query
+    is empty after strip, its mode is None or one OCR cannot do (bm25), or its
+    regex does not compile (only that source turns off; the other still runs).
+    mode_label becomes VideoAnnotation.mode (default: _mode_label() of the
+    requested sources). Each source builds its match detail with ITS OWN mode,
+    term and pattern.
+
+    Never raises, and each video is handled in its own try/except: one video's
+    failure must not blank out every other video's real annotation. A detail
+    failure leaves that source's match intact without detail, logged once per
+    call."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
-    query = (filter_query or "").strip()
-    if not query :
-        return {video_id : VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
-                for video_id in video_ids}
+    asr_query = (asr_query or "").strip()
+    ocr_query = (ocr_query or "").strip()
+    asr_active = TextMatchMode(asr_mode.value) if (asr_mode is not None and asr_query) else None
+    ocr_active = None
+    if (ocr_mode is not None) and ocr_query and ocr_mode.value in (OcrFilterMode.substring.value, OcrFilterMode.regex.value) :
+        ocr_active = TextMatchMode(ocr_mode.value)
+    label = mode_label if mode_label is not None else _mode_label(asr_active, ocr_active)
 
-    regex_pattern = None
-    if mode == TextMatchMode.regex :
+    # A regex that does not compile turns THAT source off, not the whole call:
+    # the label above was taken from the requested modes, so the response still
+    # says the filter was active (an empty result), like an invalid legacy regex.
+    asr_pattern = ocr_pattern = None
+    if asr_active == TextMatchMode.regex :
         try :
-            regex_pattern = re.compile(query, re.IGNORECASE)
+            asr_pattern = re.compile(asr_query, re.IGNORECASE)
         except re.error :
-            return {video_id : VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
-                    for video_id in video_ids}
+            asr_active = None
+    if ocr_active == TextMatchMode.regex :
+        try :
+            ocr_pattern = re.compile(ocr_query, re.IGNORECASE)
+        except re.error :
+            ocr_active = None
+
+    if (asr_active is None) and (ocr_active is None) :
+        return {video_id : VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH) for video_id in video_ids}
 
     # One scan/postings-walk for the whole candidate set, not one per video --
     # lookup_text(scope="video") called in a loop re-pays a full OCR haystack
@@ -875,55 +951,198 @@ def annotate_videos(
     # measured at 3.0-3.2s / 100 candidates for OCR, up to ~470ms for a common
     # BM25 term. lookup_text_batch() does the corpus-wide work exactly once and
     # partitions it, matching the earlier corpus-scope exclusion filtering.
-    ocr_hits_by_video : dict[str, list] = {}
-    asr_hits_by_video : dict[str, list] = {}
-    if mode == TextMatchMode.bm25 :
-        asr_hits_by_video = text_lookup.lookup_text_batch(query, source="asr", video_ids=video_ids)
-    elif mode == TextMatchMode.substring :
-        ocr_hits_by_video = text_lookup.lookup_text_batch(query, source="ocr", video_ids=video_ids)
+    asr_batch : dict[str, list] = {}
+    ocr_batch : dict[str, list] = {}
+    if asr_active == TextMatchMode.bm25 :
+        asr_batch = text_lookup.lookup_text_batch(asr_query, source="asr", video_ids=video_ids)
+    if ocr_active == TextMatchMode.substring :
+        ocr_batch = text_lookup.lookup_text_batch(ocr_query, source="ocr", video_ids=video_ids)
 
     out : dict[str, VideoAnnotation] = {}
     detail_failure_logged = False
     for video_id in video_ids :
         here = frame_names.get(video_id, [])
         try :
-            ocr_hits : list = []
-            if mode == TextMatchMode.bm25 :
-                asr_hits = asr_hits_by_video.get(video_id, [])
-                ocr_match = _NO_MATCH
-            elif mode == TextMatchMode.substring :
-                asr_hits = _substring_hits(video_id, query, asr_text.get_text)
-                ocr_hits = ocr_hits_by_video.get(video_id, [])
-                ocr_match = _best_match(ocr_hits, here)
-            elif mode == TextMatchMode.regex :
-                asr_hits = _regex_hits(video_id, regex_pattern, asr_text.get_text)
-                ocr_hits = _regex_hits(video_id, regex_pattern, ocr_search.get_text)
-                ocr_match = _best_match(ocr_hits, here)
-            else :
-                raise ValueError(f"unknown TextMatchMode: {mode}")
-
+            asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch) if asr_active is not None else []
+            ocr_hits = _ocr_hits(video_id, ocr_query, ocr_active, ocr_pattern, ocr_batch) if ocr_active is not None else []
             asr_match = _best_match(asr_hits, here)
+            ocr_match = _best_match(ocr_hits, here)
 
             # The detail is decoration on an annotation that is already right:
             # each source has its own try/except, so a failure (an odd text, a
             # pattern) leaves that source without detail instead of blanking the
             # video. Built only for matched sources and only for the ONE chosen
             # hit, so it adds nothing for non-matching videos or extra frames.
-            for source, match, hits in (("asr", asr_match, asr_hits), ("ocr", ocr_match, ocr_hits)) :
+            # Each source describes its match with its own mode, term, pattern.
+            for source, match, hits, source_mode, source_query, source_pattern in (
+                    ("asr", asr_match, asr_hits, asr_active, asr_query, asr_pattern),
+                    ("ocr", ocr_match, ocr_hits, ocr_active, ocr_query, ocr_pattern)) :
                 if match.location == "none" :
                     continue
                 try :
-                    match.detail = describe_match(_choose_hit(hits, here), source, mode, query, regex_pattern)
+                    match.detail = describe_match(_choose_hit(hits, here), source, source_mode, source_query, source_pattern)
                 except Exception :
                     if not detail_failure_logged :  # once per call, not once per video
                         logger.exception("[text_signal] match detail failed (annotation kept without it)")
                         detail_failure_logged = True
 
             matched = (asr_match.location != "none") or (ocr_match.location != "none")
-            out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, mode.value, asr_match, ocr_match)
+            out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, label, asr_match, ocr_match)
         except Exception :
-            out[video_id] = VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
+            out[video_id] = VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH)
     return out
+
+
+def annotate_videos(
+        video_ids : list[str],
+        filter_query : str,
+        mode : TextMatchMode,
+        frame_names : dict[str, list[str]],
+) -> dict[str, VideoAnnotation] :
+    """The legacy single-filter entry point, unchanged in signature and output
+    (SourceMatch.detail included): one query and one mode drive both sources.
+
+      bm25      -> ASR only (OCR was never part of bm25 mode)
+      substring -> ASR substring scan + OCR substring lookup
+      regex     -> ASR and OCR with the same pattern; an invalid pattern turns
+                   both sources off, i.e. every video comes back not matched
+      empty query -> every video not matched
+
+    Never raises; see annotate_videos_split() for the per-video isolation."""
+    if mode == TextMatchMode.bm25 :
+        asr_mode, ocr_mode = TextMatchMode.bm25, None
+    else :
+        asr_mode, ocr_mode = mode, mode
+    return annotate_videos_split(video_ids, frame_names, filter_query, asr_mode, filter_query, ocr_mode,
+                                 mode_label=mode.value)
+
+
+# Previous body of annotate_videos(), kept for reference (replaced by the mapping
+# above onto annotate_videos_split(), which runs the same per-source logic for
+# any combination of ASR and OCR modes; test_text_signal.py holds a live copy as
+# the equivalence oracle):
+#
+# def annotate_videos(video_ids, filter_query, mode, frame_names) :
+#     from app import text_lookup  # deferred: text_lookup imports this module
+#
+#     query = (filter_query or "").strip()
+#     if not query :
+#         return {video_id : VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
+#                 for video_id in video_ids}
+#
+#     regex_pattern = None
+#     if mode == TextMatchMode.regex :
+#         try :
+#             regex_pattern = re.compile(query, re.IGNORECASE)
+#         except re.error :
+#             return {video_id : VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
+#                     for video_id in video_ids}
+#
+#     ocr_hits_by_video : dict[str, list] = {}
+#     asr_hits_by_video : dict[str, list] = {}
+#     if mode == TextMatchMode.bm25 :
+#         asr_hits_by_video = text_lookup.lookup_text_batch(query, source="asr", video_ids=video_ids)
+#     elif mode == TextMatchMode.substring :
+#         ocr_hits_by_video = text_lookup.lookup_text_batch(query, source="ocr", video_ids=video_ids)
+#
+#     out : dict[str, VideoAnnotation] = {}
+#     detail_failure_logged = False
+#     for video_id in video_ids :
+#         here = frame_names.get(video_id, [])
+#         try :
+#             ocr_hits : list = []
+#             if mode == TextMatchMode.bm25 :
+#                 asr_hits = asr_hits_by_video.get(video_id, [])
+#                 ocr_match = _NO_MATCH
+#             elif mode == TextMatchMode.substring :
+#                 asr_hits = _substring_hits(video_id, query, asr_text.get_text)
+#                 ocr_hits = ocr_hits_by_video.get(video_id, [])
+#                 ocr_match = _best_match(ocr_hits, here)
+#             elif mode == TextMatchMode.regex :
+#                 asr_hits = _regex_hits(video_id, regex_pattern, asr_text.get_text)
+#                 ocr_hits = _regex_hits(video_id, regex_pattern, ocr_search.get_text)
+#                 ocr_match = _best_match(ocr_hits, here)
+#             else :
+#                 raise ValueError(f"unknown TextMatchMode: {mode}")
+#
+#             asr_match = _best_match(asr_hits, here)
+#             for source, match, hits in (("asr", asr_match, asr_hits), ("ocr", ocr_match, ocr_hits)) :
+#                 if match.location == "none" :
+#                     continue
+#                 try :
+#                     match.detail = describe_match(_choose_hit(hits, here), source, mode, query, regex_pattern)
+#                 except Exception :
+#                     if not detail_failure_logged :
+#                         logger.exception("[text_signal] match detail failed (annotation kept without it)")
+#                         detail_failure_logged = True
+#
+#             matched = (asr_match.location != "none") or (ocr_match.location != "none")
+#             out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, mode.value, asr_match, ocr_match)
+#         except Exception :
+#             out[video_id] = VideoAnnotation(False, 0.0, mode.value, _NO_MATCH, _NO_MATCH)
+#     return out
+
+
+@dataclass
+class RequestAnnotation :
+    """What the /ensemble-search endpoint copies into its response: the
+    annotations (video id -> asdict(VideoAnnotation), or None when no filter is
+    active) plus the flags and labels. text_filter_active is True when ANY
+    source is active, split or legacy."""
+    video_annotations : Optional[dict]
+    text_filter_active : bool
+    text_filter_mode : Optional[str]
+    asr_filter_active : bool
+    ocr_filter_active : bool
+    asr_filter_mode : Optional[str]
+    ocr_filter_mode : Optional[str]
+
+
+def annotate_request(
+        asr_filter : str,
+        asr_filter_mode : TextMatchMode,
+        ocr_filter : str,
+        ocr_filter_mode : OcrFilterMode,
+        legacy_filter : str,
+        legacy_mode : TextMatchMode,
+        results : list[dict],
+) -> RequestAnnotation :
+    """Routing of the request's text filters, on primitives so it can be tested
+    without importing main.py (which loads torch and FAISS).
+
+    If asr_filter or ocr_filter is non-empty after strip, the split path runs
+    and the legacy fields are ignored. Otherwise the legacy text_filter runs
+    EXACTLY as before (this protects old callers, and the deploy window in which
+    an old frontend talks to the new backend). `results` are the visual result
+    rows ("video" and "name" keys); nothing is removed or reordered."""
+    asr_active = bool((asr_filter or "").strip())
+    ocr_active = bool((ocr_filter or "").strip())
+    legacy_active = bool((legacy_filter or "").strip())
+    if not (asr_active or ocr_active or legacy_active) :
+        return RequestAnnotation(None, False, None, False, False, None, None)
+
+    frame_names : dict[str, list[str]] = {}
+    for frame in results :
+        frame_names.setdefault(frame["video"], []).append(frame["name"])
+    video_ids = list(frame_names.keys())
+
+    if asr_active or ocr_active :
+        asr_requested = asr_filter_mode if asr_active else None
+        ocr_requested = ocr_filter_mode if ocr_active else None
+        label = _mode_label(asr_requested, ocr_requested)
+        annotations = annotate_videos_split(video_ids, frame_names, asr_filter, asr_requested,
+                                            ocr_filter, ocr_requested, mode_label=label)
+        return RequestAnnotation(
+            video_annotations={vid : asdict(annotation) for vid, annotation in annotations.items()},
+            text_filter_active=True, text_filter_mode=label, asr_filter_active=asr_active,
+            ocr_filter_active=ocr_active, asr_filter_mode=asr_filter_mode.value if asr_active else None,
+            ocr_filter_mode=ocr_filter_mode.value if ocr_active else None)
+
+    annotations = annotate_videos(video_ids, legacy_filter, legacy_mode, frame_names)
+    return RequestAnnotation(
+        video_annotations={vid : asdict(annotation) for vid, annotation in annotations.items()},
+        text_filter_active=True, text_filter_mode=legacy_mode.value, asr_filter_active=False,
+        ocr_filter_active=False, asr_filter_mode=None, ocr_filter_mode=None)
 
 
 def preload() -> None :

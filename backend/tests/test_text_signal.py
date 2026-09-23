@@ -804,3 +804,330 @@ def test_asr_release_dir_falls_back_to_local_indexes_dir_without_aic_index_dir(m
     expected = os.path.join(
         os.path.dirname(os.path.abspath(text_signal.__file__)), "indexes", "asr")
     assert resolved == expected
+
+
+# ── independent ASR / OCR filters (annotate_videos_split, annotate_request) ──
+#
+# annotate_videos() is now a mapping onto annotate_videos_split(). The function
+# below is the previous implementation of annotate_videos(), copied verbatim
+# (only the names qualified with their module), and is the oracle for the three
+# legacy modes: same annotations, same details, for every video.
+
+def _reference_annotate_videos(video_ids, filter_query, mode, frame_names) :
+    query = (filter_query or "").strip()
+    if not query :
+        return {video_id : text_signal.VideoAnnotation(False, 0.0, mode.value, text_signal._NO_MATCH, text_signal._NO_MATCH)
+                for video_id in video_ids}
+
+    regex_pattern = None
+    if mode == TextMatchMode.regex :
+        try :
+            regex_pattern = re.compile(query, re.IGNORECASE)
+        except re.error :
+            return {video_id : text_signal.VideoAnnotation(False, 0.0, mode.value, text_signal._NO_MATCH, text_signal._NO_MATCH)
+                    for video_id in video_ids}
+
+    ocr_hits_by_video : dict[str, list] = {}
+    asr_hits_by_video : dict[str, list] = {}
+    if mode == TextMatchMode.bm25 :
+        asr_hits_by_video = text_lookup.lookup_text_batch(query, source="asr", video_ids=video_ids)
+    elif mode == TextMatchMode.substring :
+        ocr_hits_by_video = text_lookup.lookup_text_batch(query, source="ocr", video_ids=video_ids)
+
+    out : dict[str, text_signal.VideoAnnotation] = {}
+    detail_failure_logged = False
+    for video_id in video_ids :
+        here = frame_names.get(video_id, [])
+        try :
+            ocr_hits : list = []
+            if mode == TextMatchMode.bm25 :
+                asr_hits = asr_hits_by_video.get(video_id, [])
+                ocr_match = text_signal._NO_MATCH
+            elif mode == TextMatchMode.substring :
+                asr_hits = text_signal._substring_hits(video_id, query, text_signal.asr_text.get_text)
+                ocr_hits = ocr_hits_by_video.get(video_id, [])
+                ocr_match = text_signal._best_match(ocr_hits, here)
+            elif mode == TextMatchMode.regex :
+                asr_hits = text_signal._regex_hits(video_id, regex_pattern, text_signal.asr_text.get_text)
+                ocr_hits = text_signal._regex_hits(video_id, regex_pattern, text_signal.ocr_search.get_text)
+                ocr_match = text_signal._best_match(ocr_hits, here)
+            else :
+                raise ValueError(f"unknown TextMatchMode: {mode}")
+
+            asr_match = text_signal._best_match(asr_hits, here)
+            for source, match, hits in (("asr", asr_match, asr_hits), ("ocr", ocr_match, ocr_hits)) :
+                if match.location == "none" :
+                    continue
+                try :
+                    match.detail = text_signal.describe_match(text_signal._choose_hit(hits, here), source, mode, query, regex_pattern)
+                except Exception :
+                    if not detail_failure_logged :
+                        text_signal.logger.exception("[text_signal] match detail failed (annotation kept without it)")
+                        detail_failure_logged = True
+
+            matched = (asr_match.location != "none") or (ocr_match.location != "none")
+            out[video_id] = text_signal.VideoAnnotation(matched, 1.0 if matched else 0.0, mode.value, asr_match, ocr_match)
+        except Exception :
+            out[video_id] = text_signal.VideoAnnotation(False, 0.0, mode.value, text_signal._NO_MATCH, text_signal._NO_MATCH)
+    return out
+
+
+def _as_dicts(annotations) :
+    return {video : asdict(annotation) for video, annotation in annotations.items()}
+
+
+def _mixed_corpus(monkeypatch) :
+    """Videos covering every case the legacy function distinguishes:
+    E1 exact hits (ASR on the visible frame, OCR on another frame), N1
+    accent-insensitive hits on both sources, X1 nothing, O1 hits only on a frame
+    that is not in the result set, NF a video without keyframes."""
+    _set_corpus(monkeypatch, {
+        "E1" : [_meta("E1-0000-100.jpg", "E1", 100), _meta("E1-0000-200.jpg", "E1", 200)],
+        "N1" : [_meta("N1-0000-100.jpg", "N1", 100)],
+        "X1" : [_meta("X1-0000-100.jpg", "X1", 100)],
+        "O1" : [_meta("O1-0000-100.jpg", "O1", 100), _meta("O1-0000-200.jpg", "O1", 200)],
+    })
+    _mock_asr_text(monkeypatch, {
+        "E1-0000-100.jpg" : "rau ngo hap 2018 va nghêu nuong",
+        "N1-0000-100.jpg" : "rau ngò rất tươi, nghêu",
+        "X1-0000-100.jpg" : "khong lien quan",
+        "O1-0000-200.jpg" : "cuoi video co ngo va 2018\nnghêu",
+    })
+    _set_ocr_text("E1-0000-200.jpg", "mon ngo hap 2018 nghêu")
+    _set_ocr_text("N1-0000-100.jpg", "rau ngò tươi", no_marks="rau ngo tuoi")
+    _set_ocr_text("O1-0000-200.jpg", "ngo 2018 nghêu")
+    return {"E1" : ["E1-0000-100.jpg"], "N1" : ["N1-0000-100.jpg"], "X1" : ["X1-0000-100.jpg"],
+            "O1" : ["O1-0000-100.jpg"]}
+
+
+_MIXED_VIDEOS = ["E1", "N1", "X1", "O1", "NF", "GHOST"]
+
+
+@pytest.mark.parametrize("mode, query", [
+    (TextMatchMode.substring, "ngo"), (TextMatchMode.substring, "2018"), (TextMatchMode.substring, "nghêu"),
+    (TextMatchMode.substring, "ngo hap"), (TextMatchMode.substring, "  "),
+    (TextMatchMode.regex, r"ngo\s+hap"), (TextMatchMode.regex, r"\d{4}"), (TextMatchMode.regex, r"ngh[eê]u"),
+    (TextMatchMode.regex, "(unclosed"), (TextMatchMode.regex, "   "),
+])
+def test_legacy_annotate_videos_is_identical_to_the_previous_implementation(monkeypatch, mode, query) :
+    frames = _mixed_corpus(monkeypatch)
+    new = annotate_videos(_MIXED_VIDEOS, query, mode, frames)
+    reference = _reference_annotate_videos(_MIXED_VIDEOS, query, mode, frames)
+    assert _as_dicts(new) == _as_dicts(reference) and list(new) == list(reference)
+
+
+def test_the_oracle_really_exercises_matches_and_details(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    result = annotate_videos(_MIXED_VIDEOS, "ngo", TextMatchMode.substring, frames)
+    assert result["E1"].asr.detail is not None and result["E1"].ocr.detail is not None
+    assert result["N1"].asr.match_type == "normalized" and result["N1"].ocr.match_type == "normalized"
+    assert result["O1"].asr.location == "elsewhere" and result["X1"].matched is False
+    assert result["NF"].matched is False and result["GHOST"].matched is False
+
+
+@pytest.mark.parametrize("query", ["meo", "cho", "meo cho", "", "  "])
+def test_legacy_bm25_annotate_videos_is_identical_to_the_previous_implementation(monkeypatch, tmp_path, query) :
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
+    _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
+                              "V_B" : [_meta("V_B-0000-0.jpg", "V_B", 0)]})
+    videos = ["V_A", "V_B", "V_NONE"]
+    frames = {"V_A" : ["V_A-0000-400.jpg"]}
+    assert _as_dicts(annotate_videos(videos, query, TextMatchMode.bm25, frames)) == \
+        _as_dicts(_reference_annotate_videos(videos, query, TextMatchMode.bm25, frames))
+
+
+def _split_corpus(monkeypatch) :
+    """S1 has ASR "nước sôi" and OCR "NGHÊU NƯỚNG" (display text, as ocr_search
+    keeps it) on frame 100; S2 only OCR text "canh nuoc soi"."""
+    _set_corpus(monkeypatch, {"S1" : [_meta("S1-0000-100.jpg", "S1", 100)], "S2" : [_meta("S2-0000-100.jpg", "S2", 100)]})
+    _mock_asr_text(monkeypatch, {"S1-0000-100.jpg" : "vao bep nước sôi va nghêu hap"})
+    _set_ocr_text("S1-0000-100.jpg", "NGHÊU NƯỚNG")
+    ocr_search._haystack["with_marks"]["S1-0000-100.jpg"] = "nghêu nướng"
+    ocr_search._haystack["no_marks"]["S1-0000-100.jpg"] = "nghieu nuong"
+    _set_ocr_text("S2-0000-100.jpg", "canh nuoc soi")
+    return {"S1" : ["S1-0000-100.jpg"], "S2" : ["S2-0000-100.jpg"]}
+
+
+def test_split_asr_only_leaves_ocr_inactive(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(["S1", "S2"], frames, "nuoc", TextMatchMode.substring, "", None)
+    assert result["S1"].asr.match_type == "normalized" and _hit_texts(result["S1"].asr.detail.snippet) == ["nước"]
+    assert result["S1"].ocr.location == "none" and result["S1"].ocr.detail is None
+    assert result["S2"].matched is False  # S2 has only OCR text, and OCR is inactive
+    assert result["S1"].mode == "substring"
+
+
+def test_split_ocr_only_leaves_asr_inactive(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(["S1", "S2"], frames, "", None, "nuoc", text_signal.OcrFilterMode.substring)
+    assert result["S2"].ocr.match_type == "exact" and result["S2"].asr.location == "none"
+    assert result["S1"].asr.location == "none"  # the ASR text contains "nước", but ASR is inactive
+    assert result["S1"].mode == "substring"
+
+
+def test_split_each_source_describes_its_match_with_its_own_term_and_mode(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(
+        ["S1"], frames, "nuoc", TextMatchMode.substring, "ngh[eê]u", text_signal.OcrFilterMode.regex)["S1"]
+    assert result.matched is True and result.mode == "mixed"
+    assert _hit_texts(result.asr.detail.snippet) == ["nước"]      # ASR substring, accent-insensitive
+    assert _hit_texts(result.ocr.detail.snippet) == ["NGHÊU"]     # OCR regex, its own pattern
+    assert _plain(result.asr.detail.snippet) != _plain(result.ocr.detail.snippet)
+
+
+def test_split_with_both_filters_empty_matches_nothing(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(["S1", "S2"], frames, "  ", TextMatchMode.substring, "", text_signal.OcrFilterMode.regex)
+    assert [result[v].matched for v in ("S1", "S2")] == [False, False]
+    assert all(r.asr.location == "none" and r.ocr.location == "none" for r in result.values())
+
+
+def test_split_asr_bm25_with_ocr_regex(monkeypatch, tmp_path) :
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
+    _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
+                              "V_B" : [_meta("V_B-0000-0.jpg", "V_B", 0)]})
+    _set_ocr_text("V_A-0000-100.jpg", "quan an cho lon")
+    result = text_signal.annotate_videos_split(
+        ["V_A", "V_B"], {}, "meo", TextMatchMode.bm25, r"cho\s+lon", text_signal.OcrFilterMode.regex)
+    assert result["V_A"].asr.detail.matched_terms == ["meo"] and result["V_A"].asr.detail.time_approx is True
+    assert _hit_texts(result["V_A"].ocr.detail.snippet) == ["cho lon"] and result["V_A"].ocr.detail.time_approx is False
+    assert result["V_B"].asr.location != "none" and result["V_B"].ocr.location == "none"
+
+
+def test_split_an_invalid_asr_regex_turns_off_only_the_asr_source(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(
+        ["S1", "S2"], frames, "(unclosed", TextMatchMode.regex, "nuoc", text_signal.OcrFilterMode.substring)
+    assert result["S1"].asr.location == "none"
+    assert result["S2"].ocr.location != "none"    # the OCR filter still ran
+    assert result["S2"].mode == "mixed"           # and the response still says both filters were requested
+
+
+def test_split_an_invalid_ocr_regex_turns_off_only_the_ocr_source(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(
+        ["S1", "S2"], frames, "nuoc", TextMatchMode.substring, "(unclosed", text_signal.OcrFilterMode.regex)
+    assert result["S1"].asr.location != "none" and result["S1"].ocr.location == "none"
+
+
+def test_split_ocr_cannot_be_bm25(monkeypatch) :
+    """OcrFilterMode has no bm25 and the request model rejects it; if a caller
+    passes bm25 anyway the OCR source is simply inactive, never a wrong search."""
+    frames = _split_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(["S2"], frames, "", None, "nuoc", TextMatchMode.bm25)
+    assert result["S2"].matched is False
+
+
+def _rows(*names) :
+    return [{"video" : name.split("-")[0], "name" : name} for name in names]
+
+
+def test_request_routing_split_fields_win_over_legacy_fields(monkeypatch) :
+    _split_corpus(monkeypatch)
+    outcome = text_signal.annotate_request(
+        "nuoc", TextMatchMode.substring, "", text_signal.OcrFilterMode.substring,
+        "zzz-no-match", TextMatchMode.regex, _rows("S1-0000-100.jpg"))
+    assert outcome.asr_filter_active is True and outcome.ocr_filter_active is False and outcome.text_filter_active is True
+    assert (outcome.asr_filter_mode, outcome.ocr_filter_mode, outcome.text_filter_mode) == ("substring", None, "substring")
+    annotation = outcome.video_annotations["S1"]
+    assert annotation["matched"] is True and annotation["mode"] == "substring"  # the legacy regex "zzz-no-match" was ignored
+
+
+def test_request_routing_legacy_path_runs_when_the_split_fields_are_empty_or_blank(monkeypatch) :
+    _split_corpus(monkeypatch)
+    for asr_blank, ocr_blank in [("", ""), ("   ", "\t \n")] :
+        outcome = text_signal.annotate_request(
+            asr_blank, TextMatchMode.bm25, ocr_blank, text_signal.OcrFilterMode.regex,
+            "nuoc", TextMatchMode.substring, _rows("S1-0000-100.jpg"))
+        assert (outcome.text_filter_active, outcome.asr_filter_active, outcome.ocr_filter_active) == (True, False, False)
+        assert (outcome.text_filter_mode, outcome.asr_filter_mode, outcome.ocr_filter_mode) == ("substring", None, None)
+        legacy = _as_dicts(annotate_videos(["S1"], "nuoc", TextMatchMode.substring, {"S1" : ["S1-0000-100.jpg"]}))
+        assert outcome.video_annotations == legacy
+
+
+def test_request_routing_nothing_active_returns_no_annotations(monkeypatch) :
+    _split_corpus(monkeypatch)
+    outcome = text_signal.annotate_request("", TextMatchMode.substring, " ", text_signal.OcrFilterMode.substring,
+                                           "  ", TextMatchMode.substring, _rows("S1-0000-100.jpg"))
+    assert outcome == text_signal.RequestAnnotation(None, False, None, False, False, None, None)
+
+
+@pytest.mark.parametrize("asr, ocr, label", [
+    (("nuoc", TextMatchMode.bm25), ("", text_signal.OcrFilterMode.substring), "bm25"),
+    (("", TextMatchMode.substring), ("ngh[eê]u", text_signal.OcrFilterMode.regex), "regex"),
+    (("nuoc", TextMatchMode.bm25), ("ngh[eê]u", text_signal.OcrFilterMode.regex), "mixed"),
+    (("nuoc", TextMatchMode.substring), ("nuoc", text_signal.OcrFilterMode.substring), "mixed"),
+])
+def test_split_mode_labels(monkeypatch, asr, ocr, label) :
+    _split_corpus(monkeypatch)
+    outcome = text_signal.annotate_request(asr[0], asr[1], ocr[0], ocr[1], "", TextMatchMode.substring, _rows("S1-0000-100.jpg"))
+    assert outcome.text_filter_mode == label
+    assert outcome.asr_filter_mode == (asr[1].value if asr[0] else None)
+    assert outcome.ocr_filter_mode == (ocr[1].value if ocr[0] else None)
+    assert {annotation["mode"] for annotation in outcome.video_annotations.values()} == {label}
+    assert text_signal._mode_label(None, None) == ""
+
+
+def test_split_annotations_are_json_serializable_with_and_without_detail(monkeypatch) :
+    _split_corpus(monkeypatch)
+    rows = _rows("S1-0000-100.jpg")
+    with_detail = text_signal.annotate_request("nuoc", TextMatchMode.substring, "ngh[eê]u", text_signal.OcrFilterMode.regex,
+                                               "", TextMatchMode.substring, rows)
+    payload = json.loads(json.dumps(with_detail.video_annotations, ensure_ascii=False))
+    assert payload["S1"]["asr"]["detail"]["snippet"] and payload["S1"]["ocr"]["detail"]["snippet"]
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(text_signal, "describe_match", boom)
+    without_detail = text_signal.annotate_request("nuoc", TextMatchMode.substring, "ngh[eê]u", text_signal.OcrFilterMode.regex,
+                                                  "", TextMatchMode.substring, rows)
+    payload = json.loads(json.dumps(without_detail.video_annotations, ensure_ascii=False))
+    assert payload["S1"]["asr"]["detail"] is None and payload["S1"]["ocr"]["detail"] is None
+
+
+def test_split_detail_failure_keeps_every_annotation_and_logs_once_per_call(monkeypatch, caplog) :
+    frames = _split_corpus(monkeypatch)
+    _set_ocr_text("S2-0000-100.jpg", "canh nuoc soi")
+    _mock_asr_text(monkeypatch, {"S1-0000-100.jpg" : "nuoc soi", "S2-0000-100.jpg" : "nuoc lanh"})
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    baseline = _as_dicts(text_signal.annotate_videos_split(
+        ["S1", "S2"], frames, "nuoc", TextMatchMode.substring, "nuoc", text_signal.OcrFilterMode.substring))
+    monkeypatch.setattr(text_signal, "describe_match", boom)
+    with caplog.at_level("ERROR", logger=text_signal.logger.name) :
+        result = _as_dicts(text_signal.annotate_videos_split(
+            ["S1", "S2"], frames, "nuoc", TextMatchMode.substring, "nuoc", text_signal.OcrFilterMode.substring))
+    for video in ("S1", "S2") :
+        for source in ("asr", "ocr") :
+            assert result[video][source]["detail"] is None
+            assert {k : v for k, v in result[video][source].items() if k != "detail"} == \
+                {k : v for k, v in baseline[video][source].items() if k != "detail"}
+        assert result[video]["matched"] == baseline[video]["matched"]
+    assert sum("match detail failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_request_model_accepts_the_split_fields_and_enforces_the_caps() :
+    from pydantic import ValidationError
+
+    from app.main import EnsembleSearchRequest, SingleSearchRequest
+
+    cap = text_signal.TEXT_FILTER_MAX_CHARS
+    request = EnsembleSearchRequest(query = "q", asr_filter = "x" * cap, ocr_filter = "y" * cap,
+                                    asr_filter_mode = "bm25", ocr_filter_mode = "regex")
+    assert (request.asr_filter_mode, request.ocr_filter_mode) == (TextMatchMode.bm25, text_signal.OcrFilterMode.regex)
+    for field in ("asr_filter", "ocr_filter") :
+        with pytest.raises(ValidationError) :
+            EnsembleSearchRequest(query = "q", **{field : "x" * (cap + 1)})
+    for mode in ("substring", "regex", "bm25") :
+        assert EnsembleSearchRequest(query = "q", asr_filter_mode = mode).asr_filter_mode.value == mode
+    with pytest.raises(ValidationError) :
+        EnsembleSearchRequest(query = "q", ocr_filter = "x", ocr_filter_mode = "bm25")  # OCR has no BM25
+
+    legacy = EnsembleSearchRequest(query = "q", text_filter = "x" * cap, text_filter_mode = "bm25")
+    assert legacy.text_filter_mode == TextMatchMode.bm25 and legacy.asr_filter == "" and legacy.ocr_filter == ""
+    with pytest.raises(ValidationError) :
+        EnsembleSearchRequest(query = "q", text_filter = "x" * (cap + 1))
+    assert SingleSearchRequest(query = "q", ocr_filter = "z").ocr_filter == "z"  # inherited, and ignored by that endpoint

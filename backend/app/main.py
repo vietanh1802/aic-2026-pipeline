@@ -61,8 +61,7 @@ from app import ocr_search as ocr_route
 from app import asr_text as _asr_text
 from app import text_signal as _text_signal
 from app import text_lookup as _text_lookup
-from app.text_signal import TEXT_FILTER_MAX_CHARS, TextMatchMode, annotate_videos
-from dataclasses import asdict
+from app.text_signal import TEXT_FILTER_MAX_CHARS, OcrFilterMode, TextMatchMode, annotate_request
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
 # startup dict forever and every OCR result would lose video/timestamp.
@@ -107,6 +106,13 @@ class SearchResponseEx(SearchResponse):
     video_annotations: Optional[dict] = None
     text_filter_active: bool = False
     text_filter_mode: Optional[str] = None
+    # Independent ASR / OCR filters (additive). text_filter_active above is True
+    # when ANY source is active, split or legacy; text_filter_mode is the active
+    # source's mode, or "mixed" when both filters are used.
+    asr_filter_active: bool = False
+    ocr_filter_active: bool = False
+    asr_filter_mode: Optional[str] = None
+    ocr_filter_mode: Optional[str] = None
 
 
 class EnsembleSearchRequest(BaseModel):
@@ -129,6 +135,30 @@ class EnsembleSearchRequest(BaseModel):
     text_filter_mode: TextMatchMode = Field(
         default=TextMatchMode.substring,
         description="How to match: substring | regex | bm25"
+    )
+    # Independent ASR / OCR filters, each with its own mode. When either string
+    # is non-empty after strip these are used and text_filter / text_filter_mode
+    # above are ignored; otherwise the legacy pair runs exactly as before (kept
+    # for old callers and for the deploy window in which an old frontend talks to
+    # this backend). /single-search inherits all of them and ignores them, like
+    # the legacy pair. OCR has no BM25 index, hence OcrFilterMode (no "bm25": HTTP 422).
+    asr_filter: str = Field(
+        default="",
+        max_length=TEXT_FILTER_MAX_CHARS,
+        description="Term, phrase or pattern matched against ASR (speech). Empty disables the ASR filter."
+    )
+    asr_filter_mode: TextMatchMode = Field(
+        default=TextMatchMode.substring,
+        description="How the ASR filter matches: substring | regex | bm25"
+    )
+    ocr_filter: str = Field(
+        default="",
+        max_length=TEXT_FILTER_MAX_CHARS,
+        description="Term, phrase or pattern matched against OCR (on-screen text). Empty disables the OCR filter."
+    )
+    ocr_filter_mode: OcrFilterMode = Field(
+        default=OcrFilterMode.substring,
+        description="How the OCR filter matches: substring | regex"
     )
 
     class Config:
@@ -544,23 +574,39 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
         # Guarded in its own try/except: annotation is metadata on top of the
         # visual results, so a failure here must not turn a working search
         # into an HTTP 500 -- the visual results still have to reach the user.
+        #
+        # Routing (split ASR / OCR filters versus the legacy single filter) lives
+        # in text_signal.annotate_request() so it can be tested without importing
+        # this module; the endpoint only copies its result into the response.
         try:
-            if req.text_filter.strip():
-                frame_names: dict[str, list[str]] = {}
-                for frame in results:
-                    frame_names.setdefault(frame["video"], []).append(frame["name"])
-
-                annotations = annotate_videos(
-                    video_ids=list(frame_names.keys()),
-                    filter_query=req.text_filter,
-                    mode=req.text_filter_mode,
-                    frame_names=frame_names,
-                )
-                response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
-                response.text_filter_active = True
-                response.text_filter_mode = req.text_filter_mode.value
-            else:
-                response.text_filter_active = False
+            outcome = annotate_request(
+                asr_filter=req.asr_filter, asr_filter_mode=req.asr_filter_mode,
+                ocr_filter=req.ocr_filter, ocr_filter_mode=req.ocr_filter_mode,
+                legacy_filter=req.text_filter, legacy_mode=req.text_filter_mode,
+                results=results,
+            )
+            response.video_annotations = outcome.video_annotations
+            response.text_filter_active = outcome.text_filter_active
+            response.text_filter_mode = outcome.text_filter_mode
+            response.asr_filter_active = outcome.asr_filter_active
+            response.ocr_filter_active = outcome.ocr_filter_active
+            response.asr_filter_mode = outcome.asr_filter_mode
+            response.ocr_filter_mode = outcome.ocr_filter_mode
+        # Previous inline block, replaced by annotate_request() above (the legacy
+        # branch of that function does exactly this):
+        #
+        #     if req.text_filter.strip():
+        #         frame_names: dict[str, list[str]] = {}
+        #         for frame in results:
+        #             frame_names.setdefault(frame["video"], []).append(frame["name"])
+        #         annotations = annotate_videos(
+        #             video_ids=list(frame_names.keys()), filter_query=req.text_filter,
+        #             mode=req.text_filter_mode, frame_names=frame_names)
+        #         response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
+        #         response.text_filter_active = True
+        #         response.text_filter_mode = req.text_filter_mode.value
+        #     else:
+        #         response.text_filter_active = False
         except Exception:
             # logger.exception() captures the full traceback, not just str(e) --
             # a print() here previously threw away exactly the information
@@ -568,6 +614,8 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
             # query genuinely crashed the annotation code".
             logger.exception("[text_signal] annotation failed")
             response.text_filter_active = False
+            response.asr_filter_active = False
+            response.ocr_filter_active = False
             response.video_annotations = None
 
         return response
