@@ -1,4 +1,4 @@
-// types/api.ts
+// frontend/src/types/api.ts
 //
 // Khớp với backend/app/main.py + preprocess.py hiện tại (arXiv 2504.08384).
 // Đã BỎ hoàn toàn các hàm gọi endpoint cũ: searchByText, searchByTextNoAgent,
@@ -39,16 +39,32 @@ export interface SearchResult {
 }
 
 /**
+ * One source's (asr or ocr) best result for a video — matches backend's
+ * SourceMatch dataclass (backend/app/text_signal.py). match_frame/match_type
+ * are null when location is "none".
+ */
+export interface SourceMatch {
+  match_frame: string | null;
+  match_type: "exact" | "normalized" | null;
+  location: "here" | "elsewhere" | "none";
+}
+
+/**
  * Per-video text-signal annotation — matches backend's VideoAnnotation
  * dataclass (backend/app/text_signal.py). Purely additive: it never removes
  * a result or changes a rank, see SearchResponse.video_annotations below.
+ *
+ * Stage C replaced the old flat `sources`/`snippets` arrays with per-source
+ * SourceMatch objects naming the actual frame that matched (and whether it
+ * is one already on screen) — components reading the old shape (notably
+ * TextSignalBadge) need a matching rewrite; see Stage C's report.
  */
 export interface VideoAnnotation {
   matched: boolean;
   score: number;
-  sources: string[];
-  snippets: string[];
   mode: string;
+  asr: SourceMatch;
+  ocr: SourceMatch;
 }
 
 export interface SearchResponse {
@@ -159,6 +175,31 @@ export interface TrakeCandidateResult extends TrakeSearchResult {
 //  Status / health — khớp system_status() trong preprocess.py
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface OcrStatus {
+  ready: boolean;
+  files_present: boolean;
+  with_marks_path: string;
+  no_marks_path: string;
+  total_frames?: number;
+  frames_with_text?: number;
+  load_seconds?: number;
+}
+
+export interface AsrTextStatus {
+  ready: boolean;
+  files_present: boolean;
+  file_path: string;
+  entries_loaded: number;
+  load_seconds: number;
+}
+
+export interface TextSignalStatus {
+  bm25_ready: boolean;
+  bm25_unavailable_reason: string | null;
+  bm25_release_dir: string;
+  bm25_documents: number;
+}
+
 export interface SystemStatus {
   demo_mode: boolean;
   device: string;
@@ -171,6 +212,11 @@ export interface SystemStatus {
   videos: number;
   models: { fine_grained: string; coarse_grained: string };
   ensemble_weights: Record<string, number>;
+  // Optional: present on every real /status response (see main.py's status()),
+  // marked optional here only so older mocked responses in tests don't break.
+  ocr?: OcrStatus;
+  asr_text?: AsrTextStatus;
+  text_signal?: TextSignalStatus;
 }
 
 export type WarmupState = "cold" | "warming" | "ready" | "failed";

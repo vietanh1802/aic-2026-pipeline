@@ -46,6 +46,17 @@ interface SearchState {
   clearFocus: () => void;
 
   /**
+   * Whether the grid is actually narrowed to focusVideos, or just highlights
+   * them. Pinning used to do both at once, which meant the second video's
+   * card (and its own pin button) vanished from the DOM the instant the
+   * first pin filtered it away, so a user could never pin more than one.
+   * Kept separate from focusVideos so pinning stays a pure "mark these"
+   * action, and narrowing is an explicit opt-in on top of it.
+   */
+  showOnlyPinned: boolean;
+  toggleShowOnlyPinned: () => void;
+
+  /**
    * Per-video text-signal annotations from the last /ensemble-search response
    * (video_id -> VideoAnnotation). null when text_filter was empty or the
    * last search wasn't ensemble — TextSignalBadge treats null the same as a
@@ -71,7 +82,11 @@ export const useSearchStore = create<SearchState>((set) => ({
         ? state.focusVideos.filter((id) => id !== videoId)
         : [...state.focusVideos, videoId],
     })),
-  clearFocus: () => set({ focusVideos: [] }),
+  clearFocus: () => set({ focusVideos: [], showOnlyPinned: false }),
+
+  showOnlyPinned: false,
+  toggleShowOnlyPinned: () =>
+    set((state) => ({ showOnlyPinned: !state.showOnlyPinned })),
 
   videoAnnotations: null,
   setVideoAnnotations: (annotations) => set({ videoAnnotations: annotations }),

@@ -45,7 +45,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["trứng gà", "nấm", "măng", "đậu hũ"]
+          },
+          {
+            "concept": "soup",
+            "terms": ["nước súp"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The explicitly named ingredients are useful cooking-topic signals and are plausible recipe narration vocabulary."
+      }
     },
     {
       "id": "p3-2",
@@ -69,7 +84,23 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "school",
+            "terms": ["học sinh", "số lớp"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "class sign",
+            "terms": ["số lớp"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The actual class numbers are unspecified, but 'số lớp' is directly tied to visible class boards and school vocabulary may also occur in narration."
+      }
     },
     {
       "id": "p3-3",
@@ -93,7 +124,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "soup",
+            "terms": ["nước dùng"]
+          },
+          {
+            "concept": "ingredients",
+            "terms": ["rau củ", "nấm", "thịt"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "Most ingredients are deliberately described visually rather than named, but the short cooking terms remain weak plausible narration signals."
+      }
     },
     {
       "id": "p3-4",
@@ -117,7 +163,35 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Tiếng Anh", "ngữ pháp"]
+          },
+          {
+            "concept": "past tense",
+            "terms": ["quá khứ đơn"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Tiếng Anh", "ngữ pháp"]
+          },
+          {
+            "concept": "past tense",
+            "terms": ["quá khứ đơn"]
+          },
+          {
+            "concept": "past habit",
+            "terms": ["used to"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The lesson context strongly supports English-grammar terminology; 'quá khứ đơn' and 'used to' are reasonable topic labels from the described last-week event and past habit without inventing the full example sentences. 'used to' is OCR-only (dropped from asr_terms): 'used' does not appear in the real ASR BM25 vocabulary (artifacts/asr/releases/aic2026-full-20260817-r01/bm25/vocabulary.json), consistent with CLAUDE.md's rule that English filter terms are OCR-only absent specific evidence the ASR caught them."
+      }
     },
     {
       "id": "p3-7",
@@ -141,7 +215,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "A second valid clip was noted at L22_V024 20767-21184 during review; primary reference is L21_V018 15612-16470."
+      "notes": "A second valid clip was noted at L22_V024 20767-21184 during review; primary reference is L21_V018 15612-16470.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "traffic safety",
+            "terms": ["giao thông", "tai nạn", "làn ô tô"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The unsafe-road subject provides weak but coherent traffic-safety vocabulary that could occur in news or commentary audio."
+      }
     },
     {
       "id": "p3-8",
@@ -165,7 +250,22 @@
       },
       "qa_answer": "SEGA",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "gaming",
+            "terms": ["sưu tầm game", "đam mê game"]
+          },
+          {
+            "concept": "inspiration",
+            "terms": ["đồ chơi", "bà mình"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The neon text itself is the unknown, but the interview explicitly concerns game collecting and the childhood source of that interest, giving useful ASR vocabulary. 'game' is kept in asr_terms (not moved to OCR): it is confirmed present as a real token in the ASR BM25 vocabulary, so the usual English-term caution does not apply here."
+      }
     },
     {
       "id": "p3-10",
@@ -197,7 +297,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (3) — any candidate frame landing in any interval counts."
+      "notes": "Multiple valid frame intervals (3) — any candidate frame landing in any interval counts.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "amphibious vehicles",
+            "terms": ["xe lội nước", "ô tô cổ"]
+          },
+          {
+            "concept": "water route",
+            "terms": ["kênh", "cây cầu"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The unusual amphibious-vehicle topic gives more useful narration vocabulary than the generic colors and movement descriptions."
+      }
     },
     {
       "id": "p3-11",
@@ -221,7 +336,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The food and appliance are intentionally unnamed; 'thành phẩm', 'nguyên liệu' and color/shape descriptions are too generic to provide useful topical ASR/OCR signals."
+      }
     },
     {
       "id": "p3-12",
@@ -245,7 +366,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The important liquid and resulting phenomenon are both unnamed, leaving only generic cooking actions, cookware and colors."
+      }
     },
     {
       "id": "p3-13",
@@ -269,7 +396,26 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "fish traps",
+            "terms": ["lờ", "lợp"]
+          },
+          {
+            "concept": "bamboo craft",
+            "terms": ["cần xé", "đan tre"]
+          },
+          {
+            "concept": "craft village",
+            "terms": ["làng nghề", "sông nước", "miền Tây"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "These are distinctive regional craft terms and are exactly the type of vocabulary likely to appear in narration about a traditional riverside craft setting."
+      }
     },
     {
       "id": "p3-14",
@@ -293,7 +439,22 @@
       },
       "qa_answer": "5",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "swimming",
+            "terms": ["hồ bơi", "bơi lội"]
+          },
+          {
+            "concept": "interview",
+            "terms": ["phỏng vấn"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The upcoming grade is the unknown and is excluded; swimming and interview vocabulary remain weak contextual ASR signals."
+      }
     },
     {
       "id": "p3-15",
@@ -317,7 +478,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "cooking",
+            "terms": ["bột", "dầu ăn", "chiên"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The actual food and seasonings are unnamed, but a small set of short preparation terms remains usable at low confidence."
+      }
     },
     {
       "id": "p3-16",
@@ -341,7 +513,27 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "quantities",
+            "terms": ["1.5L", "1/2 muỗng", "2 muỗng"]
+          },
+          {
+            "concept": "seasoning",
+            "terms": ["xương hầm"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "quantities",
+            "terms": ["1.5L", "1/2 muỗng", "2 muỗng"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The ingredient names are obscured, but the explicit recipe quantities are unusually discriminative and may be spoken or displayed verbatim."
+      }
     },
     {
       "id": "p3-17",
@@ -365,7 +557,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Both the ingredient and the tools remain unnamed, so after excluding generic preparation actions there is no meaningful topical ASR/OCR vocabulary."
+      }
     },
     {
       "id": "p3-18",
@@ -389,7 +587,27 @@
       },
       "qa_answer": "Công Hải",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "education",
+            "terms": ["môn Toán", "tiểu học"]
+          },
+          {
+            "concept": "classroom",
+            "terms": ["sư cô", "giáo viên"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "schoolwork",
+            "terms": ["Toán"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The school name is the unknown, but the classroom report explicitly supplies subject, school level and teacher context that are plausible narration or notebook-text signals."
+      }
     },
     {
       "id": "p3-19",
@@ -413,7 +631,26 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "lion dance",
+            "terms": ["múa lân", "lân"]
+          },
+          {
+            "concept": "percussion",
+            "terms": ["chập cheng"]
+          },
+          {
+            "concept": "apparatus",
+            "terms": ["cọc trụ"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "'Chập cheng' and the lion-dance terminology are distinctive enough to keep as weak content signals even though the sequence is largely visual."
+      }
     },
     {
       "id": "p3-20",
@@ -437,7 +674,39 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "organic chemistry",
+            "terms": ["hữu cơ", "hợp chất", "hợp chất hữu cơ"]
+          },
+          {
+            "concept": "molecular structure",
+            "terms": ["phân tử", "cấu trúc"]
+          },
+          {
+            "concept": "classification",
+            "terms": ["phân loại"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "organic chemistry",
+            "terms": ["hữu cơ", "hợp chất", "hợp chất hữu cơ"]
+          },
+          {
+            "concept": "molecular structure",
+            "terms": ["phân tử", "cấu trúc"]
+          },
+          {
+            "concept": "classification",
+            "terms": ["phân loại"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "Although the exact compound group is unnamed, the query directly provides multiple highly relevant chemistry terms likely to occur in both lecture speech and slide text."
+      }
     },
     {
       "id": "p3-21",
@@ -485,7 +754,26 @@
           "valid_end_frame": null
         }
       ],
-      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring."
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "main ingredient",
+            "terms": ["tôm"]
+          },
+          {
+            "concept": "sauce",
+            "terms": ["nước xốt", "nước cam", "vỏ cam"]
+          },
+          {
+            "concept": "garnish",
+            "terms": ["tép cam"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The TRAKE sequence explicitly names the main ingredient, sauce components and garnish, all of which are useful recipe vocabulary."
+      }
     },
     {
       "id": "p3-22",
@@ -509,7 +797,26 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "aircraft",
+            "terms": ["thiết bị bay", "chạy điện"]
+          },
+          {
+            "concept": "testing",
+            "terms": ["bay thử", "thử nghiệm"]
+          },
+          {
+            "concept": "region",
+            "terms": ["Tây Âu"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The technology-report framing provides coherent terms around an electric experimental aircraft even though its exact model and country are not named."
+      }
     },
     {
       "id": "p3-23",
@@ -537,7 +844,26 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (2)."
+      "notes": "Multiple valid frame intervals (2).",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "buffalo racing",
+            "terms": ["đua trâu", "trâu nước"]
+          },
+          {
+            "concept": "terrain",
+            "terms": ["ruộng bùn"]
+          },
+          {
+            "concept": "region",
+            "terms": ["Đông Nam Á"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Buffalo racing on muddy fields is distinctive topical vocabulary and could plausibly occur in documentary or news narration; the unnamed country is not invented."
+      }
     },
     {
       "id": "p3-24",
@@ -561,7 +887,23 @@
       },
       "qa_answer": "2 muỗng cà phê",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "seasoning",
+            "terms": ["nước tương", "gia vị"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "seasoning",
+            "terms": ["nước tương"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The quantity of soy sauce is the unknown and is excluded, but 'nước tương' is explicitly named and is a useful recipe term that may be spoken or displayed."
+      }
     },
     {
       "id": "p3-25",
@@ -585,7 +927,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "soup",
+            "terms": ["nước dùng"]
+          },
+          {
+            "concept": "ingredients",
+            "terms": ["thịt", "cà chua"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The dish itself is unnamed, but the explicitly mentioned broth, meat and tomato provide weak cooking-topic vocabulary."
+      }
     },
     {
       "id": "p3-26",
@@ -609,7 +966,39 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "geometry",
+            "terms": ["hình học", "không gian"]
+          },
+          {
+            "concept": "planes",
+            "terms": ["hình phẳng", "giao nhau"]
+          },
+          {
+            "concept": "relations",
+            "terms": ["vuông góc", "đường xiên"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "geometry",
+            "terms": ["hình học", "không gian"]
+          },
+          {
+            "concept": "planes",
+            "terms": ["hình phẳng", "giao nhau"]
+          },
+          {
+            "concept": "relations",
+            "terms": ["vuông góc", "đường xiên"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query explicitly describes a geometry lecture, making its short mathematical relation and object terms highly plausible in both narration and diagrams."
+      }
     },
     {
       "id": "p3-27",
@@ -633,7 +1022,22 @@
       },
       "qa_answer": "3",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "dough preparation",
+            "terms": ["cục bột", "phần nhân"]
+          },
+          {
+            "concept": "wrapping",
+            "terms": ["miếng lá"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The number of dough colors is the unknown, but a few preparation nouns remain weak cooking or confectionery signals."
+      }
     },
     {
       "id": "p3-28",
@@ -657,7 +1061,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "interview",
+            "terms": ["phỏng vấn"]
+          },
+          {
+            "concept": "goods",
+            "terms": ["quần áo"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The logo itself is unnamed; only the interview and clothing context remains, so any filtering value is weak."
+      }
     },
     {
       "id": "p3-29",
@@ -681,7 +1100,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "After considering 'canh', the query is still essentially a generic serving action with cookware, fabric and repetition count rather than a distinctive subject."
+      }
     },
     {
       "id": "p3-30",
@@ -705,7 +1130,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Although it is a cycling race, no event, place, team, rider, sponsor or other specific topical identifier is given; the remaining details are physical race and filming actions."
+      }
     },
     {
       "id": "p3-31",
@@ -729,7 +1160,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "food preparation",
+            "terms": ["bánh gói", "gói lá", "đóng gói"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The leaf-wrapped food preparation is the only reasonably specific subject vocabulary; nationality, location and the actual cake name are not stated."
+      }
     },
     {
       "id": "p3-32",
@@ -753,7 +1195,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The query gives an interview setup but no interview subject, names, location or topical vocabulary, so 'mẹ con' and phone usage are not useful retrieval terms."
+      }
     },
     {
       "id": "p3-33",
@@ -777,13 +1225,19 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "This is purely a visual cycling sprint described through camera style, helmet colors and relative performance, with no named event, location or topical identifier."
+      }
     },
     {
       "id": "p3-34",
       "ordinal": 34,
       "task_type": "TRAKE",
-      "query_vi": "",
+      "query_vi": "Con lân màu đỏ đang biểu diễn trên các cột trụ. E1: Con lân treo hai chân trước vào phần dưới thân của hai trụ gần cuối (gần trụ cuối cùng cao nhất). E2: Con lân đứng thẳng sau khi di chuyển từ cuối dãy trụ về, hai chân đứng trên hai trụ khác nhau và một chân trước co lên. E3: Khoảnh khắc con lân hoàn tất động tác ngoảnh mặt theo hướng ngược lại. E4: Khoảnh khắc đầu tiên con lân ngậm một thanh trụ.",
       "submitted_count": null,
       "reference": {
         "video_id": "L24_V006",
@@ -796,12 +1250,42 @@
       },
       "qa_answer": null,
       "trake_events": [
-        9990,
-        10777,
-        11222,
-        12333
+        {
+          "event_id": "E1",
+          "description_vi": "Con lân treo hai chân trước vào phần dưới thân của hai trụ gần cuối (gần trụ cuối cùng cao nhất).",
+          "reference_frame_idx": 9990,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Con lân đứng thẳng sau khi di chuyển từ cuối dãy trụ về, hai chân đứng trên hai trụ khác nhau và một chân trước co lên.",
+          "reference_frame_idx": 10777,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Khoảnh khắc con lân hoàn tất động tác ngoảnh mặt theo hướng ngược lại.",
+          "reference_frame_idx": 11222,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Khoảnh khắc đầu tiên con lân ngậm một thanh trụ.",
+          "reference_frame_idx": 12333,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
       ],
-      "notes": "TRAKE query restored in v2. Absent from v1 only because the team's own submission CSV pointed to the wrong video; the organizers counted it toward the official adjusted max of 33. Scored on target-video ranking only (Tier 0)."
+      "notes": "TRAKE query restored in v2. Absent from v1 only because the team's own submission CSV pointed to the wrong video; the organizers counted it toward the official adjusted max of 33. Scored on target-video ranking only (Tier 0).",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Pure visual lion-dance action sequence across four ordered events; no named text, proper noun, or number is stated in the query."
+      }
     },
     {
       "id": "p3-35",
@@ -825,7 +1309,31 @@
       },
       "qa_answer": "3",
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2018", "THPT 2018", "TN THPT", "2018"]
+          },
+          {
+            "concept": "question format",
+            "terms": ["trắc nghiệm", "đáp án"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2018", "THPT QG 2018", "THPT 2018", "TN THPT", "2018"]
+          },
+          {
+            "concept": "question format",
+            "terms": ["trắc nghiệm", "A B C D"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The exam identifier is explicitly supplied and deserves multiple compact OCR/ASR surface forms; the unknown group number X is deliberately excluded."
+      }
     },
     {
       "id": "p3-36",
@@ -849,7 +1357,26 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": ""
+      "notes": "",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "historical figure",
+            "terms": ["Bác Hồ"]
+          },
+          {
+            "concept": "art",
+            "terms": ["nghệ nhân", "chân dung"]
+          },
+          {
+            "concept": "drawing",
+            "terms": ["vẽ chân dung"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Unlike the earlier strict pass, 'Bác Hồ' is a legitimate named topical anchor and the artisan/portrait vocabulary is plausible documentary narration even though the special pen and material are unnamed."
+      }
     }
   ]
 }
