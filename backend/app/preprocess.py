@@ -1642,6 +1642,26 @@ def _load_meta():
     print(f"[preprocess] Metadata: {len(_meta)} keyframes · {len(_video_frames)} videos")
 
 
+def frames_for_video(video_id : str) -> list[str] :
+    """Every frame name belonging to one video, in frame_idx order.
+
+    Thin read-only view over _video_frames (already built by _load_meta() at
+    startup from keyframe_metadata.json's own "video" field -- no new preload
+    step, no extra memory beyond the dict wrapper itself, since these are the
+    same metadata objects _meta already holds). Exists so other modules (e.g.
+    text_lookup.py) never reach into _video_frames directly. An empty list
+    means the video has no keyframes in the visual corpus -- see /status's
+    "videos" count, which is exactly len(_video_frames)."""
+    return [m["name"] for m in _video_frames.get(video_id, [])]
+
+
+def fps_for_video(video_id : str) -> float :
+    """fps of one video, read off its own keyframe metadata. 25.0 fallback
+    matches temporal_search()'s own default when a record has no fps."""
+    frames = _video_frames.get(video_id, [])
+    return float(frames[0]["fps"]) if frames else 25.0
+
+
 def _model_parts(model_name: str):
     """Trả (index, mapping, hàm encode text, tên trường faiss_id) của 1 model."""
     if model_name == "beit3":
