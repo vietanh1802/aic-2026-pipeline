@@ -14,6 +14,13 @@ import {
 import type { ModelName } from "../../types/api";
 import { expandQuery, type ExpansionResult } from "../../api/expansion";
 
+// Longest text filter the backend accepts: keep in sync with TEXT_FILTER_MAX_CHARS
+// in backend/app/text_signal.py. A longer value is rejected with HTTP 422 for the
+// WHOLE search request, so the input cuts a long paste instead of failing the search.
+// (maxLength counts UTF-16 units and the backend counts characters, so an astral
+// character such as an emoji counts double here: the limit is never exceeded.)
+const TEXT_FILTER_MAX_CHARS = 200;
+
 interface QueryInputProps {
   doSearch: () => void;
   disabled?: boolean;
@@ -393,6 +400,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               <input
                 type="text"
                 value={textFilter}
+                maxLength={TEXT_FILTER_MAX_CHARS}
                 onChange={(e) => setTextFilter(e.target.value)}
                 placeholder={textFilterPlaceholder}
                 className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-white px-2 py-1.5 text-[12.5px] text-proto-ink"
