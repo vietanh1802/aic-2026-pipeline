@@ -27,6 +27,7 @@ import {
 } from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
+import { buildTextFilterParams, hasTextFilter } from "./helpers/textFilter";
 import { eventWindowFields, type MarkedRange } from "./helpers/basketMath";
 import { nearestKeyframeFor } from "./helpers/keyframes";
 import { keyframeUrl } from "./helpers/videoSource";
@@ -417,9 +418,15 @@ function App({
       useRerank,
       singleModel,
       ocrStripDiacritics,
-      textFilter,
-      textFilterMode,
+      asrFilter,
+      asrFilterMode,
+      ocrFilter,
+      ocrFilterMode,
     } = useQueryStore.getState();
+    // The two text filters (ASR and OCR) are sent only with the ensemble search
+    // and only when at least one has text, from this snapshot like every other
+    // parameter, so editing a field while the search runs cannot change it.
+    const textFilterFields = { asrFilter, asrFilterMode, ocrFilter, ocrFilterMode };
     setIsLoading(true);
     // Annotations from the PREVIOUS search must not linger onto results from
     // a route that never sets them (single/temporal/trake/ocr) or a fresh
@@ -518,8 +525,9 @@ function App({
               Number(resultLimit),
               topM,
               useRerank,
-              textFilter,
-              textFilterMode
+              hasTextFilter(textFilterFields)
+                ? buildTextFilterParams(textFilterFields)
+                : undefined
             );
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
@@ -604,12 +612,16 @@ function App({
   }, [results, hasQueried, setHasQueried, queryText, isLoading]);
 
   // A text filter found relevant for one task's video content has no bearing
-  // on the next task — clear it back to defaults whenever a different task
-  // opens. Translate/Expand deliberately do NOT do this (they only touch
-  // queryText), so this effect is scoped to just these two fields.
+  // on the next task — clear both filters (ASR and OCR) back to defaults
+  // whenever a different task opens. Translate/Expand deliberately do NOT do
+  // this (they only touch queryText), so this effect is scoped to just these
+  // four fields.
   useEffect(() => {
-    useQueryStore.getState().setTextFilter("");
-    useQueryStore.getState().setTextFilterMode("substring");
+    const query = useQueryStore.getState();
+    query.setAsrFilter("");
+    query.setAsrFilterMode("substring");
+    query.setOcrFilter("");
+    query.setOcrFilterMode("substring");
   }, [activeTask?.id]);
 
   // Everything below renders `shownResults`, never `results`, so the grid, the

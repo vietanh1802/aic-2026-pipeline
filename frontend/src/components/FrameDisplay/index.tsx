@@ -4,6 +4,7 @@ import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loadin
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
+import { describeTextFilter } from "../../helpers/textFilter";
 import TextSignalBadge from "../TextSignalBadge";
 import { useSearchStore } from "../../store/useSearchStore";
 import { useQueryStore } from "../../store/queryStore";
@@ -216,8 +217,19 @@ export default function FrameDisplay({
   // additive metadata, so every existing <FrameDisplay .../> call site is
   // unaffected. null/missing -> TextSignalBadge renders nothing.
   const videoAnnotations = useSearchStore((state) => state.videoAnnotations);
-  const textFilter = useQueryStore((state) => state.textFilter);
-  const textFilterMode = useQueryStore((state) => state.textFilterMode);
+  // Two independent filters now (ASR and OCR). The badge still takes one
+  // filterQuery and one mode string, so compose them here (describeTextFilter);
+  // each field is its own selector so no new object is created per render.
+  const asrFilter = useQueryStore((state) => state.asrFilter);
+  const asrFilterMode = useQueryStore((state) => state.asrFilterMode);
+  const ocrFilter = useQueryStore((state) => state.ocrFilter);
+  const ocrFilterMode = useQueryStore((state) => state.ocrFilterMode);
+  const { term: textFilter, mode: textFilterMode } = describeTextFilter({
+    asrFilter,
+    asrFilterMode,
+    ocrFilter,
+    ocrFilterMode,
+  });
 
   const timestamp = results.map(frameTimestamp);
   // The ramp is normalised across the results actually on screen. Raw distance
