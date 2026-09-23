@@ -49,7 +49,6 @@ from typing import Literal, Optional
 from app import ocr_search
 from app import preprocess
 from app import text_signal
-from app.text_signal import TextMatchMode
 
 OCR_LIMIT = 5000  # generous cap on returned rows; all_word_matches/rank are unaffected by it
 
@@ -79,6 +78,35 @@ def lookup_text(
         return _lookup_asr(term, scope, video_id)
     except Exception :
         return []
+
+
+def lookup_text_batch(
+        term : str,
+        source : Literal["asr", "ocr"],
+        video_ids : list[str],
+) -> dict[str, list[TextHit]] :
+    """Many videos, one term, one scan -- for a caller (text_signal.py's
+    annotate_videos()) that used to call lookup_text(scope="video") once per
+    candidate video and, in doing so, re-paid a full OCR haystack scan or BM25
+    postings walk once per video instead of once per query. Measured: 100
+    candidates x lookup_text(scope="video") cost ~3.0-3.2s for OCR (ocr_search
+    has no per-video index -- video= is just an early `continue` inside a full
+    179,728-entry scan) and up to ~470ms for BM25 on a common term.
+
+    Reuses scope="corpus" internally -- that path already does the scan/walk
+    exactly once regardless of candidate count -- then partitions the single
+    result set to the requested video_ids in memory, which is cheap. Never
+    raises, same as lookup_text()."""
+    try :
+        hits = _lookup_ocr(term, "corpus", None) if source == "ocr" else _lookup_asr(term, "corpus", None)
+    except Exception :
+        hits = []
+    out : dict[str, list[TextHit]] = {video_id : [] for video_id in video_ids}
+    wanted = set(video_ids)
+    for hit in hits :
+        if hit.video_id in wanted :
+            out[hit.video_id].append(hit)
+    return out
 
 
 # ── OCR ──────────────────────────────────────────────────────────────────
@@ -153,6 +181,23 @@ def _windows_by_video() -> dict[str, list[_Window]] :
     return _windows_cache
 
 
+def preload() -> None :
+    """Warm _windows_by_video()'s lazy cache at startup. Same reasoning as
+    asr_text.preload()/ocr_search.preload()/text_signal.preload() (all called
+    from main.py's warm-up): the ~490ms cost of parsing windows.jsonl
+    (measured -- see the batch-fix report) should land during warm-up, not on
+    whichever production request happens to make the first bm25/ASR lookup.
+
+    Never raises -- _windows_by_video() already returns an empty cache for a
+    missing windows.jsonl without raising, but a present-and-corrupt file
+    could still throw on json.loads(); that must not fail warm-up and skip
+    the preload calls after it, same as ocr_route.preload()/_asr_text.preload()."""
+    try :
+        _windows_by_video()
+    except Exception as e :
+        print(f"[text_lookup] windows cache not warmed ({type(e).__name__}: {e})")
+
+
 def _frame_idx(name : str) -> int :
     return int(name.rsplit("-", 1)[1].split(".")[0])
 
@@ -186,10 +231,10 @@ def _lookup_asr(term : str, scope : str, video_id : Optional[str]) -> list[TextH
         return []
 
     candidates = [video_id] if scope == "video" else sorted(set(text_signal._bm25_doc_video_ids))
-    annotations = text_signal._annotate_bm25(candidates, term, {}, TextMatchMode.bm25)
+    scores = text_signal._annotate_bm25(candidates, term)
 
     scored = sorted(
-        ((vid, ann.score) for vid, ann in annotations.items() if ann.score > 0),
+        ((vid, score) for vid, score in scores.items() if score > 0),
         key=lambda pair : (-pair[1], pair[0]))
     total_matched = len(scored)
 

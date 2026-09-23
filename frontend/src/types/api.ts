@@ -39,16 +39,32 @@ export interface SearchResult {
 }
 
 /**
+ * One source's (asr or ocr) best result for a video — matches backend's
+ * SourceMatch dataclass (backend/app/text_signal.py). match_frame/match_type
+ * are null when location is "none".
+ */
+export interface SourceMatch {
+  match_frame: string | null;
+  match_type: "exact" | "normalized" | null;
+  location: "here" | "elsewhere" | "none";
+}
+
+/**
  * Per-video text-signal annotation — matches backend's VideoAnnotation
  * dataclass (backend/app/text_signal.py). Purely additive: it never removes
  * a result or changes a rank, see SearchResponse.video_annotations below.
+ *
+ * Stage C replaced the old flat `sources`/`snippets` arrays with per-source
+ * SourceMatch objects naming the actual frame that matched (and whether it
+ * is one already on screen) — components reading the old shape (notably
+ * TextSignalBadge) need a matching rewrite; see Stage C's report.
  */
 export interface VideoAnnotation {
   matched: boolean;
   score: number;
-  sources: string[];
-  snippets: string[];
   mode: string;
+  asr: SourceMatch;
+  ocr: SourceMatch;
 }
 
 export interface SearchResponse {

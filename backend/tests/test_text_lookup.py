@@ -252,3 +252,48 @@ def test_never_raises_on_internal_error(monkeypatch) :
         raise RuntimeError("simulated failure")
     monkeypatch.setattr(ocr_search, "search", boom)
     assert text_lookup.lookup_text("anything", source="ocr", scope="corpus") == []
+
+
+# ── preload() ──────────────────────────────────────────────────────────────
+
+def test_preload_warms_the_windows_cache_without_a_lookup_call(monkeypatch, tmp_path) :
+    """The whole point: _windows_cache must be populated by preload() alone,
+    before any lookup_text() call ever touches it -- same contract as
+    asr_text.preload()/ocr_search.preload()/text_signal.preload()."""
+    release_dir = _write_bm25_and_windows(tmp_path)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+
+    assert text_lookup._windows_cache is None
+    text_lookup.preload()
+    assert text_lookup._windows_cache is not None
+    assert "V_A" in text_lookup._windows_cache
+
+
+def test_preload_is_idempotent(monkeypatch, tmp_path) :
+    release_dir = _write_bm25_and_windows(tmp_path)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+
+    text_lookup.preload()
+    first = text_lookup._windows_cache
+    text_lookup.preload()
+    assert text_lookup._windows_cache is first  # not rebuilt
+
+
+def test_preload_does_not_raise_when_windows_jsonl_is_missing(monkeypatch, tmp_path) :
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", str(tmp_path / "does_not_exist"))
+    text_lookup.preload()  # must not raise
+    assert text_lookup._windows_cache == {}
+
+
+def test_preload_does_not_raise_on_a_corrupt_windows_jsonl(monkeypatch, tmp_path) :
+    release_dir = tmp_path / "asr_release"
+    release_dir.mkdir()
+    (release_dir / "windows.jsonl").write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", str(release_dir))
+
+    text_lookup.preload()  # must not raise
+    # _windows_by_video() sets the cache to {} before it starts reading lines,
+    # so a mid-parse failure leaves it cached empty rather than unset -- same
+    # "fail once, don't retry every call" shape as text_signal's own
+    # _bm25_unavailable_reason latch.
+    assert text_lookup._windows_cache == {}

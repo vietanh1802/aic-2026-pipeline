@@ -60,6 +60,7 @@ from app.version import SHORT_COMMIT, VERSION
 from app import ocr_search as ocr_route
 from app import asr_text as _asr_text
 from app import text_signal as _text_signal
+from app import text_lookup as _text_lookup
 from app.text_signal import TextMatchMode, annotate_videos
 from dataclasses import asdict
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
@@ -403,6 +404,10 @@ def _run_warmup() -> None:
         # yet) until someone's first live query during competition. Eager
         # like the two above; _load_bm25() already swallows its own failure.
         _text_signal.preload()
+        # Warms text_lookup's lazy windows.jsonl parse (~490ms, measured) --
+        # otherwise whichever production request makes the first bm25/ASR
+        # lookup pays it instead. Same never-raises reasoning as the others.
+        _text_lookup.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
