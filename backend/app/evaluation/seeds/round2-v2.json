@@ -44,7 +44,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The query is almost entirely physical action and color description; 'bí đỏ' is only a visual resemblance and is not a reliable topical ASR/OCR signal."
+      }
     },
     {
       "id": "p2-2",
@@ -67,7 +73,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Tê giác, graffiti and khỉ describe the photographed artwork itself rather than a clear narrated or textual topic, so no sufficiently useful ASR/OCR term is supported."
+      }
     },
     {
       "id": "p2-3",
@@ -90,7 +102,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The query is a visual action description and is explicitly uncertain whether the figure is lân, rồng or sư tử, so those labels should not become filters."
+      }
     },
     {
       "id": "p2-4",
@@ -113,7 +131,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Although a banner is present, the query gives only its visual imagery and does not provide a specific campaign, organization, slogan or sufficiently distinctive topic term."
+      }
     },
     {
       "id": "p2-5",
@@ -141,7 +165,13 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "This is purely a cycling-action and clothing-color description with no location, event, team or other topical vocabulary."
+      }
     },
     {
       "id": "p2-6",
@@ -164,7 +194,18 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "traffic behavior",
+            "terms": ["xe máy", "tốc độ cao"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The clip may come from narrated traffic or news footage, making the short traffic terms weak but potentially useful ASR signals; the red circles themselves are only visual annotations."
+      }
     },
     {
       "id": "p2-7",
@@ -187,7 +228,23 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "1204",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "autonomous vehicle",
+            "terms": ["tự lái", "ô tô tự lái"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "signage",
+            "terms": ["chữ Hán"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The unknown car number is excluded, but the autonomous-driving topic and Chinese-character sign remain usable contextual signals."
+      }
     },
     {
       "id": "p2-8",
@@ -235,7 +292,22 @@
           "valid_end_frame": null
         }
       ],
-      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring."
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "fruit garden",
+            "terms": ["sầu riêng", "măng cụt", "bưởi", "bòn bon"]
+          },
+          {
+            "concept": "region",
+            "terms": ["miền Tây", "Tây Nam Bộ"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The named fruits and regional context are central topical vocabulary for a fruit-garden video and are plausible documentary narration terms."
+      }
     },
     {
       "id": "p2-9",
@@ -258,7 +330,18 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "Cá sòng",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "seasonings",
+            "terms": ["tiêu xanh", "lá chanh", "sả"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The query explicitly describes a cooking tutorial and names three distinctive seasonings that are plausible recipe narration terms; the fish species itself is the unknown and is excluded."
+      }
     },
     {
       "id": "p2-10",
@@ -281,7 +364,18 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["dồi trường", "bông hẹ"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Both named ingredients are specific cooking vocabulary and much more discriminative than generic action terms such as xào or chảo."
+      }
     },
     {
       "id": "p2-11",
@@ -304,7 +398,18 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "preparation",
+            "terms": ["xiên que", "bột trắng"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The actual ingredient is unnamed, but the skewer-and-coating preparation provides a small amount of independently searchable cooking vocabulary."
+      }
     },
     {
       "id": "p2-12",
@@ -327,7 +432,22 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "7",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "filling",
+            "terms": ["cà rốt", "hạt sen", "giá"]
+          },
+          {
+            "concept": "baking",
+            "terms": ["làm bánh"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The ingredients are individually generic but together are meaningful recipe vocabulary; the requested number of cakes per mold is excluded."
+      }
     },
     {
       "id": "p2-13",
@@ -350,7 +470,26 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "main ingredients",
+            "terms": ["thịt gà", "đậu phộng", "hành tím"]
+          },
+          {
+            "concept": "peppers",
+            "terms": ["ớt đỏ", "ớt xanh"]
+          },
+          {
+            "concept": "lime",
+            "terms": ["vỏ chanh", "nước cốt"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Under the broader rule, the explicitly named ingredients are valid cooking-topic signals even though the query says they are visually recognizable."
+      }
     },
     {
       "id": "p2-14",
@@ -373,7 +512,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "After considering the cycling vocabulary, the query still contains only generic race action, clothing and equipment details with no event, location or other distinctive topical anchor."
+      }
     },
     {
       "id": "p2-15",
@@ -401,7 +546,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "food category",
+            "terms": ["hải sản"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The seafood types are deliberately unnamed, leaving only the broad but still potentially useful cooking-topic term 'hải sản'."
+      }
     },
     {
       "id": "p2-16",
@@ -429,7 +585,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "rural craft",
+            "terms": ["ván ngựa", "thớt gỗ", "thủ công"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The distinctive rural furniture and craft nouns are plausible narration vocabulary in documentary or craft-oriented footage even though narration is not explicitly stated."
+      }
     },
     {
       "id": "p2-17",
@@ -457,7 +624,18 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [
+          {
+            "concept": "stage text",
+            "terms": ["SẮC CỔ"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query directly supplies the visible stage wording, making 'SẮC CỔ' a strong OCR term."
+      }
     },
     {
       "id": "p2-18",
@@ -480,7 +658,31 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "location",
+            "terms": ["Hồ Tùng Mậu"]
+          },
+          {
+            "concept": "cycling",
+            "terms": ["đua xe đạp", "nhóm dẫn đầu"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "street",
+            "terms": ["Hồ Tùng Mậu"]
+          },
+          {
+            "concept": "countdown",
+            "terms": ["13", "13 giây"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The named street is a strong topical location term and may occur in commentary or roadside text; 13 is retained only as a weaker OCR countdown signal."
+      }
     },
     {
       "id": "p2-19",
@@ -503,7 +705,22 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "Lý Thường Kiệt",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "charity",
+            "terms": ["mạnh thường quân", "hỗ trợ"]
+          },
+          {
+            "concept": "elderly lodging",
+            "terms": ["quán trọ", "người cao tuổi"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The unknown street name is excluded, but the charity report's subject matter provides several plausible narration terms."
+      }
     },
     {
       "id": "p2-20",
@@ -526,7 +743,47 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Địa lí"]
+          },
+          {
+            "concept": "urban network",
+            "terms": ["mạng lưới", "đô thị"]
+          },
+          {
+            "concept": "urban distribution",
+            "terms": ["phân bố", "phân bố đô thị"]
+          },
+          {
+            "concept": "population",
+            "terms": ["dân số", "dân số đô thị"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Địa lí"]
+          },
+          {
+            "concept": "urban network",
+            "terms": ["mạng lưới", "đô thị"]
+          },
+          {
+            "concept": "urban distribution",
+            "terms": ["phân bố", "phân bố đô thị"]
+          },
+          {
+            "concept": "population",
+            "terms": ["dân số", "dân số đô thị"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query explicitly describes a lecture table, so its short urban-geography terms are strongly plausible in both speech and slide text."
+      }
     },
     {
       "id": "p2-21",
@@ -574,7 +831,22 @@
           "valid_end_frame": null
         }
       ],
-      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring."
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "packing",
+            "terms": ["niêm phong", "thùng carton"]
+          },
+          {
+            "concept": "food boxes",
+            "terms": ["mì tôm", "bánh mì"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The sequence is mostly visual, but the packing and food-item nouns provide weak topical vocabulary that could plausibly occur in narration."
+      }
     },
     {
       "id": "p2-22",
@@ -606,7 +878,22 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (3) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (3) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "seafood",
+            "terms": ["hải sản"]
+          },
+          {
+            "concept": "seasonings",
+            "terms": ["rượu", "tiêu", "hạt nêm"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The seafood itself is unnamed, but the cooking query explicitly names three seasonings that are plausible instructional narration terms."
+      }
     },
     {
       "id": "p2-23",
@@ -629,7 +916,43 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "20",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2022", "THPT 2022", "2022"]
+          },
+          {
+            "concept": "biology",
+            "terms": ["Sinh học", "thực vật"]
+          },
+          {
+            "concept": "growth",
+            "terms": ["sinh trưởng"]
+          },
+          {
+            "concept": "environment",
+            "terms": ["ven biển", "độ mặn"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2022", "THPT 2022", "2022"]
+          },
+          {
+            "concept": "question",
+            "terms": ["câu 11", "11"]
+          },
+          {
+            "concept": "biology",
+            "terms": ["Sinh học", "sinh trưởng", "thực vật", "độ mặn"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The exam identifier and Biology terminology are directly grounded in the query and are highly plausible in both the lesson audio and displayed exam material; the unknown salinity value is excluded."
+      }
     },
     {
       "id": "p2-24",
@@ -669,7 +992,31 @@
       },
       "qa_answer": null,
       "trake_events": null,
-      "notes": "Multiple valid frame intervals (5) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match."
+      "notes": "Multiple valid frame intervals (5) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "location",
+            "terms": ["Quảng Nam"]
+          },
+          {
+            "concept": "nationality",
+            "terms": ["Estonia"]
+          },
+          {
+            "concept": "sport",
+            "terms": ["đua xe đạp", "về đích"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "race metadata",
+            "terms": ["Quảng Nam", "Estonia"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "Under the broader extraction rule, the explicit location and athlete nationality are valuable named-entity signals and are plausible in race commentary or broadcast graphics."
+      }
     },
     {
       "id": "p2-25",
@@ -692,7 +1039,13 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "A lecture setting is present, but the actual lecture topic is never stated; the remaining laptop, sofa, clothing and gesture details are visual rather than meaningful subject vocabulary."
+      }
     },
     {
       "id": "p2-26",
@@ -715,7 +1068,23 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": null,
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "competition",
+            "terms": ["kéo co", "đối đầu"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "competition",
+            "terms": ["kéo co", "đối đầu"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The actual lecture topic is unstated, but the repeated competition imagery makes 'kéo co' and 'đối đầu' weak thematic terms that may accompany the slide."
+      }
     },
     {
       "id": "p2-28",
@@ -738,7 +1107,27 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "Cá hồi",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "dish",
+            "terms": ["cháo"]
+          },
+          {
+            "concept": "garnish",
+            "terms": ["rau", "hành"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "dish",
+            "terms": ["topping"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The topping's animal identity is the unknown and is excluded, but the dish and garnish vocabulary remain usable weak cooking signals. 'topping' moved to OCR-only: it does not appear in the real ASR BM25 vocabulary (artifacts/asr/releases/aic2026-full-20260817-r01/bm25/vocabulary.json), consistent with CLAUDE.md's rule to treat English filter terms as OCR-only absent specific evidence the ASR caught them."
+      }
     },
     {
       "id": "p2-29",
@@ -761,7 +1150,27 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "300g",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["nước cốt dừa", "bột cà ri", "nấm mèo", "mộc nhĩ", "sả", "ớt hiểm", "hạt nêm"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["nước cốt dừa", "bột cà ri", "nấm mèo", "mộc nhĩ", "sả", "ớt hiểm", "hạt nêm"]
+          },
+          {
+            "concept": "ingredient board",
+            "terms": ["nguyên liệu", "9 thành phần"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query explicitly says an ingredient table appears and names its food items, making them strong OCR terms and plausible cooking narration terms; the unknown meat weight is excluded."
+      }
     },
     {
       "id": "p2-30",
@@ -784,7 +1193,22 @@
         "provenance": "team_round2_manual_interval_review"
       },
       "qa_answer": "Nghêu",
-      "trake_events": null
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "plant",
+            "terms": ["hoa riềng"]
+          },
+          {
+            "concept": "cooking",
+            "terms": ["món ăn"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The identity of X is excluded because it is the QA answer, while 'hoa riềng' is a comparatively distinctive contextual term that could still help locate the episode."
+      }
     }
   ]
 }

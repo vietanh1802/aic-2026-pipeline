@@ -200,3 +200,39 @@ def test_reject_schema_version_1(conn, tmp_path) :
     bad.write_text(json.dumps({"schema_version" : 1, "dataset" : {}, "queries" : []}), encoding = "utf-8")
     with pytest.raises(ValueError, match = "schema_version") :
         import_seed(conn, bad)
+
+
+# filter_terms is descriptive metadata for the calibration/filter-extraction
+# work -- seed.py's importer never reads it, so nothing here touches the DB.
+# round2-v2 and round3-v2 use the newer grouped {concept, terms} shape;
+# round1-v3 was deliberately left on its original flat string-list shape
+# (asr_terms/ocr_terms as plain list[str]) rather than migrated, since
+# retrofitting "concept" labels onto already-authored round1 terms would mean
+# inventing groupings nobody actually made -- see CLAUDE.md and the round1-v3
+# entries themselves for the flat format still in use there.
+def test_filter_terms_use_grouped_schema_in_round2_and_round3() :
+    for filename in ("round2-v2.json", "round3-v2.json") :
+        data = json.loads((SEEDS_DIR / filename).read_text(encoding = "utf-8"))
+        for query in data["queries"] :
+            ft = query.get("filter_terms")
+            assert ft is not None, f"{filename}:{query['id']} missing filter_terms"
+            assert ft["confidence"] in ("none", "low", "medium", "high")
+            groups = ft["asr_terms"] + ft["ocr_terms"]
+            for group in groups :
+                assert isinstance(group["concept"], str) and group["concept"]
+                assert isinstance(group["terms"], list) and len(group["terms"]) > 0
+                assert all(isinstance(term, str) and term for term in group["terms"])
+            if ft["confidence"] != "none" :
+                assert groups, f"{filename}:{query['id']} has confidence={ft['confidence']!r} but no asr/ocr term groups"
+
+
+def test_filter_terms_round1_keeps_the_original_flat_schema() :
+    """Documents the deliberate divergence: round1-v3 was not migrated to the
+    grouped schema (see test above), so its filter_terms.asr_terms/ocr_terms
+    are still plain list[str], not list[{"concept", "terms"}]."""
+    data = json.loads((SEEDS_DIR / "round1-v3.json").read_text(encoding = "utf-8"))
+    for query in data["queries"] :
+        ft = query.get("filter_terms")
+        assert ft is not None, f"round1-v3.json:{query['id']} missing filter_terms"
+        for term in ft["asr_terms"] + ft["ocr_terms"] :
+            assert isinstance(term, str)
