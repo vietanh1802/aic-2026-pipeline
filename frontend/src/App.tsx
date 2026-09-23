@@ -79,6 +79,8 @@ function App({
   const focusVideos = useSearchStore((state) => state.focusVideos);
   const toggleFocusVideo = useSearchStore((state) => state.toggleFocusVideo);
   const clearFocus = useSearchStore((state) => state.clearFocus);
+  const showOnlyPinned = useSearchStore((state) => state.showOnlyPinned);
+  const toggleShowOnlyPinned = useSearchStore((state) => state.toggleShowOnlyPinned);
   // resultLimit/topM/useRerank/ocrStripDiacritics/singleModel từng được đăng ký
   // ở đây và doSearch đọc qua closure. Giờ doSearch đọc thẳng từ store, vì nó
   // còn được gọi ngay sau khi áp truy vấn của người khác vào store — closure
@@ -613,12 +615,20 @@ function App({
   // Everything below renders `shownResults`, never `results`, so the grid, the
   // grouping and the count all agree about what is on screen.
   //
+  // Pinning (focusVideos) and narrowing the grid (showOnlyPinned) used to be
+  // the same action: filterByFocus ran the moment focusVideos was non-empty,
+  // so pinning one video removed every other video's card -- including its
+  // own pin button -- before a second pin was ever possible. filterByFocus
+  // now only runs when showOnlyPinned is explicitly on; pinning by itself
+  // just marks cards (see the focusVideos.includes check FrameDisplay uses
+  // for card styling) without touching what is on screen.
+  //
   // Memoised because it feeds the grouping effect's dependency array. Unmemoised,
   // filterByFocus hands back a fresh array on every render whenever a focus is
   // active, so the effect re-ran and re-set groupedResult forever.
   const shownResults = useMemo(
-    () => filterByFocus(results, focusVideos),
-    [results, focusVideos]
+    () => (showOnlyPinned ? filterByFocus(results, focusVideos) : results),
+    [results, focusVideos, showOnlyPinned]
   );
 
   // Show Top can be 500 (2000 on the OCR route) and that is deliberate — the
@@ -829,6 +839,25 @@ function App({
             className="text-[12px] px-2.5 py-1 rounded-[7px] border border-proto-line text-proto-muted"
           >
             Xoá lọc
+          </button>
+          {/* Ghim (focusVideos) chỉ đánh dấu -- nó không còn tự lọc lưới, vì
+              lọc ngay lập tức từng xoá luôn thẻ + nút ghim của video thứ hai
+              trước khi kịp bấm. Bấm nút này mới thật sự thu hẹp lưới. */}
+          <button
+            type="button"
+            onClick={toggleShowOnlyPinned}
+            title={
+              showOnlyPinned
+                ? "Hiện lại tất cả kết quả"
+                : "Chỉ hiện các video đã ghim"
+            }
+            className={`text-[12px] px-2.5 py-1 rounded-[7px] border font-bold ${
+              showOnlyPinned
+                ? "bg-proto-primary border-proto-primary text-white"
+                : "border-proto-line text-proto-muted"
+            }`}
+          >
+            {showOnlyPinned ? "Đang lọc · Hiện tất cả" : "Chỉ hiện video đã ghim"}
           </button>
         </div>
       )}

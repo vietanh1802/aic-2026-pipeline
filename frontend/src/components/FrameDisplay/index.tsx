@@ -257,6 +257,12 @@ export default function FrameDisplay({
             // keyframe thì cố định.
             const picked =
               highlightFrame !== undefined && result.name === highlightFrame;
+            // Cards belonging to a pinned video, so a pin reads as "marked"
+            // on sight even while the grid still shows every other video too
+            // (shownResults only narrows down when showOnlyPinned is on --
+            // see App.tsx). Same focusVideos.includes(videoOf(result)) check
+            // the pin button itself already uses for its own active state.
+            const pinned = focusVideos.includes(videoOf(result));
             return (
               <div
                 key={index}
@@ -282,6 +288,8 @@ export default function FrameDisplay({
                 className={`relative flex flex-col rounded-[8px] w-full h-full font-baloo bg-white overflow-hidden ${
                   picked
                     ? "border-[3px] border-[#c64545] ring-4 ring-[#c64545]/40 ring-offset-2 ring-offset-proto-canvas shadow-lg shadow-[#c64545]/35 scale-[1.02] z-10"
+                    : pinned
+                    ? "border-2 border-proto-primary ring-2 ring-proto-primary/30"
                     : "border-2 border-proto-line"
                 }`}
               >
