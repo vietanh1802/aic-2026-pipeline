@@ -61,7 +61,7 @@ from app import ocr_search as ocr_route
 from app import asr_text as _asr_text
 from app import text_signal as _text_signal
 from app import text_lookup as _text_lookup
-from app.text_signal import TextMatchMode, annotate_videos
+from app.text_signal import TEXT_FILTER_MAX_CHARS, TextMatchMode, annotate_videos
 from dataclasses import asdict
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
@@ -118,6 +118,9 @@ class EnsembleSearchRequest(BaseModel):
                              description="Bật Alg.2 rerank lân cận cho TỪNG model trước khi ensemble")
     text_filter: str = Field(
         default="",
+        # Longer terms are rejected with HTTP 422 for the whole request (also on
+        # /single-search, which inherits this model and ignores the filter).
+        max_length=TEXT_FILTER_MAX_CHARS,
         description=(
             "Term, phrase, or pattern to annotate results with. "
             "Empty string disables annotation."

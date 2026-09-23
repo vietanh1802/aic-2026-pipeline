@@ -1,11 +1,14 @@
 # backend/tests/test_text_signal.py
 import json
 import os
+import re
+import unicodedata
 
 import numpy as np
 import pytest
 
 from app import ocr_search, preprocess, text_lookup, text_signal
+from app.ocr_search import _strip_marks
 from app.text_signal import TextMatchMode, annotate_videos
 
 
@@ -108,6 +111,156 @@ def test_substring_asr_diacritic_folding_is_normalized(monkeypatch) :
     result = annotate_videos(["V1"], "ngo", TextMatchMode.substring, {"V1" : ["V1-0000-100.jpg"]})
     assert result["V1"].matched is True
     assert result["V1"].asr.match_type == "normalized"
+
+
+# ── substring prefilter: identical to the old per-frame fold ────────────────
+#
+# _substring_hits() used to fold every frame's text; it now compiles the folded
+# term to a regex over the raw text. _reference_substring_hits below is the OLD
+# implementation, copied verbatim, and serves as the oracle: same hits, same
+# exact/normalized tags, same ranks, for every text/term pair.
+
+def _reference_substring_hits(video_id : str, term : str, get_text) :
+    term_lower = term.lower()
+    term_folded = _strip_marks(term).lower()
+    exact, normalized = [], []
+    for name in preprocess.frames_for_video(video_id) :
+        text = get_text(name)
+        if not text :
+            continue
+        if term_lower in text.lower() :
+            exact.append(name)
+        elif term_folded in _strip_marks(text).lower() :
+            normalized.append(name)
+
+    total = len(exact) + len(normalized)
+    hits = [text_lookup.TextHit(video_id, name, "exact", rank, total)
+            for rank, name in enumerate(exact, 1)]
+    hits += [text_lookup.TextHit(video_id, name, "normalized", rank, total)
+             for rank, name in enumerate(normalized, len(exact) + 1)]
+    return hits
+
+
+_VI = "Người ta nấu thịt bò với nước sôi, rau ngò và ngon lắm. Đường đi Đà Nẵng."
+REFERENCE_TEXTS = [
+    _VI,
+    unicodedata.normalize("NFD", _VI),  # decomposed Vietnamese
+    "THỂ THAO VÀ ĐƯỜNG ĐI NGƯỜI",
+    "thể thao và đường đi",
+    "ngo ngon ngò ngõ",
+    "chợ cho chờ chó",
+    "2018 THPT 2018 THPTQG 2018",
+    "วิธบลอกจุรี ดูที่นี้ (ไม่) EMERGENCY 1669",  # Thai: combining marks the old fold also deleted
+    "a\u0e31b ab a\u0301b a\u0300\u0301b",  # marks between the letters
+    "giá (1.5L) [x] a+b a*b what? c:\\dir 1/2 muỗng \\ ( [ + * ?",  # regex specials
+    "a  b   c a b",  # runs of spaces
+    "a\u00a0b\ta\tb",  # no-break space and tabs
+    "Йога и й, Ελληνικά ΣΑΣ σας ά α",  # other scripts: some fold, some do not
+    "İstanbul ıstanbul \u212a \u212b \u026b \u2c62 ; \u037e a=b \u2260",  # Kelvin/Angstrom, leak targets
+    "ガカ 한국 🙂 nước 🙂",
+    "a\U000e0100b ab x\U0001e8d0y xy",  # Mn above the BMP: the frame takes the per-frame fold
+    "",  # no ASR text for this frame
+    "   ",
+]
+
+REFERENCE_TERMS = [
+    "cho", "chợ", "ngo", "ngò", "nuoc", "nước", "nuoc soi", "nước sôi", "thit bo", "thịt bò",
+    "nguoi", "người", "NGƯỜI", "the thao", "THỂ THAO", "thể thao", "duong", "đường", "Duong di",
+    "đ", "Đ", "d", "2018", "THPT 2018", "a b", "a  b", "a   b", " a", "a ", "a.b", "1.5L",
+    "(1.5l)", "[x]", "a+b", "a*b", "what?", "c:\\dir", "\\", "(", "[", "+", "*", "?", "1/2",
+    "muỗng", "ab", "a\u0e31b", "วิธ", "ที่", "Йога", "й", "и", "Ελληνικά", "ά", "α", "σας", "ς",
+    "istanbul", "İstanbul", "k", "K", "å", "a", "ɫ", "=", "a=b", ";", "≠", "ガ", "カ", "한", "🙂",
+    "", " ", "   ", "\t",
+]
+
+
+@pytest.mark.parametrize("term", REFERENCE_TERMS)
+def test_substring_prefilter_matches_reference_fold(monkeypatch, term) :
+    names = [f"V1-0000-{index}.jpg" for index in range(len(REFERENCE_TEXTS))]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, REFERENCE_TEXTS))
+
+    def get_text(name : str) -> str :
+        return texts.get(name, "")
+
+    assert text_signal._substring_hits("V1", term, get_text) == _reference_substring_hits("V1", term, get_text)
+
+
+def test_substring_prefilter_skips_marks_between_letters(monkeypatch) :
+    """Guards the oracle itself: both implementations could be wrong the same
+    way, so pin one behavior explicitly. The old fold deleted every Mn
+    character, so "ab" must hit "a" + <Thai tone mark> + "b"."""
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-1.jpg", "V1", 1)]})
+    hits = text_signal._substring_hits("V1", "ab", lambda name : "x a\u0e31b y")
+    assert [(hit.frame_name, hit.match_type) for hit in hits] == [("V1-0000-1.jpg", "normalized")]
+
+
+def test_substring_prefilter_still_skips_marks_above_the_bmp(monkeypatch) :
+    """The regex class only holds BMP marks; a frame with a character above
+    U+FFFF must fall back to the exact fold, so "ab" still hits "a"+U+E0100+"b"
+    (a variation selector, category Mn)."""
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-1.jpg", "V1", 1)]})
+    hits = text_signal._substring_hits("V1", "ab", lambda name : "x a\U000e0100b y")
+    assert [(hit.frame_name, hit.match_type) for hit in hits] == [("V1-0000-1.jpg", "normalized")]
+
+
+def test_mark_class_covers_exactly_the_bmp_nonspacing_marks() :
+    mark = re.compile(text_signal._MARK_CLASS)
+    for code in range(0x10000) :
+        assert bool(mark.fullmatch(chr(code))) == (unicodedata.category(chr(code)) == "Mn"), hex(code)
+
+
+def test_substring_prefilter_exact_beats_normalized_and_keeps_ranks(monkeypatch) :
+    _set_corpus(monkeypatch, {"V1" : [_meta(f"V1-0000-{i}.jpg", "V1", i) for i in range(3)]})
+    texts = {"V1-0000-0.jpg" : "rau ngo", "V1-0000-1.jpg" : "rau ngò", "V1-0000-2.jpg" : "khong co"}
+    hits = text_signal._substring_hits("V1", "ngo", lambda name : texts[name])
+    assert [(h.frame_name, h.match_type, h.rank, h.total_matched) for h in hits] == [
+        ("V1-0000-0.jpg", "exact", 1, 2), ("V1-0000-1.jpg", "normalized", 2, 2)]
+
+
+def test_terms_outside_the_audited_scope_use_the_fallback_path() :
+    for term in ["nguoi", "thịt bò", "2018", "a+b", "", " "] :
+        assert text_signal._folded_pattern(_strip_marks(term).lower()) is not None
+    for term in ["и", "ά", "ガ", "한", ";", "≠", "ɫ", "🙂"] :
+        assert text_signal._folded_pattern(_strip_marks(term).lower()) is None
+
+
+def test_fold_scope_is_complete() :
+    """The prefilter is exact only if the facts in the block comment above
+    _FOLD_SCOPE hold. Re-derive them over every code point that can carry a
+    decomposition or case mapping (nothing above U+30000 does), so a Python /
+    Unicode upgrade that changes them fails here instead of silently changing
+    which frames match."""
+    def in_scope(code : int) -> bool :
+        return any(low <= code <= high for low, high in text_signal._FOLD_SCOPE)
+
+    scope_chars = {chr(code) for low, high in text_signal._FOLD_SCOPE for code in range(low, high + 1)}
+    leak_targets = set()
+    for code in range(0x30000) :
+        if 0xD800 <= code <= 0xDFFF :
+            continue
+        char = chr(code)
+        folded = _strip_marks(char).lower()
+        assert _strip_marks(char.lower()) == folded, hex(code)  # exact never hits what folded misses
+        if unicodedata.category(char) == "Mn" :
+            assert folded == "", hex(code)
+        elif in_scope(code) :
+            assert len(folded) == 1, hex(code)
+        elif any(other in scope_chars for other in folded) :
+            assert len(folded) == 1, hex(code)  # a multi-character fold into scope would break the regex
+            leak_targets.add(folded)
+    assert leak_targets == set(text_signal._FOLD_LEAK_TARGETS)
+
+
+def test_text_filter_length_cap_is_enforced_on_the_request() :
+    from pydantic import ValidationError
+
+    from app.main import EnsembleSearchRequest
+
+    cap = text_signal.TEXT_FILTER_MAX_CHARS
+    assert EnsembleSearchRequest(query = "q", text_filter = "x" * cap).text_filter == "x" * cap
+    with pytest.raises(ValidationError) :
+        EnsembleSearchRequest(query = "q", text_filter = "x" * (cap + 1))
 
 
 # ── regex mode ───────────────────────────────────────────────────────────

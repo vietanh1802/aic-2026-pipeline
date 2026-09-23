@@ -71,10 +71,12 @@ here the same way -- by filtering windows.jsonl to eligible rows in file
 order -- rather than trusting an assumed physical_index numbering.
 """
 
+import functools
 import json
 import math
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal, Optional
@@ -115,6 +117,13 @@ ASR_RELEASE_DIR = _resolve_asr_release_dir()
 
 BM25_K1 = 1.5
 BM25_B = 0.75
+
+# Longest text_filter main.py accepts (Field(max_length=...)). The substring
+# prefilter below compiles one regex per distinct term at roughly 0.8 ms per
+# character (measured: 5 ms for 7 characters, 155 ms for 200), so this also
+# bounds the worst one-off compile cost instead of letting a pasted paragraph
+# pin a request thread.
+TEXT_FILTER_MAX_CHARS = 200
 
 _BM25_TOKEN_RE = re.compile(r"[^0-9a-zA-ZÀ-ỹ]+")
 
@@ -164,22 +173,153 @@ def _best_match(hits : list, here : list[str]) -> SourceMatch :
 # ── substring / regex: per-frame checks over the video's FULL frame list ──
 # (not routed through text_lookup.lookup_text() -- see module docstring)
 
+# Accent-tolerant prefilter for substring mode
+# ---------------------------------------------
+# The previous _substring_hits() folded every frame's text with _strip_marks()
+# (NFD + a per-character category test) on EVERY request, whenever the plain
+# lower() check failed. Profiled on 100 real videos (36,550 frames, ~1.2 KB of
+# ASR text each) that was 96% of the time of annotate_videos(substring): 4-8 s
+# per search, growing with how few frames matched exactly. ocr_search.py already
+# warns that _strip_marks is for typed text only and that folding the corpus
+# costs seconds -- this loop did exactly that per request.
+#
+# Instead the TERM is folded once and compiled to a regex that matches the RAW
+# text directly: each folded letter becomes a class of every character that
+# folds to it (a, á, ả, Ă, Ấ ...), each followed by "any number of Mn marks"
+# (the old fold deleted them). That is exactly "fold(text).lower() contains
+# fold(term).lower()", so the hit set is identical, and it also yields match
+# positions on the ORIGINAL text for free (nothing is shifted by folding).
+#
+# Why the result is identical, not just close (audited by scanning every code
+# point, repeated in test_text_signal.py::test_fold_scope_is_complete):
+#   * fold(c).lower() is one character for every non-Mn character in
+#     _FOLD_SCOPE and empty only for Mn, so text folds character by character;
+#   * fold(c.lower()) == fold(c).lower() for every code point, so the exact
+#     check (term_lower in text.lower()) can never hit a frame the folded check
+#     misses -- classification only needs to run on prefilter hits;
+#   * no character outside the scope folds into it, except the 27 in
+#     _FOLD_LEAK_TARGETS. A term with any character outside the classes falls
+#     back to the old per-frame fold (see the elif branch below): exact by
+#     definition, slow, and only for terms in other scripts or with those 27.
+#
+# The Mn class must cover every Mn character in the Basic Multilingual Plane
+# (1,065), not only U+0300-036F: the old fold deletes every Mn, e.g. Thai tone
+# marks, and a narrower class would stop matching "a" + <Thai mark> + "b".
+#
+# The 920 Mn characters ABOVE the BMP (variation selectors supplement, ancient
+# scripts) are deliberately left out of the class. `re` compiles a class into a
+# fast table only for the BMP and tests anything above it range by range after
+# every failed lookup; including them made the pattern 4-8x slower (measured on
+# 100 real videos: 1.0-1.7 s against 0.23-0.31 s). Instead a frame containing
+# ANY character above U+FFFF (none of the 359,714 ASR texts; a handful of OCR
+# texts at most) skips the prefilter and takes the exact per-frame fold. The
+# test is a UTF-16 length comparison, ~2 us per frame.
+
+# Unicode ranges scanned to learn which characters fold (NFD, drop Mn, lower)
+# to which base character: Basic Latin through Latin Extended-B / IPA /
+# modifier letters, Latin Extended Additional (every precomposed Vietnamese
+# letter) and Letterlike Symbols (Kelvin and Angstrom signs fold to k and a).
+_FOLD_SCOPE = ((0x0000, 0x02FF), (0x1E00, 0x1EFF), (0x2100, 0x214F))
+
+# Characters OUTSIDE _FOLD_SCOPE that fold INTO it: Greek question mark -> ";",
+# "≠" -> "=", Greek/Latin Extended-C/D capitals -> IPA letters, and so on.
+_FOLD_LEAK_TARGETS = frozenset(";<=>`¨´·ʹȿɀɐɑɒɜɡɥɦɪɫɬɱɽʂʇʝʞ")
+
+
+def _build_fold_classes() -> dict[str, str] :
+    """Folded base character -> regex class of every in-scope character that
+    folds to it. Non-Mn characters only: Mn folds to nothing and is covered by
+    _MARK_CLASS instead."""
+    sources : dict[str, list[str]] = {}
+    for start, end in _FOLD_SCOPE :
+        for code in range(start, end + 1) :
+            char = chr(code)
+            if unicodedata.category(char) != "Mn" :
+                sources.setdefault(_strip_marks(char).lower(), []).append(char)
+    return {base : "[" + "".join(re.escape(char) for char in chars) + "]"
+            for base, chars in sources.items() if len(base) == 1}
+
+
+def _build_mark_class() -> str :
+    """Regex class of every Basic-Multilingual-Plane Mn (nonspacing mark) code
+    point, as ranges. Non-BMP marks are handled per frame, see above."""
+    ranges : list[list[int]] = []
+    for code in range(0x10000) :
+        if unicodedata.category(chr(code)) != "Mn" :
+            continue
+        if ranges and code == ranges[-1][1] + 1 :
+            ranges[-1][1] = code
+        else :
+            ranges.append([code, code])
+    return "[" + "".join(re.escape(chr(low)) + (("-" + re.escape(chr(high))) if high > low else "")
+                         for low, high in ranges) + "]"
+
+
+_FOLD_CLASSES = _build_fold_classes()
+_MARK_CLASS   = _build_mark_class()
+
+
+@functools.lru_cache(maxsize=256)
+def _folded_pattern(term_folded : str) -> Optional[re.Pattern] :
+    """Compiled prefilter for an already-folded term, or None when a character
+    is outside the audited scope (the caller then folds frame by frame)."""
+    if any((char not in _FOLD_CLASSES) or (char in _FOLD_LEAK_TARGETS) for char in term_folded) :
+        return None
+    return re.compile("".join(_FOLD_CLASSES[char] + _MARK_CLASS + "*" for char in term_folded))
+
+
+# Previous implementation, kept for reference (replaced by the prefilter version
+# below; its per-frame logic lives on, verbatim, as the fallback branch there):
+#
+# def _substring_hits(video_id : str, term : str, get_text) :
+#     from app import text_lookup  # deferred: text_lookup imports this module
+#
+#     term_lower = term.lower()
+#     term_folded = _strip_marks(term).lower()
+#     exact, normalized = [], []
+#     for name in preprocess.frames_for_video(video_id) :
+#         text = get_text(name)
+#         if not text :
+#             continue
+#         if term_lower in text.lower() :
+#             exact.append(name)
+#         elif term_folded in _strip_marks(text).lower() :
+#             normalized.append(name)
+#
+#     total = len(exact) + len(normalized)
+#     hits = [text_lookup.TextHit(video_id, name, "exact", rank, total)
+#             for rank, name in enumerate(exact, 1)]
+#     hits += [text_lookup.TextHit(video_id, name, "normalized", rank, total)
+#              for rank, name in enumerate(normalized, len(exact) + 1)]
+#     return hits
+
+
 def _substring_hits(video_id : str, term : str, get_text) :
     """Diacritic-folded substring match, checked frame by frame instead of
     against one concatenated blob -- this is what fixes attribution and
     outside-the-result-set visibility for the sources lookup_text() does not
-    cover (ASR here; both sources for regex mode, see _regex_hits below)."""
+    cover (ASR here; both sources for regex mode, see _regex_hits below).
+
+    Output is identical to folding every frame (see the block comment above):
+    the compiled pattern only decides WHICH frames match, and exact versus
+    normalized is still the original `term_lower in text.lower()` check."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
     term_lower = term.lower()
     term_folded = _strip_marks(term).lower()
+    pattern = _folded_pattern(term_folded)
     exact, normalized = [], []
     for name in preprocess.frames_for_video(video_id) :
         text = get_text(name)
         if not text :
             continue
-        if term_lower in text.lower() :
-            exact.append(name)
+        # A UTF-16 encoding is longer than 2 bytes per character exactly when
+        # the text has a character above U+FFFF (which _MARK_CLASS ignores).
+        if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
+            if pattern.search(text) :
+                (exact if term_lower in text.lower() else normalized).append(name)
+        elif term_lower in text.lower() :
+            exact.append(name)  # fallback: term outside the audited scope, or a non-BMP frame
         elif term_folded in _strip_marks(text).lower() :
             normalized.append(name)
 
