@@ -30,6 +30,8 @@ def reset_module_state(monkeypatch) :
     monkeypatch.setattr(text_signal, "_bm25_avgdl", 0.0)
     monkeypatch.setattr(text_signal, "_bm25_doc_video_ids", [])
     monkeypatch.setattr(text_signal, "_bm25_doc_texts", [])
+    monkeypatch.setattr(text_signal, "_bm25_doc_start_s", None)
+    monkeypatch.setattr(text_signal, "_bm25_doc_end_s", None)
     monkeypatch.setattr(text_lookup, "_windows_cache", None)
 
 

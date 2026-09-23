@@ -359,6 +359,12 @@ _bm25_doc_texts : list[str] = []   # unused since the Stage C rewrite dropped
                                     # snippet-building; left loaded rather than
                                     # touching _load_bm25()/its test fixtures
                                     # without a stronger reason -- see report.
+# Start / end of each document's window in seconds, aligned with doc ids (one
+# float32 each, ~0.2 MB for 26,117 documents). Lets the scorer tell which
+# window decided a video's rank and break ties by time without re-reading
+# windows.jsonl.
+_bm25_doc_start_s : Optional[np.ndarray] = None
+_bm25_doc_end_s : Optional[np.ndarray] = None
 
 
 def _bm25_tokenize(text : str) -> list[str] :
@@ -372,6 +378,7 @@ def _load_bm25() -> None :
     global _bm25_loaded, _bm25_unavailable_reason, _bm25_token_to_id
     global _bm25_posting_offsets, _bm25_posting_doc_ids, _bm25_posting_term_freqs
     global _bm25_document_lengths, _bm25_avgdl, _bm25_doc_video_ids, _bm25_doc_texts
+    global _bm25_doc_start_s, _bm25_doc_end_s
 
     if _bm25_loaded or (_bm25_unavailable_reason is not None) :
         return
@@ -404,8 +411,18 @@ def _load_bm25() -> None :
         # doc_id == position among ELIGIBLE windows.jsonl rows, in file order
         # (see module docstring). Read once here so scoring never re-parses
         # the 74 MB windows.jsonl per request.
+        #
+        # Verified on the real release (aic2026-full-20260817-r01): the file is
+        # grouped by video (none re-opens later), windows inside a video are in
+        # strictly increasing start time, posting lists are sorted by doc id,
+        # and for 300 random docs the video id, eligible_to_physical.npy,
+        # document_lengths, token counts and posting term frequencies all agree
+        # with the row at that position. So a smaller doc id within a video IS
+        # an earlier window, and doc_id indexes the start/end arrays below.
         doc_video_ids : list[str] = []
         doc_texts : list[str] = []
+        doc_start_s : list[float] = []
+        doc_end_s : list[float] = []
         with open(windows_path, encoding="utf-8") as f :
             for line in f :
                 row = json.loads(line)
@@ -413,6 +430,8 @@ def _load_bm25() -> None :
                     continue
                 doc_video_ids.append(row["video_id"])
                 doc_texts.append(row.get("retrieval_text") or "")
+                doc_start_s.append(row["sample_start"] / row["sample_rate"])
+                doc_end_s.append(row["sample_end"] / row["sample_rate"])
 
         if len(doc_video_ids) != len(document_lengths) :
             raise ValueError(
@@ -431,6 +450,8 @@ def _load_bm25() -> None :
         _bm25_avgdl = avgdl
         _bm25_doc_video_ids = doc_video_ids
         _bm25_doc_texts = doc_texts
+        _bm25_doc_start_s = np.asarray(doc_start_s, dtype=np.float32)
+        _bm25_doc_end_s = np.asarray(doc_end_s, dtype=np.float32)
         _bm25_loaded = True
         print(f"[text_signal] BM25 index loaded: {len(tokens):,} terms · "
               f"{len(document_lengths):,} documents")
@@ -439,16 +460,16 @@ def _load_bm25() -> None :
         print(f"[text_signal] BM25 unavailable ({_bm25_unavailable_reason})")
 
 
-def _annotate_bm25(video_ids : list[str], query : str) -> dict[str, float] :
-    """Normalized (0..1) BM25 relevance per requested video_id, 0.0 for a
-    video with no match. Pure scorer -- attribution to a specific frame is
-    text_lookup.py's job (it calls this), not this function's."""
-    _load_bm25()
-    if not _bm25_loaded :
-        return {video_id : 0.0 for video_id in video_ids}
+def _bm25_doc_scores(query : str) -> dict[int, float] :
+    """Raw BM25 score of every document that shares at least one token with
+    the query (doc id -> score). This is the scoring loop that used to live
+    inside _annotate_bm25(), moved unchanged so the video-level scorer and the
+    best-window scorer below cannot drift apart.
 
+    Iteration order of the returned dict is NOT meaningful (it follows the
+    sorted query tokens, then posting order): callers that need a tie-break
+    must impose one, see _best_windows_bm25()."""
     query_tokens = sorted(set(_bm25_tokenize(query)))
-    wanted = set(video_ids)
     n_docs = len(_bm25_document_lengths)
     doc_scores : dict[int, float] = {}
 
@@ -468,23 +489,64 @@ def _annotate_bm25(video_ids : list[str], query : str) -> dict[str, float] :
             doc_len = float(_bm25_document_lengths[doc_id])
             denom = tf + BM25_K1 * (1 - BM25_B + BM25_B * doc_len / _bm25_avgdl)
             doc_scores[doc_id] = doc_scores.get(doc_id, 0.0) + idf * (tf * (BM25_K1 + 1)) / denom
+    return doc_scores
 
-    # Score each video by the MAX across its windows (a single strong hit
-    # matters more than many weak ones) -- one pass over the sparse matched
-    # docs, not over every window of every video.
-    video_best : dict[str, float] = {}
-    for doc_id, score in doc_scores.items() :
+
+def _best_windows_bm25(video_ids : list[str], query : str) -> dict[str, tuple[float, int]] :
+    """video id -> (raw BM25 score, doc id) of the window that DECIDED that
+    video's score, for the requested videos that match at all. A video is
+    scored by the MAX across its windows (a single strong hit matters more
+    than many weak ones), and this keeps which window that was, so the frame
+    reported for the video can be the one the rank came from instead of
+    whichever window happens to share a word with the query.
+
+    Ties (equal score) go to the EARLIEST window, then the lowest doc id. The
+    old `score > best` comparison let whichever document the scoring loop met
+    first win, and that order follows the sorted query tokens, not time.
+
+    Scores are raw, not normalized: normalization depends on the set of
+    requested videos, see _normalize_bm25(). Returns {} when BM25 is not
+    loaded."""
+    _load_bm25()
+    if not _bm25_loaded :
+        return {}
+
+    wanted = set(video_ids)
+    best : dict[str, tuple[float, float, int]] = {}  # video -> (score, start_s, doc_id)
+    for doc_id, score in _bm25_doc_scores(query).items() :
         video_id = _bm25_doc_video_ids[doc_id]
         if video_id not in wanted :
             continue
-        if (video_id not in video_best) or (score > video_best[video_id]) :
-            video_best[video_id] = score
+        start_s = float(_bm25_doc_start_s[doc_id])
+        current = best.get(video_id)
+        if (current is None) or (score > current[0]) or (
+                score == current[0] and (start_s, doc_id) < (current[1], current[2])) :
+            best[video_id] = (score, start_s, doc_id)
+    return {video_id : (score, doc_id) for video_id, (score, _start_s, doc_id) in best.items()}
 
-    max_score = max(video_best.values(), default=0.0)
+
+def _normalize_bm25(best : dict[str, tuple[float, int]], video_ids : list[str]) -> dict[str, float] :
+    """Normalized (0..1, rounded to 4 places) score per requested video, 0.0
+    for a video with no match -- the normalization _annotate_bm25() has always
+    applied, kept in one place so text_lookup ranks videos with exactly the
+    same numbers (rounding creates ties that are broken by video id)."""
+    max_score = max((score for score, _doc_id in best.values()), default=0.0)
     if max_score <= 0 :
         return {video_id : 0.0 for video_id in video_ids}
-    return {video_id : round(video_best.get(video_id, 0.0) / max_score, 4)
+    return {video_id : round(best[video_id][0] / max_score if video_id in best else 0.0, 4)
             for video_id in video_ids}
+
+
+def _annotate_bm25(video_ids : list[str], query : str) -> dict[str, float] :
+    """Normalized (0..1) BM25 relevance per requested video_id, 0.0 for a
+    video with no match. Pure scorer -- attribution to a specific frame is
+    text_lookup.py's job (it calls _best_windows_bm25() for that), not this
+    function's. Return type and values are unchanged; it is now a thin wrapper
+    over _best_windows_bm25()."""
+    _load_bm25()
+    if not _bm25_loaded :
+        return {video_id : 0.0 for video_id in video_ids}
+    return _normalize_bm25(_best_windows_bm25(video_ids, query), video_ids)
 
 
 # ── entry point ──────────────────────────────────────────────────────────
