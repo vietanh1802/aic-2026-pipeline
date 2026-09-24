@@ -14,7 +14,8 @@ export type Screen =
   | "evaluation"
   | "retrieval-benchmark"
   | "import"
-  | "export";
+  | "export"
+  | "dres";
 
 // Thứ tự công việc trong một vòng thi, từ trái sang: nhập đề → chọn câu → tìm →
 // đọ bài → nộp.
@@ -37,6 +38,9 @@ const NAV: { id: Screen; label: string; adminOnly?: boolean }[] = [
   { id: "evaluation", label: "Evaluation" },
   { id: "retrieval-benchmark", label: "Benchmark", adminOnly: true },
   { id: "export", label: "Export" },
+  // Vòng chung kết không nộp file: mỗi câu nộp thẳng lên DRES và được chấm
+  // ngay. Đứng cuối vì nó thay chỗ Export ở vòng đó.
+  { id: "dres", label: "DRES" },
 ];
 
 export default function AppNav({
@@ -47,6 +51,7 @@ export default function AppNav({
   answerCount,
   rowsPerQuery,
   onOpenBasket,
+  dresPending = 0,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
@@ -55,6 +60,8 @@ export default function AppNav({
   answerCount: number;
   rowsPerQuery: number;
   onOpenBasket: () => void;
+  /** Số đề xuất DRES đang chờ duyệt — 0 với người không được duyệt. */
+  dresPending?: number;
 }) {
   // Tab "Lịch sử" không nằm trong NAV vì nó không phải một màn cố định: nó
   // thuộc về MỘT câu, và chỉ có nghĩa khi đang ở khu vực tìm kiếm. Ở Board hay
@@ -108,6 +115,11 @@ export default function AppNav({
           }`}
         >
           {item.label}
+          {item.id === "dres" && dresPending > 0 && (
+            <span className="ml-1.5 px-1.5 rounded-full bg-[#c64545] text-white text-[11px] font-bold">
+              {dresPending}
+            </span>
+          )}
         </button>
       ))}
 

@@ -311,6 +311,65 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ON evaluation_query_results(run_id, ordinal)",
         ),
     ),
+    (
+        9,
+        (
+            # Nộp bài vòng chung kết lên DRES (app/dres.py).
+            #
+            # dres_config chỉ có MỘT dòng (id = 1): cả đội dùng chung một tài
+            # khoản DRES. Mật khẩu lưu dạng rõ vì server phải tự đăng nhập lại
+            # khi phiên DRES hết hạn giữa buổi thi; nó không bao giờ được trả ra
+            # qua API. Bảng riêng chứ không nhét vào `settings`: settings là
+            # danh sách khoá có kiểu, đọc được một phần từ trình duyệt thành
+            # viên, không phải chỗ để bí mật.
+            "CREATE TABLE dres_config ("
+            "  id               INTEGER PRIMARY KEY CHECK (id = 1),"
+            "  base_url         TEXT NOT NULL,"
+            "  username         TEXT NOT NULL,"
+            "  password         TEXT NOT NULL,"
+            "  session_id       TEXT,"
+            "  evaluation_id    TEXT,"
+            "  evaluation_name  TEXT,"
+            # Ai được bấm gửi lên DRES: 'admin_only' (mặc định — thành viên đề
+            # xuất, admin duyệt) hoặc 'everyone' (ai tìm ra thì người đó nộp
+            # luôn, nhanh hơn vài giây mỗi câu). Admin đổi trên tab DRES.
+            "  submit_mode      TEXT NOT NULL DEFAULT 'admin_only'"
+            "                   CHECK (submit_mode IN ('admin_only', 'everyone')),"
+            "  updated_by       INTEGER REFERENCES users(id),"
+            "  updated_at       TEXT NOT NULL"
+            ")",
+            # Mỗi đề xuất nộp là một dòng, kể cả khi bị từ chối: nộp sai trừ 10
+            # điểm, nên phải trả lời được "ai đề xuất, ai duyệt, gửi đúng chuỗi
+            # gì, DRES trả gì". payload là JSON gửi đi NGUYÊN VĂN — thứ admin
+            # thấy trong hộp xác nhận cũng là thứ đi ra mạng.
+            #
+            # status: proposed → sending → sent | failed ; proposed → rejected.
+            # 'sending' là khoá: chỉ một lần duyệt chiếm được dòng, nên bấm đúp
+            # hay hai admin cùng bấm không thành hai lần nộp (hai lần trừ điểm).
+            "CREATE TABLE dres_submissions ("
+            "  id               INTEGER PRIMARY KEY,"
+            "  created_at       TEXT NOT NULL,"
+            "  proposed_by      INTEGER NOT NULL REFERENCES users(id),"
+            "  task_type        TEXT NOT NULL,"
+            "  video_id         TEXT NOT NULL,"
+            "  frames           TEXT NOT NULL,"
+            "  times_ms         TEXT NOT NULL,"
+            "  answer_text      TEXT,"
+            "  evaluation_id    TEXT NOT NULL,"
+            "  dres_task_name   TEXT,"
+            "  payload          TEXT NOT NULL,"
+            "  status           TEXT NOT NULL,"
+            "  reviewed_by      INTEGER REFERENCES users(id),"
+            "  reviewed_at      TEXT,"
+            "  verdict          TEXT,"
+            "  dres_description TEXT,"
+            "  http_status      INTEGER,"
+            "  error            TEXT"
+            ")",
+            "CREATE INDEX idx_dres_submissions_created "
+            "ON dres_submissions(created_at DESC, id DESC)",
+        ),
+    ),
 )
 
 

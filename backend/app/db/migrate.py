@@ -21,6 +21,8 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 TABLES = (
     "answers",
     "audit_log",
+    "dres_config",
+    "dres_submissions",
     "edit_requests",
     "evaluation_datasets",
     "evaluation_queries",
