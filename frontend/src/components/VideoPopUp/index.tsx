@@ -355,7 +355,16 @@ export default function VideoPopup({
               setMarkIn(null);
               setMarkOut(null);
             }}
-            onSeek={(seconds) => setStartAt(seconds * 1000)}
+            // Old handler, kept for the record: only moved the target VALUE, so a
+            // second click on the same spot after scrubbing away with the native
+            // bar changed nothing (setStartAt got the value it already held and
+            // React bailed out). The request on top is the same event the
+            // candidate chips send (helpers/seekRequest.ts), so it seeks again.
+            //   onSeek={(seconds) => setStartAt(seconds * 1000)}
+            onSeek={(seconds) => {
+              setStartAt(seconds * 1000);
+              setSeekRequest((previous) => nextSeekRequest(previous, seconds));
+            }}
             // Read-only candidate markers ON the bar. A click on one is a click on
             // the bar, so it seeks to where it was made, exactly as before. The
             // overlay draws nothing when the bar is zoomed, when the duration is
