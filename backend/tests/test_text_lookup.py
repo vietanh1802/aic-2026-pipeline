@@ -1,10 +1,12 @@
 # backend/tests/test_text_lookup.py
 import json
+from dataclasses import asdict
 
 import numpy as np
 import pytest
 
 from app import ocr_search, preprocess, text_lookup, text_signal
+from app.text_signal import TextMatchMode, annotate_videos
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +27,8 @@ def reset_module_state(monkeypatch) :
     monkeypatch.setattr(text_signal, "_bm25_avgdl", 0.0)
     monkeypatch.setattr(text_signal, "_bm25_doc_video_ids", [])
     monkeypatch.setattr(text_signal, "_bm25_doc_texts", [])
+    monkeypatch.setattr(text_signal, "_bm25_doc_start_s", None)
+    monkeypatch.setattr(text_signal, "_bm25_doc_end_s", None)
     monkeypatch.setattr(text_lookup, "_windows_cache", None)
 
 
@@ -297,3 +301,272 @@ def test_preload_does_not_raise_on_a_corrupt_windows_jsonl(monkeypatch, tmp_path
     # "fail once, don't retry every call" shape as text_signal's own
     # _bm25_unavailable_reason latch.
     assert text_lookup._windows_cache == {}
+
+
+# ── ASR: the window that decided the rank, lazy resolution, new TextHit fields ──
+
+def _build_release(tmp_path, windows : list[tuple[str, float, float, str]]) -> str :
+    """Synthetic BM25 release from (video_id, start_s, end_s, text) tuples, in
+    windows.jsonl file order (== doc id order). Same on-disk schema as
+    _write_bm25_and_windows(), but with arbitrary documents."""
+    release_dir = tmp_path / "release_b"
+    bm25_dir = release_dir / "bm25"
+    bm25_dir.mkdir(parents=True)
+
+    rows = [{"video_id" : video, "eligible" : True, "retrieval_text" : text,
+             "sample_start" : int(start * 1000), "sample_end" : int(end * 1000), "sample_rate" : 1000}
+            for video, start, end, text in windows]
+    with open(release_dir / "windows.jsonl", "w", encoding="utf-8") as f :
+        for row in rows :
+            f.write(json.dumps(row) + "\n")
+
+    postings : dict[str, dict[int, int]] = {}
+    lengths = []
+    for doc_id, (_video, _start, _end, text) in enumerate(windows) :
+        tokens = text_signal._bm25_tokenize(text)
+        lengths.append(len(tokens))
+        for token in tokens :
+            postings.setdefault(token, {})[doc_id] = postings.get(token, {}).get(doc_id, 0) + 1
+    vocabulary = sorted(postings)
+    doc_ids, term_freqs, offsets = [], [], [0]
+    for token in vocabulary :
+        for doc_id, tf in sorted(postings[token].items()) :
+            doc_ids.append(doc_id)
+            term_freqs.append(tf)
+        offsets.append(len(doc_ids))
+
+    with open(bm25_dir / "vocabulary.json", "w", encoding="utf-8") as f :
+        json.dump({"format_version" : "1.0", "tokens" : vocabulary}, f)
+    np.save(bm25_dir / "posting_doc_ids.npy", np.array(doc_ids, dtype=np.uint32))
+    np.save(bm25_dir / "posting_term_frequencies.npy", np.array(term_freqs, dtype=np.uint32))
+    np.save(bm25_dir / "posting_offsets.npy", np.array(offsets, dtype=np.uint64))
+    np.save(bm25_dir / "document_lengths.npy", np.array(lengths, dtype=np.uint32))
+    return str(release_dir)
+
+
+_FILLER = [("V_F", 0.0, 60.0, "mot hai ba bon nam"), ("V_F", 45.0, 105.0, "sau bay tam chin muoi"),
+           ("V_G", 0.0, 60.0, "xanh do tim vang den")]
+
+
+def _frames(video : str, indexes : list[int]) -> list[dict] :
+    return [_meta(f"{video}-0000-{i}.jpg", video, i) for i in indexes]
+
+
+def test_asr_reports_the_window_with_more_query_tokens_not_the_first_one(monkeypatch, tmp_path) :
+    """The L25_V075 shape: the FIRST window shares one word with the query, a
+    later window has all of them. The frame must come from the later one."""
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 0.0, 60.0, "thi thi thi la mot tu"),        # doc0: 1 of 3 tokens, repeated
+        ("V_A", 400.0, 460.0, "thi hien tai dang dien ra"),  # doc1: all 3 tokens
+    ] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_A" : _frames("V_A", [0, 5000, 10000, 10500])})
+
+    hits = text_lookup.lookup_text("thi hien tai", source="asr", scope="corpus")
+    assert [(h.video_id, h.frame_name, h.doc_id) for h in hits] == [("V_A", "V_A-0000-10000.jpg", 1)]  # 400 s = frame 10000
+
+
+def test_asr_two_token_shape_also_picks_the_later_window(monkeypatch, tmp_path) :
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 0.0, 60.0, "thi la mot tu"), ("V_A", 400.0, 460.0, "thi hien dang dien ra")] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_A" : _frames("V_A", [0, 10000])})
+
+    hits = text_lookup.lookup_text("thi hien", source="asr", scope="corpus")
+    assert hits[0].frame_name == "V_A-0000-10000.jpg"
+
+
+def test_asr_equal_scores_resolve_to_the_earliest_window_whatever_the_doc_order(monkeypatch, tmp_path) :
+    """Two identical windows score identically. The LATER doc id starts EARLIER
+    (documents out of time order): the earliest start must win, not the doc the
+    scoring loop met first."""
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 400.0, 460.0, "meo ngoi tren tham"),   # doc0, later in time
+        ("V_A", 40.0, 100.0, "meo ngoi tren tham"),    # doc1, earlier in time
+    ] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_A" : _frames("V_A", [1000, 10000])})
+
+    for _ in range(3) :  # deterministic, not an iteration-order accident
+        best = text_signal._best_windows_bm25(["V_A"], "meo")
+        assert best["V_A"][1] == 1
+    hits = text_lookup.lookup_text("meo", source="asr", scope="corpus")
+    assert hits[0].frame_name == "V_A-0000-1000.jpg" and hits[0].doc_id == 1  # 40 s = frame 1000
+
+
+def test_asr_equal_score_and_equal_start_resolve_to_the_lowest_doc_id(monkeypatch, tmp_path) :
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 40.0, 100.0, "meo ngoi tren tham"), ("V_A", 40.0, 100.0, "meo ngoi tren tham")] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    assert text_signal._best_windows_bm25(["V_A"], "meo")["V_A"][1] == 0
+
+
+def _multi_video_release(tmp_path, monkeypatch) :
+    """V_K has the best score but no keyframes (a K01-K20 stand-in), V_X is
+    second, V_Y third, V_Z fourth. All four match "meo"."""
+    release_dir = _build_release(tmp_path, [
+        ("V_K", 10.0, 70.0, "meo meo meo meo"), ("V_X", 20.0, 80.0, "meo meo meo ngoi"),
+        ("V_Y", 30.0, 90.0, "meo meo ngoi tren"), ("V_Z", 40.0, 100.0, "meo ngoi tren tham xanh")] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_X" : _frames("V_X", [500, 600]), "V_Y" : _frames("V_Y", [750]),
+                              "V_Z" : _frames("V_Z", [1000])})
+
+
+def _key(hit) :
+    return (hit.video_id, hit.frame_name, hit.match_type, hit.rank, hit.total_matched, hit.doc_id)
+
+
+def test_asr_only_videos_gives_the_same_hits_as_full_resolution(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    full = text_lookup._lookup_asr("meo", "corpus", None)
+    assert [h.video_id for h in full] == ["V_X", "V_Y", "V_Z"]  # V_K has no keyframes: dropped, rank 1 left as a gap
+    assert [h.rank for h in full] == [2, 3, 4] and {h.total_matched for h in full} == {4}
+
+    # V_Y and V_Z are requested; V_X (outranks both) and V_K (outranks all) are not.
+    lazy = text_lookup._lookup_asr("meo", "corpus", None, only_videos={"V_Y", "V_Z"})
+    assert [_key(h) for h in lazy] == [_key(h) for h in full if h.video_id in {"V_Y", "V_Z"}]
+    assert "V_X" not in {h.video_id for h in lazy}
+
+
+def test_lookup_text_batch_asr_matches_a_full_lookup_for_the_requested_videos(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    full = text_lookup._lookup_asr("meo", "corpus", None)
+    batch = text_lookup.lookup_text_batch("meo", "asr", ["V_Z", "V_K", "V_GHOST"])
+    assert [_key(h) for h in batch["V_Z"]] == [_key(h) for h in full if h.video_id == "V_Z"]
+    assert batch["V_K"] == [] and batch["V_GHOST"] == []  # K-video and unknown video stay excluded
+
+
+def test_asr_video_without_keyframes_is_excluded_with_and_without_only_videos(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    assert "V_K" not in {h.video_id for h in text_lookup._lookup_asr("meo", "corpus", None)}
+    assert text_lookup._lookup_asr("meo", "corpus", None, only_videos={"V_K"}) == []
+    # scope="video" is unchanged too: no keyframes means no hit.
+    assert text_lookup._lookup_asr("meo", "video", "V_K") == []
+
+
+def test_asr_hits_carry_doc_id_and_no_exact_phrase(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    hits = text_lookup.lookup_text("meo", source="asr", scope="corpus")
+    assert all(isinstance(h.doc_id, int) and h.exact_phrase is None for h in hits)
+
+
+def test_ocr_hits_carry_exact_phrase_and_no_doc_id(monkeypatch) :
+    _set_corpus(monkeypatch, {"V1" : _frames("V1", [100, 200])})
+    for name, text in (("V1-0000-100.jpg", "quan an cho lon"), ("V1-0000-200.jpg", "cho o lon quan an")) :
+        ocr_search._display[name] = text
+        ocr_search._haystack["with_marks"][name] = text
+        ocr_search._haystack["no_marks"][name] = text
+
+    hits = {h.frame_name : h for h in text_lookup.lookup_text("quan an cho lon", source="ocr", scope="corpus")}
+    assert hits["V1-0000-100.jpg"].exact_phrase is True    # the whole phrase
+    assert hits["V1-0000-200.jpg"].exact_phrase is False   # the same words, scattered
+    assert all(h.doc_id is None for h in hits.values())
+
+
+def test_text_hit_still_accepts_the_original_five_positional_fields() :
+    hit = text_lookup.TextHit("V1", "V1-0000-1.jpg", "exact", 3, 9)
+    assert (hit.rank, hit.total_matched, hit.exact_phrase, hit.doc_id) == (3, 9, None, None)
+
+
+def test_annotate_bm25_keeps_its_return_type_and_values(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    scores = text_signal._annotate_bm25(["V_X", "V_Y", "V_NONE"], "meo")
+    assert list(scores) == ["V_X", "V_Y", "V_NONE"] and all(isinstance(v, float) for v in scores.values())
+    assert scores["V_NONE"] == 0.0 and 0 < scores["V_Y"] < scores["V_X"] == 1.0  # normalized over the requested videos
+    best = text_signal._best_windows_bm25(["V_X", "V_Y", "V_NONE"], "meo")
+    assert scores == text_signal._normalize_bm25(best, ["V_X", "V_Y", "V_NONE"])
+
+
+# ── match detail for bm25 (ASR) and the corpus-only rank fields ─────────────
+
+def _detail_of(video : str, term : str, frames : dict[str, list[str]]) :
+    return annotate_videos([video], term, TextMatchMode.bm25, frames)[video].asr
+
+
+def _l25_shape(tmp_path, monkeypatch) :
+    """The L25_V075 shape: the first window shares one word with the query, the
+    best window (400-460 s) holds all three."""
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 0.0, 60.0, "xin chao cac ban thi la mot tu rat hay"),
+        ("V_A", 400.0, 460.0, "hom nay hoc thi hien tai don va thi hien tai tiep dien cac ban nhe"),
+    ] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_A" : _frames("V_A", [0, 5000, 10000, 10500])})
+    return {"V_A" : ["V_A-0000-0.jpg"]}
+
+
+def test_bm25_detail_full_match_lists_every_query_token_and_marks_them(monkeypatch, tmp_path) :
+    frames = _l25_shape(tmp_path, monkeypatch)
+    asr = _detail_of("V_A", "thi hien tai", frames)
+    detail = asr.detail
+    assert asr.match_frame == "V_A-0000-10000.jpg"                 # the best window, not the first one
+    assert (detail.matched_terms, detail.terms_total) == (["thi", "hien", "tai"], 3)
+    assert {text for text, is_hit in detail.snippet if is_hit} == {"thi", "hien", "tai"}
+    assert (detail.start_s, detail.end_s, detail.time_approx) == (400.0, 460.0, True)
+    assert detail.start_s <= detail.at_s <= detail.end_s
+    assert detail.at_s > 400.0 and detail.exact_phrase is None
+
+
+def test_bm25_detail_partial_single_and_repeated_query_tokens(monkeypatch, tmp_path) :
+    frames = _l25_shape(tmp_path, monkeypatch)
+    partial = _detail_of("V_A", "thi hien khongco", frames).detail
+    assert (partial.matched_terms, partial.terms_total) == (["thi", "hien"], 3)
+    single = _detail_of("V_A", "hien", frames).detail
+    assert (single.matched_terms, single.terms_total) == (["hien"], 1)
+    repeated = _detail_of("V_A", "hien hien thi", frames).detail
+    assert (repeated.matched_terms, repeated.terms_total) == (["hien", "thi"], 2)  # distinct, in query order
+
+
+def test_bm25_detail_moment_follows_the_densest_cluster_inside_the_window(monkeypatch, tmp_path) :
+    early = " ".join(["day", "la", "cau", "dai"] * 20)
+    release_dir = _build_release(tmp_path, [
+        ("V_A", 100.0, 160.0, early + " meo ngu " + early)] + _FILLER)
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", release_dir)
+    _set_corpus(monkeypatch, {"V_A" : _frames("V_A", [2500, 3500, 4000])})
+    detail = _detail_of("V_A", "meo", {"V_A" : ["V_A-0000-2500.jpg"]}).detail
+    assert 100.0 <= detail.at_s <= 160.0
+    assert abs(detail.at_s - 130.0) < 5.0  # the match sits in the middle of the window's text
+
+
+def test_corpus_rank_ignores_videos_without_keyframes_that_hold_raw_ranks(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)  # V_K: raw rank 1, no keyframes
+    frames = {"V_X" : ["V_X-0000-500.jpg"], "V_Y" : ["V_Y-0000-750.jpg"], "V_Z" : ["V_Z-0000-1000.jpg"]}
+    result = annotate_videos(["V_X", "V_Y", "V_Z"], "meo", TextMatchMode.bm25, frames)
+    assert [(v, result[v].asr.detail.rank, result[v].asr.detail.total_matched) for v in ("V_X", "V_Y", "V_Z")] == [
+        ("V_X", 1, 3), ("V_Y", 2, 3), ("V_Z", 3, 3)]
+    raw = {h.video_id : (h.rank, h.total_matched) for h in text_lookup._lookup_asr("meo", "corpus", None)}
+    assert raw == {"V_X" : (2, 4), "V_Y" : (3, 4), "V_Z" : (4, 4)}  # TextHit.rank / total_matched keep their raw meaning
+
+
+def test_lazy_resolution_still_gives_the_same_corpus_rank(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    full = {h.video_id : (h.corpus_video_rank, h.corpus_videos_matched) for h in text_lookup._lookup_asr("meo", "corpus", None)}
+    lazy = {h.video_id : (h.corpus_video_rank, h.corpus_videos_matched)
+            for h in text_lookup._lookup_asr("meo", "corpus", None, only_videos={"V_Z"})}
+    assert lazy == {"V_Z" : full["V_Z"]} and full["V_Z"] == (3, 3)
+
+
+def test_asr_video_scope_leaves_the_corpus_rank_empty(monkeypatch, tmp_path) :
+    _multi_video_release(tmp_path, monkeypatch)
+    hits = text_lookup._lookup_asr("meo", "video", "V_X")
+    assert [(h.corpus_video_rank, h.corpus_videos_matched) for h in hits] == [(None, None)]
+
+
+def test_ocr_hits_get_dense_video_ranks_by_first_appearance(monkeypatch) :
+    _set_corpus(monkeypatch, {"V1" : _frames("V1", [100, 200, 300]), "V2" : _frames("V2", [100])})
+    for name, text in (("V1-0000-100.jpg", "quan an cho lon"), ("V1-0000-200.jpg", "cho lon"), ("V2-0000-100.jpg", "lon")) :
+        ocr_search._display[name] = text
+        ocr_search._haystack["with_marks"][name] = text
+        ocr_search._haystack["no_marks"][name] = text
+    by_video = text_lookup.lookup_text_batch("lon", "ocr", ["V1", "V2"])
+    ranks = {(h.video_id, h.frame_name) : (h.corpus_video_rank, h.corpus_videos_matched) for hits in by_video.values() for h in hits}
+    assert {value for value in ranks.values()} == {(1, 2), (2, 2)}          # two videos, whatever the frame count
+    assert len({v for (video, _), v in ranks.items() if video == "V1"}) == 1  # both V1 frames share V1's rank
+
+
+def test_detail_survives_json_and_keeps_the_original_source_keys(monkeypatch, tmp_path) :
+    frames = _l25_shape(tmp_path, monkeypatch)
+    annotation = annotate_videos(["V_A"], "thi hien tai", TextMatchMode.bm25, frames)["V_A"]
+    payload = json.loads(json.dumps(asdict(annotation), ensure_ascii=False))
+    assert {"match_frame", "match_type", "location"} <= set(payload["asr"]) and "detail" in payload["asr"]
+    assert payload["ocr"]["detail"] is None and payload["ocr"]["location"] == "none"

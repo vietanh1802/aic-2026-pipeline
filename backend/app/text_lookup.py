@@ -60,6 +60,23 @@ class TextHit :
     match_type    : Literal["exact", "normalized"]
     rank          : int
     total_matched : int
+    # Added at the END with defaults so every positional TextHit(video, frame,
+    # type, rank, total) call (text_lookup, text_signal, tests) keeps working.
+    # exact_phrase: OCR only, True when the frame holds the whole typed phrase
+    # rather than its words scattered (ocr_search's own row["exact_phrase"], for
+    # the pass this hit came from); None for ASR. doc_id: ASR only, the BM25
+    # document (window) that decided the video's rank; None for OCR.
+    exact_phrase  : Optional[bool] = None
+    doc_id        : Optional[int] = None
+    # CORPUS-ONLY video rank and matched-video count, for display ("#3 of 412
+    # videos"). `rank` stays the raw rank: for ASR it also counts the K01-K20
+    # videos that can never be shown (BM25 covers 1,478 videos, the corpus 873).
+    # Set by _lookup_asr() (position among the corpus videos, in raw rank order)
+    # and by lookup_text_batch() for OCR (dense video rank: order of first
+    # appearance in the frame-ranked hits); None wherever a source has no video
+    # ranking (substring/regex ASR scans).
+    corpus_video_rank      : Optional[int] = None
+    corpus_videos_matched  : Optional[int] = None
 
 
 def lookup_text(
@@ -98,9 +115,16 @@ def lookup_text_batch(
     result set to the requested video_ids in memory, which is cheap. Never
     raises, same as lookup_text()."""
     try :
-        hits = _lookup_ocr(term, "corpus", None) if source == "ocr" else _lookup_asr(term, "corpus", None)
+        # ASR ranks every scored video but only resolves a frame for the
+        # videos asked for: annotate_videos() wants ~60 of ~800 matches, and
+        # resolving the rest (a scan of every keyframe of every video) was most
+        # of the cost. The hits it returns are identical, see _lookup_asr().
+        hits = (_lookup_ocr(term, "corpus", None) if source == "ocr"
+                else _lookup_asr(term, "corpus", None, only_videos=set(video_ids)))
     except Exception :
         hits = []
+    if source == "ocr" :
+        _set_dense_video_ranks(hits)
     out : dict[str, list[TextHit]] = {video_id : [] for video_id in video_ids}
     wanted = set(video_ids)
     for hit in hits :
@@ -110,6 +134,18 @@ def lookup_text_batch(
 
 
 # ── OCR ──────────────────────────────────────────────────────────────────
+
+def _set_dense_video_ranks(hits : list[TextHit]) -> None :
+    """Fill corpus_video_rank / corpus_videos_matched for OCR hits: videos are
+    ranked by first appearance in the frame-ranked hit list (a video's rank is
+    that of its best frame), so two frames of one video never take two ranks."""
+    order : dict[str, int] = {}
+    for hit in hits :
+        order.setdefault(hit.video_id, len(order) + 1)
+    for hit in hits :
+        hit.corpus_video_rank = order[hit.video_id]
+        hit.corpus_videos_matched = len(order)
+
 
 def _lookup_ocr(term : str, scope : str, video_id : Optional[str]) -> list[TextHit] :
     allowed = set(preprocess.frames_for_video(video_id)) if scope == "video" else None
@@ -134,7 +170,8 @@ def _lookup_ocr(term : str, scope : str, video_id : Optional[str]) -> list[TextH
             elif not preprocess.frames_for_video(hit_video) :
                 continue  # outside the 873-video visual corpus
 
-            hits.append(TextHit(hit_video, name, tag, row["rank"], total_matched))
+            hits.append(TextHit(hit_video, name, tag, row["rank"], total_matched,
+                                exact_phrase=row.get("exact_phrase")))
             seen.add(name)
 
     return hits
@@ -214,24 +251,53 @@ def _nearest_keyframe(video_id : str, time_s : float) -> Optional[str] :
     return min(names, key=lambda name : abs(_frame_idx(name) - target))
 
 
-def _nearest_frame_for_term(video_id : str, term : str) -> Optional[str] :
-    windows = _windows_by_video().get(video_id)
-    if not windows :
-        return None
-    tokens = set(text_signal._bm25_tokenize(term))
-    match = next((w for w in windows if tokens & set(text_signal._bm25_tokenize(w.text))), None)
-    if match is None :
-        return None
-    return _nearest_keyframe(video_id, match.start_s)
+# Replaced by the best-window lookup in _lookup_asr(). Kept for reference, not
+# deleted: it returned the FIRST window in time order that shares ANY query token
+# with the term, which is not the window that decided the video's BM25 rank (for
+# "thì hiện tại" on L25_V075 it reported frame 3, 0.12 s in, while the best window
+# is 810-870 s; it differed from the best window in 87% of 834 matched videos).
+# It also re-tokenized that video's windows on every call.
+#
+# def _nearest_frame_for_term(video_id : str, term : str) -> Optional[str] :
+#     windows = _windows_by_video().get(video_id)
+#     if not windows :
+#         return None
+#     tokens = set(text_signal._bm25_tokenize(term))
+#     match = next((w for w in windows if tokens & set(text_signal._bm25_tokenize(w.text))), None)
+#     if match is None :
+#         return None
+#     return _nearest_keyframe(video_id, match.start_s)
 
 
-def _lookup_asr(term : str, scope : str, video_id : Optional[str]) -> list[TextHit] :
+def _lookup_asr(
+        term : str,
+        scope : str,
+        video_id : Optional[str],
+        only_videos : Optional[set[str]] = None,
+) -> list[TextHit] :
+    """One representative TextHit per matching video: the nearest keyframe to
+    the start of the BM25 window that decided the video's score (ties go to the
+    earliest window, see text_signal._best_windows_bm25()).
+
+    Ranks are RAW and un-renumbered: they count every scored video, including
+    the K01-K20 videos that were never keyframe-extracted (BM25 covers 1,478
+    videos, the visual corpus 873), and total_matched is the number of scored
+    videos. Dropping a video afterwards (no keyframes) leaves a gap in the ranks.
+
+    only_videos (default None = every video, today's behaviour): rank
+    enumeration still runs over ALL scored videos, so ranks and total_matched
+    are identical, but the frame resolution and the hit creation happen only
+    for the videos in the set. The hits returned for those videos are the same
+    ones a full run would return for them. (The corpus-membership check still
+    runs for every scored video, because corpus_video_rank counts them; it is a
+    dictionary lookup, the frame resolution was the expensive part.)"""
     text_signal._load_bm25()
     if not text_signal._bm25_loaded :
         return []
 
     candidates = [video_id] if scope == "video" else sorted(set(text_signal._bm25_doc_video_ids))
-    scores = text_signal._annotate_bm25(candidates, term)
+    best_windows = text_signal._best_windows_bm25(candidates, term)
+    scores = text_signal._normalize_bm25(best_windows, candidates)
 
     scored = sorted(
         ((vid, score) for vid, score in scores.items() if score > 0),
@@ -239,11 +305,24 @@ def _lookup_asr(term : str, scope : str, video_id : Optional[str]) -> list[TextH
     total_matched = len(scored)
 
     hits : list[TextHit] = []
+    corpus_rank = 0
     for rank, (vid, _score) in enumerate(scored, 1) :
-        if scope == "corpus" and not preprocess.frames_for_video(vid) :
-            continue  # outside the 873-video visual corpus
-        frame_name = _nearest_frame_for_term(vid, term)
+        if scope == "corpus" :
+            if not preprocess.frames_for_video(vid) :
+                continue  # outside the 873-video visual corpus
+            # Counted for EVERY corpus video, requested or not: the corpus-only
+            # rank of a requested video is the number of corpus videos ranked
+            # ahead of it, so this membership test cannot be made lazy.
+            corpus_rank += 1
+        if (only_videos is not None) and (vid not in only_videos) :
+            continue
+        doc_id = best_windows[vid][1]
+        frame_name = _nearest_keyframe(vid, float(text_signal._bm25_doc_start_s[doc_id]))
         if frame_name is None :
             continue
-        hits.append(TextHit(vid, frame_name, "exact", rank, total_matched))
+        hits.append(TextHit(vid, frame_name, "exact", rank, total_matched, doc_id=doc_id,
+                            corpus_video_rank=(corpus_rank if scope == "corpus" else None)))
+    if scope == "corpus" :
+        for hit in hits :
+            hit.corpus_videos_matched = corpus_rank
     return hits
