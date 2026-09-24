@@ -1,5 +1,6 @@
 # backend/tests/test_text_lookup.py
 import json
+import re
 from dataclasses import asdict
 
 import numpy as np
@@ -570,3 +571,224 @@ def test_detail_survives_json_and_keeps_the_original_source_keys(monkeypatch, tm
     payload = json.loads(json.dumps(asdict(annotation), ensure_ascii=False))
     assert {"match_frame", "match_type", "location"} <= set(payload["asr"]) and "detail" in payload["asr"]
     assert payload["ocr"]["detail"] is None and payload["ocr"]["location"] == "none"
+
+
+# ── multi-term OCR lookup: lookup_text_batch_multi() ────────────────────────
+
+_MULTI_TEXTS = {
+    "V1-0000-1.jpg" : "Quán ăn Chợ Lớn",
+    "V1-0000-2.jpg" : "chợ nổi",
+    "V1-0000-3.jpg" : "thịt bò nướng",
+    "V2-0000-1.jpg" : "Nước sôi, thịt bò",
+    "V2-0000-2.jpg" : "nuoc soi",
+    "V2-0000-3.jpg" : "Nước soi va lửa",
+    "V3-0000-1.jpg" : "nghêu hấp",
+    "V3-0000-2.jpg" : "xxx",
+    "V4-0000-1.jpg" : "Chợ Lớn thịt bò",
+    "K1-0000-1.jpg" : "chợ lớn thịt bò",  # video outside the visual corpus (no keyframes)
+}
+_MULTI_VIDEOS = ["V1", "V2", "V3", "V4", "K1", "GHOST"]
+
+
+def _multi_corpus(monkeypatch) -> None :
+    """Real backing dicts of ocr_search, filled the way _load() fills them; K1 has
+    OCR text but no entry in the visual corpus."""
+    videos : dict[str, list[dict]] = {}
+    for name in _MULTI_TEXTS :
+        video, _block, tail = name.split("-")
+        if video != "K1" :
+            videos.setdefault(video, []).append(_meta(name, video, int(tail.split(".")[0])))
+    _set_corpus(monkeypatch, videos)
+    for name, text in _MULTI_TEXTS.items() :
+        ocr_search._display[name] = text
+        ocr_search._haystack["with_marks"][name] = text.lower()
+        ocr_search._haystack["no_marks"][name] = ocr_search._strip_marks(text).lower()
+
+
+def _reference_multi_ocr(terms : list[str], video_ids : list[str]) -> dict[str, list] :
+    """The multi-term OCR rules restated with plain loops and no shared code:
+    per pass and per term "every word of the term is in the text, whole phrase or
+    not"; a term is exact when the exact pass matched it; frames order by most
+    terms, exact tier first, more whole-phrase terms, shorter text, name; rank and
+    total are the frame's position and the size of its own pass; the video rank is
+    the order of first appearance of the video in the frame ranking."""
+    def words(needle : str) -> set[str] :
+        return {word for word in re.split(r"[^0-9a-zA-ZÀ-ỹ]+", needle) if word}
+
+    per_pass : dict[str, dict[str, list]] = {"exact" : {}, "normalized" : {}}
+    for tier, folded in (("exact", False), ("normalized", True)) :
+        for name, text in _MULTI_TEXTS.items() :
+            haystack = (ocr_search._strip_marks(text) if folded else text).lower()
+            found = []
+            for index, term in enumerate(terms) :
+                needle = (ocr_search._strip_marks(term) if folded else term).lower().strip()
+                if needle and all(word in haystack for word in words(needle)) :
+                    found.append((index, needle in haystack))
+            if found :
+                per_pass[tier][name] = found
+
+    pass_rank = {}
+    for tier, frames in per_pass.items() :
+        ordered = sorted(frames, key = lambda name : (-len(frames[name]), -sum(1 for _i, phrase in frames[name] if phrase),
+                                                       len(_MULTI_TEXTS[name]), name))
+        pass_rank[tier] = {name : rank for rank, name in enumerate(ordered, 1)}
+
+    merged : dict[str, list] = {}
+    for name in _MULTI_TEXTS :
+        if name.startswith("K1-") :
+            continue  # outside the visual corpus
+        by_term = {}
+        for tier in ("normalized", "exact") :  # the exact pass overrides
+            for index, phrase in per_pass[tier].get(name, []) :
+                by_term[index] = (tier, phrase)
+        if by_term :
+            merged[name] = [(index, *by_term[index]) for index in sorted(by_term)]
+
+    def key(name : str) -> tuple :
+        hits = merged[name]
+        return (-len(hits), int(any(tier == "normalized" for _i, tier, _p in hits)),
+                -sum(1 for _i, _t, phrase in hits if phrase), len(_MULTI_TEXTS[name]), name)
+
+    ranking = sorted(merged, key = key)
+    video_order : list[str] = []
+    for name in ranking :
+        if name.split("-")[0] not in video_order :
+            video_order.append(name.split("-")[0])
+
+    out : dict[str, list] = {}
+    for video in video_ids :
+        out[video] = []
+        for name in ranking :
+            if name.split("-")[0] != video :
+                continue
+            hits = merged[name]
+            tier = "normalized" if any(t == "normalized" for _i, t, _p in hits) else "exact"
+            out[video].append(text_lookup.TextHit(
+                video, name, tier, pass_rank[tier][name], len(per_pass[tier]), exact_phrase = all(p for _i, _t, p in hits),
+                corpus_video_rank = video_order.index(video) + 1, corpus_videos_matched = len(video_order),
+                term_hits = tuple(hits) if len(terms) > 1 else None))
+    return out
+
+
+@pytest.mark.parametrize("term", ["chợ lớn", "lớn chợ", "chợ", "cho lon", "nước", "nuoc", "sôi", "thịt bò", "thit bo",
+                                  "quán ăn", "xxx", "zzz", "(", "-", "🙂", "", "   "])
+def test_multi_lookup_with_one_term_equals_lookup_text_batch(monkeypatch, term) :
+    """Proof (a): a list of ONE term gives exactly the hits of lookup_text_batch()
+    once its row cap is out of the way (token-less terms included: search()'s
+    quirk of matching every frame carries over). term_hits stays None."""
+    _multi_corpus(monkeypatch)
+    monkeypatch.setattr(text_lookup, "OCR_LIMIT", 10 ** 6)
+    assert text_lookup.lookup_text_batch_multi([term], "ocr", _MULTI_VIDEOS) == text_lookup.lookup_text_batch(term, "ocr", _MULTI_VIDEOS)
+
+
+def test_the_one_term_proof_really_compares_hits(monkeypatch) :
+    _multi_corpus(monkeypatch)
+    monkeypatch.setattr(text_lookup, "OCR_LIMIT", 10 ** 6)
+    hits = text_lookup.lookup_text_batch_multi(["chợ lớn"], "ocr", _MULTI_VIDEOS)
+    assert [hit.frame_name for hit in hits["V1"]] == ["V1-0000-1.jpg"] and hits["V1"][0].exact_phrase is True
+    assert hits["K1"] == [] and hits["GHOST"] == [] and hits["V1"][0].term_hits is None
+    assert len(text_lookup.lookup_text_batch("(", "ocr", _MULTI_VIDEOS)["V3"]) == 2  # the quirk: every frame
+
+
+@pytest.mark.parametrize("terms", [
+    ["chợ lớn", "thịt bò"], ["nước", "sôi"], ["nuoc", "thịt bò", "lửa"], ["quán ăn", "lớn chợ"], ["nghêu", "xxx", "zzz"],
+    ["cho", "lon"], ["chợ", "chợ lớn"], ["zzz", "qqq"], ["Nước", "NƯỚC", "nuoc"], ["", "thịt bò"], ["xxx", "chợ lớn", "nổi"],
+])
+def test_multi_lookup_equals_a_brute_force_reference(monkeypatch, terms) :
+    """Proof (b): the same hits, ranks, totals, tiers, phrase flags and term_hits
+    as a plain restatement of the rules on a small synthetic corpus."""
+    _multi_corpus(monkeypatch)
+    assert text_lookup.lookup_text_batch_multi(terms, "ocr", _MULTI_VIDEOS) == _reference_multi_ocr(terms, _MULTI_VIDEOS)
+
+
+def test_a_two_term_frame_outranks_a_one_term_frame(monkeypatch) :
+    """Proof (c)."""
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["chợ lớn", "thịt bò"], "ocr", _MULTI_VIDEOS)
+    assert hits["V4"][0].term_hits == ((0, "exact", True), (1, "exact", True))
+    assert hits["V4"][0].corpus_video_rank == 1
+    assert all(len(hit.term_hits) == 1 for video in ("V1", "V2") for hit in hits[video])
+    assert min(hit.corpus_video_rank for video in ("V1", "V2") for hit in hits[video]) > 1
+    assert hits["V1"][0].frame_name == "V1-0000-3.jpg"  # equal terms and tier: the shorter text wins
+
+
+def test_exact_and_folded_matches_merge_per_frame_with_the_worst_tier(monkeypatch) :
+    """Proof (d): a term is exact when the exact pass matched it, else normalized,
+    and the frame's tier is the worst of its terms."""
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["nước", "sôi"], "ocr", _MULTI_VIDEOS)["V2"]
+    assert [hit.frame_name for hit in hits] == ["V2-0000-1.jpg", "V2-0000-2.jpg", "V2-0000-3.jpg"]
+    assert [hit.match_type for hit in hits] == ["exact", "normalized", "normalized"]
+    assert hits[0].term_hits == ((0, "exact", True), (1, "exact", True))
+    assert hits[1].term_hits == ((0, "normalized", True), (1, "normalized", True))
+    assert hits[2].term_hits == ((0, "exact", True), (1, "normalized", True))  # mixed: exact nước, folded sôi
+
+
+def test_exact_phrase_is_true_only_when_every_matched_term_is_a_whole_phrase(monkeypatch) :
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["quán ăn", "lớn chợ"], "ocr", ["V1"])["V1"]
+    assert hits[0].frame_name == "V1-0000-1.jpg" and hits[0].term_hits == ((0, "exact", True), (1, "exact", False))
+    assert hits[0].exact_phrase is False   # "quán ăn" is a phrase there, "lớn chợ" is scattered words
+    only_phrase = text_lookup.lookup_text_batch_multi(["quán ăn", "nổi"], "ocr", ["V1"])["V1"]
+    assert only_phrase[0].exact_phrase is True
+
+
+def test_multi_lookup_excludes_videos_outside_the_corpus(monkeypatch) :
+    """Proof (e): K1 holds the text but has no keyframes; it is neither returned
+    nor counted in corpus_videos_matched."""
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["chợ lớn", "thịt bò"], "ocr", ["K1", "V4"])
+    assert hits["K1"] == [] and hits["V4"][0].corpus_videos_matched == 3   # V4, V1, V2 (not K1)
+
+
+def test_multi_lookup_dense_video_ranks(monkeypatch) :
+    """Proof (f): a video ranks by its best frame, two frames of one video share the
+    rank, and the total counts corpus videos with at least one match."""
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["chợ", "thịt bò", "nước"], "ocr", ["V1", "V2", "V3", "V4"])
+    ranks = {video : {hit.corpus_video_rank for hit in frames} for video, frames in hits.items()}
+    assert all(len(video_ranks) == 1 for video_ranks in ranks.values() if video_ranks)
+    assert hits["V3"] == [] and ranks["V3"] == set()
+    ordered = sorted((next(iter(video_ranks)), video) for video, video_ranks in ranks.items() if video_ranks)
+    assert [rank for rank, _video in ordered] == [1, 2, 3] and {hit.corpus_videos_matched for frames in hits.values() for hit in frames} == {3}
+
+
+def test_multi_lookup_ignores_the_single_term_row_cap(monkeypatch) :
+    """Proof (g): OCR_LIMIT truncates lookup_text_batch(); the multi path keeps
+    every matching frame."""
+    _multi_corpus(monkeypatch)
+    monkeypatch.setattr(text_lookup, "OCR_LIMIT", 1)
+    capped = text_lookup.lookup_text_batch("thịt bò", "ocr", _MULTI_VIDEOS)
+    assert sum(len(frames) for frames in capped.values()) == 1          # only the single best row of each pass survives (the same frame)
+    multi = text_lookup.lookup_text_batch_multi(["thịt bò", "zzz"], "ocr", _MULTI_VIDEOS)
+    assert {video : [hit.frame_name for hit in frames] for video, frames in multi.items() if frames} == {
+        "V1" : ["V1-0000-3.jpg"], "V2" : ["V2-0000-1.jpg"], "V4" : ["V4-0000-1.jpg"]}
+
+
+def test_multi_lookup_only_builds_hits_for_the_requested_videos(monkeypatch) :
+    _multi_corpus(monkeypatch)
+    hits = text_lookup.lookup_text_batch_multi(["chợ lớn", "thịt bò"], "ocr", ["V1"])
+    assert list(hits) == ["V1"] and hits["V1"][0].corpus_videos_matched == 3   # ranks still count every corpus video
+
+
+def test_multi_lookup_never_raises_and_logs_the_failure(monkeypatch, caplog) :
+    _multi_corpus(monkeypatch)
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ocr_search, "search_terms", boom)
+    with caplog.at_level("ERROR", logger = text_lookup.logger.name) :
+        hits = text_lookup.lookup_text_batch_multi(["a", "b"], "ocr", ["V1", "V2"])
+    assert hits == {"V1" : [], "V2" : []}
+    assert sum("multi-term OCR lookup failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_multi_lookup_supports_ocr_only() :
+    with pytest.raises(ValueError) :
+        text_lookup.lookup_text_batch_multi(["a", "b"], "asr", ["V1"])  # type: ignore[arg-type]
+
+
+def test_term_hits_field_defaults_to_none_and_keeps_positional_construction() :
+    hit = text_lookup.TextHit("V1", "V1-0000-1.jpg", "exact", 3, 9)
+    assert hit.term_hits is None and hit == text_lookup.TextHit("V1", "V1-0000-1.jpg", "exact", 3, 9, None, None, None, None)

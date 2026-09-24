@@ -42,6 +42,7 @@ renumbered after that drop, they reflect the full, unfiltered search.
 """
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Literal, Optional
@@ -49,6 +50,8 @@ from typing import Literal, Optional
 from app import ocr_search
 from app import preprocess
 from app import text_signal
+
+logger = logging.getLogger(__name__)
 
 OCR_LIMIT = 5000  # generous cap on returned rows; all_word_matches/rank are unaffected by it
 
@@ -77,6 +80,13 @@ class TextHit :
     # ranking (substring/regex ASR scans).
     corpus_video_rank      : Optional[int] = None
     corpus_videos_matched  : Optional[int] = None
+    # Multi-term substring filters only (lookup_text_batch_multi() and the ASR
+    # multi-term path of text_signal.py): which terms this frame matched, as a tuple
+    # of (term index, match_type, whole_phrase) in term order. match_type above is
+    # then the WORST tier among these terms. whole_phrase is the OCR whole-phrase
+    # flag of that term, None for ASR. None everywhere else, and for a list of
+    # exactly ONE term, so single-term hits stay equal to today's.
+    term_hits              : Optional[tuple] = None
 
 
 def lookup_text(
@@ -133,6 +143,50 @@ def lookup_text_batch(
     return out
 
 
+def lookup_text_batch_multi(
+        terms : list[str],
+        source : Literal["ocr"],
+        video_ids : list[str],
+) -> dict[str, list[TextHit]] :
+    """Multi-term sibling of lookup_text_batch() for the OCR substring filter:
+    a frame matches when at least ONE of the terms does (each term by
+    ocr_search's own rule: every word of that term, whole-phrase bonus), and the
+    hit says which terms (TextHit.term_hits, None for a list of exactly one term).
+    Two scans (exact, then accents folded) for ALL terms, not two per term, see
+    ocr_search.search_terms(). Same shape as lookup_text_batch(): the requested
+    video ids mapped to their hits, best frame first.
+
+    Differences from lookup_text_batch() worth knowing:
+      * NO row cap. OCR_LIMIT truncates the single-term path to the 5,000 best
+        frames per pass (a common word like "nước" has 10,372), which silently
+        drops videos and undercounts "of N videos"; a union of terms would make
+        that worse, so this path keeps every matching frame.
+      * a term is "exact" on a frame when it matched in the exact pass, else
+        "normalized" (folded pass only); the frame's match_type is the WORST tier
+        among its matched terms, and exact_phrase is True only if EVERY matched
+        term matched as a whole phrase.
+      * frames order by: most terms matched, exact before normalized, more
+        whole-phrase terms, shorter text, name. For one term that is exactly
+        ocr_search's own order, so ONE term gives the same hits as
+        lookup_text_batch() with the cap lifted (test_text_lookup.py proves it).
+      * rank / total_matched are, as before, the frame's position and the size of
+        its OWN pass (the exact pass for an exact frame, the folded pass
+        otherwise), under the ordering above; corpus_video_rank is the dense rank
+        of the video's best frame over all corpus videos and corpus_videos_matched
+        the number of corpus videos with at least one match.
+
+    Only source "ocr" exists here (ASR substring has its own per-video scanner in
+    text_signal.py). Never raises for a lookup failure, same philosophy as
+    lookup_text_batch(): it is logged and every video comes back with no hits."""
+    if source != "ocr" :
+        raise ValueError("lookup_text_batch_multi supports source='ocr' only")
+    try :
+        return _lookup_ocr_multi(terms, video_ids)
+    except Exception :
+        logger.exception("[text_lookup] multi-term OCR lookup failed (reporting no OCR match)")
+        return {video_id : [] for video_id in video_ids}
+
+
 # ── OCR ──────────────────────────────────────────────────────────────────
 
 def _set_dense_video_ranks(hits : list[TextHit]) -> None :
@@ -175,6 +229,80 @@ def _lookup_ocr(term : str, scope : str, video_id : Optional[str]) -> list[TextH
             seen.add(name)
 
     return hits
+
+
+def _merge_frame_terms(exact_entry : Optional[tuple], folded_entry : Optional[tuple]) -> list[tuple[int, str, bool]] :
+    """[(term index, tier, whole_phrase)] of one frame in term order, from its
+    entries of the exact-pass and folded-pass ocr_search.search_terms() results
+    (None when the pass did not see the frame). A term is "exact" when the exact
+    pass matched it, else "normalized", and takes the whole-phrase flag of the pass
+    that decided its tier, as lookup_text() does per hit."""
+    merged : dict[int, tuple[str, bool]] = {}
+    if folded_entry is not None :
+        for index, phrase in folded_entry[1] :
+            merged[index] = ("normalized", phrase)
+    if exact_entry is not None :
+        for index, phrase in exact_entry[1] :
+            merged[index] = ("exact", phrase)
+    return [(index, merged[index][0], merged[index][1]) for index in sorted(merged)]
+
+
+def _lookup_ocr_multi(terms : list[str], video_ids : list[str]) -> dict[str, list[TextHit]] :
+    """Body of lookup_text_batch_multi(), see there for the rules.
+
+    Cost shape: the two search_terms() scans, then ONE cheap pass over every
+    matched frame that computes a sort key and keeps only each video's best key
+    (the dense video ranks need ALL corpus videos), and TextHit objects and
+    term_hits are built only for the REQUESTED videos (about 100 of 800+)."""
+    wanted = set(video_ids)
+    exact_found = ocr_search.search_terms(terms, strip_diacritics=False)
+    folded_found = ocr_search.search_terms(terms, strip_diacritics=True)
+
+    # Position and size of each pass, for TextHit.rank / total_matched (the values
+    # lookup_text_batch() reads from ocr_search's own rows). Ranks are only kept for
+    # frames of requested videos.
+    pass_rank : dict[str, dict[str, int]] = {}
+    pass_total : dict[str, int] = {}
+    for tier, found in (("exact", exact_found), ("normalized", folded_found)) :
+        ordered = sorted(found, key=lambda name : (-len(found[name][1]), -sum(1 for _term, phrase in found[name][1] if phrase),
+                                                    found[name][0], name))
+        pass_rank[tier] = {name : rank for rank, name in enumerate(ordered, 1) if name.split("-")[0] in wanted}
+        pass_total[tier] = len(found)
+
+    in_corpus : dict[str, bool] = {}   # per-video memo: frames_for_video() builds a list on every call
+    best_key : dict[str, tuple] = {}   # video -> sort key of its best frame, every corpus video
+    rows : dict[str, list[tuple[tuple, list]]] = {}   # requested videos only: (key, term hits) per frame
+    for name in exact_found.keys() | folded_found.keys() :
+        video = name.split("-")[0]
+        inside = in_corpus.get(video)
+        if inside is None :
+            inside = in_corpus[video] = bool(preprocess.frames_for_video(video))
+        if not inside :
+            continue  # outside the 873-video visual corpus, same exclusion as _lookup_ocr()
+        exact_entry, folded_entry = exact_found.get(name), folded_found.get(name)
+        term_hits = _merge_frame_terms(exact_entry, folded_entry)
+        key = (-len(term_hits),
+               1 if any(tier == "normalized" for _term, tier, _phrase in term_hits) else 0,
+               -sum(1 for _term, _tier, phrase in term_hits if phrase),
+               (exact_entry or folded_entry)[0],
+               name)
+        if (video not in best_key) or (key < best_key[video]) :
+            best_key[video] = key
+        if video in wanted :
+            rows.setdefault(video, []).append((key, term_hits))
+
+    video_rank = {video : rank for rank, video in enumerate(sorted(best_key, key=best_key.get), 1)}
+    out : dict[str, list[TextHit]] = {video_id : [] for video_id in video_ids}
+    for video, frames in rows.items() :
+        frames.sort(key=lambda row : row[0])
+        for key, term_hits in frames :
+            name, tier = key[4], ("normalized" if key[1] else "exact")
+            out[video].append(TextHit(
+                video, name, tier, pass_rank[tier][name], pass_total[tier],
+                exact_phrase=all(phrase for _term, _tier, phrase in term_hits),
+                corpus_video_rank=video_rank[video], corpus_videos_matched=len(video_rank),
+                term_hits=(tuple(term_hits) if len(terms) > 1 else None)))
+    return out
 
 
 # ── ASR ──────────────────────────────────────────────────────────────────
