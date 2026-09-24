@@ -1,4 +1,4 @@
-// useSearchStore.ts
+// frontend/src/store/useSearchStore.ts
 
 import { create } from "zustand";
 import type { VideoAnnotation } from "../types/api";
@@ -57,6 +57,20 @@ interface SearchState {
   toggleShowOnlyPinned: () => void;
 
   /**
+   * View option: one card per video in the frame results grid, showing the
+   * video's best frame (helpers/groupResults.ts). Default off.
+   *
+   * A VIEW preference, so it lives here beside showOnlyPinned and not in
+   * queryStore: it is not a search parameter. Consequently it is not cleared
+   * by a new search (setResults leaves it alone, like focusVideos), not reset
+   * by clearFocus, and not recorded by searchStateRecorder - "Coi X làm" replays
+   * someone else's query and parameters and must not override how the viewer
+   * chose to look at the results.
+   */
+  onePerVideo: boolean;
+  toggleOnePerVideo: () => void;
+
+  /**
    * Per-video text-signal annotations from the last /ensemble-search response
    * (video_id -> VideoAnnotation). null when text_filter was empty or the
    * last search wasn't ensemble — TextSignalBadge treats null the same as a
@@ -87,6 +101,9 @@ export const useSearchStore = create<SearchState>((set) => ({
   showOnlyPinned: false,
   toggleShowOnlyPinned: () =>
     set((state) => ({ showOnlyPinned: !state.showOnlyPinned })),
+
+  onePerVideo: false,
+  toggleOnePerVideo: () => set((state) => ({ onePerVideo: !state.onePerVideo })),
 
   videoAnnotations: null,
   setVideoAnnotations: (annotations) => set({ videoAnnotations: annotations }),
