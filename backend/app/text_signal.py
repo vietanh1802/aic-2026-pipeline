@@ -1079,6 +1079,21 @@ def _ocr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optio
     raise ValueError(f"unknown OCR mode: {mode}")
 
 
+# ── multi-term substring filters: where each rule lives ─────────────────────
+#
+# "lửa, nước" in the split ASR / OCR filters, substring mode only (multi_term=True):
+#
+#   terms          split_terms()       separators, decimal comma, duplicates, cap of five
+#   plan / source  _plan_terms()       no terms = inactive, one = today's single-term code, two or more = below
+#   ASR scan       _asr_multi_hits()   one hit per frame, from _substring_matches_multi() (per-text memo,
+#                                      the per-text rule of _substring_hits(), see _classify_text())
+#   OCR scan       text_lookup.lookup_text_batch_multi()   on ocr_search.search_terms(), no OCR_LIMIT row cap
+#   best frame     _choose_hit()       most terms, then exact, then "here", then list order (ASR: earliest
+#                                      frame; OCR: whole-phrase terms, then shorter text)
+#   detail         describe_match(terms=) -> _describe_multi()   matched_terms in typed order, terms_total
+#
+# bm25, regex and the legacy text_filter never split; one term after splitting is today's code, byte for byte.
+
 def _plan_terms(query : str) -> tuple[Optional[str], Optional[list[str]]] :
     """How ONE substring source is searched when multi_term is on, from its
     stripped, non-empty query: (query, terms).
