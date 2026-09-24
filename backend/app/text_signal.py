@@ -201,18 +201,25 @@ class MatchDetail :
 
     snippet        -- [[text, is_hit], ...] segments of the matched text; never
                       ** markers or offsets (see the block comment further down)
-    matched_terms  -- bm25 only: distinct query tokens found in the chosen
-                      window, in query order; [] otherwise
-    terms_total    -- bm25 only: distinct query tokens; 0 otherwise
+    matched_terms  -- bm25: distinct query tokens found in the chosen window, in
+                      query order. Multi-term substring filter (ASR or OCR, two or
+                      more terms typed): the terms found on the chosen frame, in
+                      typed order. [] otherwise
+    terms_total    -- bm25: distinct query tokens. Multi-term substring filter: the
+                      number of terms (also when only some matched, "1 of 2").
+                      0 otherwise, a single-term search included
     at_s           -- best-estimate moment, in seconds from the video start
     start_s, end_s -- bm25 only: the transcript window's range; None otherwise
     time_approx    -- True only for the bm25 estimate (position inside a 60 s
                       window; frame-based sources report the frame's own time)
     rank, total_matched -- CORPUS-ONLY video rank and matched-video count (bm25
-                      and OCR substring); None for the per-frame ASR substring
-                      and regex scans, which rank nothing
+                      and OCR substring, one term or several: the rank of the
+                      video's best frame, videos matching more terms first); None
+                      for the per-frame ASR substring and regex scans, which
+                      rank nothing
     exact_phrase   -- OCR only: the frame holds the whole phrase, not its words
-                      scattered; None otherwise"""
+                      scattered (with several terms: True only if EVERY matched
+                      term matched as a whole phrase); None otherwise"""
     snippet       : list[list]
     matched_terms : list[str]
     terms_total   : int
@@ -252,11 +259,24 @@ class VideoAnnotation :
 
 # ── combining TextHits into a SourceMatch ───────────────────────────────
 
+# Previous _choose_hit(), kept for reference (replaced by the version below, which
+# adds a leading "most terms matched" component that is 0 for every single-term hit):
+#
+# def _choose_hit(hits : list, here : list[str]) :
+#     return min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
+#                                       0 if h.frame_name in here else 1))
+
 def _choose_hit(hits : list, here : list[str]) :
-    """The TextHit that represents a source. Preference order: an "exact"
-    match_type beats "normalized" first; within the same match_type, a frame
-    already in this query's result set ("here") beats one that is not."""
-    return min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
+    """The TextHit that represents a source. Preference order: the frame that
+    matched the MOST terms first (multi-term substring filters, TextHit.term_hits;
+    a hit without term_hits counts 0, so single-term hits all tie here and their
+    order is exactly what it always was); then an "exact" match_type beats
+    "normalized" (for several terms the tier is the worst among the frame's terms);
+    then a frame already in this query's result set ("here") beats one that is not.
+    Remaining ties keep the order of `hits`: earliest frame for ASR, the OCR
+    ranking for OCR."""
+    return min(hits, key=lambda h : (-len(h.term_hits or ()),
+                                      0 if h.match_type == "exact" else 1,
                                       0 if h.frame_name in here else 1))
 
 
@@ -933,19 +953,51 @@ def _describe_bm25(hit, term : str) -> MatchDetail :
         exact_phrase=None)
 
 
+def _describe_multi(hit, source : str, terms : list[str]) -> MatchDetail :
+    """Detail of a multi-term substring match: the chosen frame's text with EVERY
+    term it holds highlighted. Spans are built per term with the existing
+    machinery and that term's OWN tier (an accent-folded span pattern is a superset
+    of the literal one, so a term matched only after folding needs the folded
+    pattern while an exact one on the same frame must stay literal), then
+    concatenated: _snippet_segments() already merges overlapping and adjacent spans
+    ("nước" inside "nước sôi") and _snippet_bounds() already picks the window with
+    the most DISTINCT matched strings, so the window holding both terms wins over
+    one holding a single term three times. matched_terms follow the typed order
+    (hit.term_hits is in term order), terms_total counts every typed term.
+    rank / total_matched / exact_phrase are the hit's own (see
+    text_lookup.lookup_text_batch_multi); ASR carries none."""
+    from app import text_lookup  # deferred: text_lookup imports this module
+
+    text = (asr_text.get_text if source == "asr" else ocr_search.get_text)(hit.frame_name)
+    spans : list[tuple[int, int]] = []
+    for index, tier, _whole_phrase in hit.term_hits :
+        spans += _substring_spans(text, terms[index], tier, scatter=(source == "ocr"))
+    at_s = text_lookup._frame_idx(hit.frame_name) / preprocess.fps_for_video(hit.video_id)
+    return MatchDetail(
+        snippet=_snippet_segments(text, spans), matched_terms=[terms[index] for index, _tier, _phrase in hit.term_hits],
+        terms_total=len(terms), at_s=round(at_s, 3), start_s=None, end_s=None, time_approx=False,
+        rank=hit.corpus_video_rank, total_matched=hit.corpus_videos_matched, exact_phrase=hit.exact_phrase)
+
+
 def describe_match(hit, source : str, mode : TextMatchMode, term : str,
-                   pattern : Optional[re.Pattern] = None) -> MatchDetail :
+                   pattern : Optional[re.Pattern] = None, terms : Optional[list[str]] = None) -> MatchDetail :
     """MatchDetail for the TextHit chosen to represent `source` ("asr" or
     "ocr") of one video. Frame-based sources (substring, regex, OCR) report the
     frame's own time; bm25 reports the estimate described in _describe_bm25().
     rank / total_matched are the corpus-only video rank the hit carries (bm25
     and OCR substring), None for the per-frame substring/regex ASR scans, which
     rank nothing. May raise on inconsistent input: annotate_videos() isolates
-    that per source."""
+    that per source.
+
+    terms: the typed terms of a multi-term substring filter. A substring hit that
+    carries term_hits AND comes with its terms is described by _describe_multi();
+    every other call is exactly what it always was."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
     if mode == TextMatchMode.bm25 :
         return _describe_bm25(hit, term)
+    if (mode == TextMatchMode.substring) and (terms is not None) and (hit.term_hits is not None) :
+        return _describe_multi(hit, source, terms)
 
     text = (asr_text.get_text if source == "asr" else ocr_search.get_text)(hit.frame_name)
     if mode == TextMatchMode.regex :
@@ -976,6 +1028,25 @@ def _mode_label(asr_mode : Optional[Enum], ocr_mode : Optional[Enum]) -> str :
         return "mixed"
     active = asr_mode if asr_mode is not None else ocr_mode
     return active.value if active is not None else ""
+
+
+def _asr_multi_hits(video_id : str, terms : list[str], get_text) -> list :
+    """TextHits of one video for the multi-term ASR substring filter: one hit per
+    frame that holds at least one term, in frame order, so _choose_hit()'s
+    remaining ties go to the EARLIEST frame. match_type is the worst tier among the
+    frame's terms and term_hits lists (term index, tier, None) for each term found
+    (ASR has no whole-phrase flag). rank / total_matched are the position among and
+    the number of the video's matching frames; nothing ranks ASR substring videos,
+    so the corpus ranks stay None."""
+    from app import text_lookup  # deferred: text_lookup imports this module
+
+    matches = _substring_matches_multi(video_id, terms, get_text)
+    hits = []
+    for rank, (name, kinds) in enumerate(matches, 1) :
+        term_hits = tuple((index, kind, None) for index, kind in enumerate(kinds) if kind)
+        tier = "normalized" if any(kind == "normalized" for _index, kind, _phrase in term_hits) else "exact"
+        hits.append(text_lookup.TextHit(video_id, name, tier, rank, len(matches), term_hits=term_hits))
+    return hits
 
 
 def _asr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optional[re.Pattern],

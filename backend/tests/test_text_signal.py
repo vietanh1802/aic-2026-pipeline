@@ -1280,3 +1280,184 @@ def test_multi_term_scan_classifies_each_distinct_text_once_per_term(monkeypatch
     monkeypatch.setattr(text_signal, "_classify_text", lambda *args : calls.append(args[0]) or real(*args))
     text_signal._substring_matches_multi("V1", ["ngo", "co", "zzz"], lambda name : texts[name])
     assert len(calls) == 2 * 3 and sorted(set(calls)) == ["khong co", "rau ngò"]
+
+
+# ── multi-term best frame: _choose_hit() and _asr_multi_hits() ──────────────
+
+def _multi_hit(name : str, tier : str, terms : tuple = (0, 1)) :
+    """A TextHit shaped like the multi-term paths build them (term_hits set)."""
+    return text_lookup.TextHit("V1", name, tier, 1, 1, term_hits = tuple((index, tier, None) for index in terms) or None)
+
+
+def test_choose_hit_prefers_most_terms_then_exact_then_here_then_list_order() :
+    two_normalized_elsewhere = _multi_hit("V1-0000-1.jpg", "normalized")
+    one_exact_here = _multi_hit("V1-0000-2.jpg", "exact", (0,))
+    assert text_signal._choose_hit([one_exact_here, two_normalized_elsewhere], ["V1-0000-2.jpg"]) is two_normalized_elsewhere
+
+    two_exact_elsewhere = _multi_hit("V1-0000-3.jpg", "exact")
+    two_normalized_here = _multi_hit("V1-0000-4.jpg", "normalized")
+    assert text_signal._choose_hit([two_normalized_here, two_exact_elsewhere], ["V1-0000-4.jpg"]) is two_exact_elsewhere
+
+    first, second = _multi_hit("V1-0000-5.jpg", "exact"), _multi_hit("V1-0000-6.jpg", "exact")
+    assert text_signal._choose_hit([first, second], ["V1-0000-6.jpg"]) is second   # here beats elsewhere
+    assert text_signal._choose_hit([first, second], []) is first                   # remaining ties: list order (earliest)
+    assert text_signal._choose_hit([second, first], []) is second
+
+
+def test_choose_hit_is_unchanged_for_single_term_hits() :
+    """A hit without term_hits counts 0 terms: the original two-key order."""
+    def plain(name : str, tier : str) :
+        return text_lookup.TextHit("V1", name, tier, 1, 1)
+
+    normalized_here, exact_elsewhere = plain("V1-0000-1.jpg", "normalized"), plain("V1-0000-2.jpg", "exact")
+    assert text_signal._choose_hit([normalized_here, exact_elsewhere], ["V1-0000-1.jpg"]) is exact_elsewhere
+    exact_here = plain("V1-0000-3.jpg", "exact")
+    assert text_signal._choose_hit([exact_elsewhere, exact_here], ["V1-0000-3.jpg"]) is exact_here
+    assert text_signal._choose_hit([exact_elsewhere, plain("V1-0000-4.jpg", "exact")], []) is exact_elsewhere
+
+
+def test_asr_multi_hits_shape(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(4)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "", "nước sôi", "rau ngo nuoc"]))
+    hits = text_signal._asr_multi_hits("V1", ["ngo", "nuoc"], lambda name : texts[name])
+    assert [(hit.frame_name, hit.match_type, hit.term_hits, hit.rank, hit.total_matched) for hit in hits] == [
+        (names[0], "normalized", ((0, "normalized", None),), 1, 3),
+        (names[2], "normalized", ((1, "normalized", None),), 2, 3),
+        (names[3], "exact", ((0, "exact", None), (1, "exact", None)), 3, 3)]
+    assert all((hit.exact_phrase, hit.doc_id, hit.corpus_video_rank, hit.corpus_videos_matched) == (None, None, None, None) for hit in hits)
+
+
+def test_best_frame_of_a_video_shaped_like_the_real_example(monkeypatch) :
+    """L25_V010, "lửa, nước": 206 frames hold only "nước", 108 hold "lửa"
+    (accents ignored) plus "nước", 15 hold both exactly, 2 hold only "lửa" (accents
+    ignored). The card's own frame holds only "nước"; the old rule (exact, then
+    here, then list order, over the union) picked it, the most-terms rule must pick
+    the first frame that holds both terms exactly."""
+    blocks = [(206, "nước chảy"), (108, "lua va nước"), (15, "lửa và nước"), (2, "lua chay")]
+    texts, index = {}, 0
+    for count, text in blocks :
+        for _ in range(count) :
+            texts[f"V1-0000-{index}.jpg"] = text
+            index += 1
+    names = list(texts)
+    assert len(names) == 331
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", position) for position, name in enumerate(names)]})
+    terms = ["lửa", "nước"]
+    hits = text_signal._asr_multi_hits("V1", terms, lambda name : texts[name])
+    assert len(hits) == 331
+
+    shapes = {}
+    for hit in hits :
+        shapes.setdefault(tuple((terms[i], tier) for i, tier, _phrase in hit.term_hits), []).append(hit.frame_name)
+    assert {shape : len(frames) for shape, frames in shapes.items()} == {
+        (("nước", "exact"),) : 206, (("lửa", "normalized"), ("nước", "exact")) : 108,
+        (("lửa", "exact"), ("nước", "exact")) : 15, (("lửa", "normalized"),) : 2}
+
+    here = [names[10]]  # the card's own frame: only "nước"
+    old_rule = min(hits, key=lambda h : (0 if h.match_type == "exact" else 1, 0 if h.frame_name in here else 1))
+    assert old_rule.frame_name == names[10] and len(old_rule.term_hits) == 1
+
+    best = text_signal._choose_hit(hits, here)
+    assert best.frame_name == names[206 + 108] and len(best.term_hits) == 2 and best.match_type == "exact"
+    match = text_signal._best_match(hits, here)
+    assert (match.match_frame, match.match_type, match.location) == (names[314], "exact", "elsewhere")
+    # with the both-exact frames gone, the "lửa"(normalized)+"nước" frames win over the "nước"-only card frame
+    fewer = [hit for hit in hits if hit.term_hits != ((0, "exact", None), (1, "exact", None))]
+    assert text_signal._choose_hit(fewer, here).frame_name == names[206] and text_signal._choose_hit(fewer, here).match_type == "normalized"
+
+
+# ── multi-term detail: _describe_multi() through describe_match() ───────────
+
+def _asr_detail(monkeypatch, text : str, terms : list[str], frame_idx : int = 100, fps : float = 25.0) :
+    """(hit, detail) of a one-frame video whose ASR text is `text`."""
+    name = f"V1-0000-{frame_idx}.jpg"
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", frame_idx, fps = fps)]})
+    _mock_asr_text(monkeypatch, {name : text})
+    hits = text_signal._asr_multi_hits("V1", terms, text_signal.asr_text.get_text)
+    hit = text_signal._choose_hit(hits, [])
+    return hit, text_signal.describe_match(hit, "asr", TextMatchMode.substring, ", ".join(terms), None, terms = terms)
+
+
+def test_multi_detail_highlights_every_matched_term_and_lists_them_in_typed_order(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "lửa rồi nước", ["nước", "lửa"])
+    assert _hit_texts(detail.snippet) == ["lửa", "nước"] and _plain(detail.snippet) == "lửa rồi nước"
+    assert detail.matched_terms == ["nước", "lửa"] and detail.terms_total == 2      # typed order, not text order
+    assert (detail.at_s, detail.start_s, detail.end_s, detail.time_approx) == (4.0, None, None, False)
+    assert (detail.rank, detail.total_matched, detail.exact_phrase) == (None, None, None)   # ASR ranks nothing
+
+
+def test_multi_detail_partial_match_reports_found_versus_total(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "chỉ có nước thôi", ["nước", "lửa"])
+    assert detail.matched_terms == ["nước"] and detail.terms_total == 2 and _hit_texts(detail.snippet) == ["nước"]
+
+
+def test_multi_detail_overlapping_terms_merge_into_one_highlight(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "nước sôi trong nồi", ["nước", "nước sôi"])
+    assert _hit_texts(detail.snippet) == ["nước sôi"] and detail.matched_terms == ["nước", "nước sôi"]
+    _hit, adjacent = _asr_detail(monkeypatch, "cả lửanước đó", ["lửa", "nước"])   # touching spans merge as well
+    assert _plain(adjacent.snippet) == "cả lửanước đó" and _hit_texts(adjacent.snippet) == ["lửanước"]
+
+
+def test_multi_detail_uses_each_terms_own_tier_for_its_highlight(monkeypatch) :
+    hit, detail = _asr_detail(monkeypatch, "Nước soi", ["nước", "sôi"])
+    assert hit.term_hits == ((0, "exact", None), (1, "normalized", None)) and hit.match_type == "normalized"
+    assert _hit_texts(detail.snippet) == ["Nước", "soi"]   # literal for the exact term, accent-tolerant for the other
+
+
+def test_multi_detail_window_holding_both_terms_wins_over_a_denser_single_term_cluster(monkeypatch) :
+    text = "lửa " + "x " * 100 + "lửa cháy nước sôi " + "y " * 100 + "nước nước nước " + "z " * 40
+    _hit, detail = _asr_detail(monkeypatch, text, ["lửa", "nước"])
+    assert set(_hit_texts(detail.snippet)) == {"lửa", "nước"} and "cháy" in _plain(detail.snippet)
+    assert "nước nước" not in _plain(detail.snippet) and len(_plain(detail.snippet)) <= text_signal.SNIPPET_MAX_CHARS + 2 * text_signal._SNIPPET_EDGE_SLACK + 2
+
+
+def test_multi_detail_survives_astral_text_where_folded_terms_are_not_highlighted(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "🙂 nước và lua 🙂", ["nước", "lửa"])
+    assert detail.matched_terms == ["nước", "lửa"]               # "lửa" matched after folding
+    assert _hit_texts(detail.snippet) == ["nước"] and _plain(detail.snippet) == "🙂 nước và lua 🙂"   # no folded span above the BMP, no crash
+
+
+def test_multi_detail_is_json_serializable(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "rau ngò 🙂 và nước", ["ngo", "nước", "zzz"])
+    payload = json.loads(json.dumps(asdict(detail), ensure_ascii = False))
+    assert set(payload) == {"snippet", "matched_terms", "terms_total", "at_s", "start_s", "end_s", "time_approx", "rank",
+                            "total_matched", "exact_phrase"}          # no field was added to MatchDetail
+    assert payload["matched_terms"] == ["ngo", "nước"] and payload["terms_total"] == 3
+
+
+def test_multi_detail_ocr_rank_and_exact_phrase_rules(monkeypatch) :
+    """OCR: rank and total come from lookup_text_batch_multi() (the dense rank of
+    the video's best frame, videos matching more terms first); exact_phrase is True
+    only when EVERY matched term matched as a whole phrase."""
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-100.jpg", "V1", 100)], "V2" : [_meta("V2-0000-100.jpg", "V2", 100)]})
+    _set_ocr_text("V1-0000-100.jpg", "Quán ăn\nChợ Lớn", "quan an\ncho lon")
+    ocr_search._haystack["with_marks"]["V1-0000-100.jpg"] = "quán ăn\nchợ lớn"
+    _set_ocr_text("V2-0000-100.jpg", "chỉ có quán")
+    ocr_search._haystack["with_marks"]["V2-0000-100.jpg"] = "chỉ có quán"
+
+    terms = ["chợ lớn", "quán"]
+    hits = text_lookup.lookup_text_batch_multi(terms, "ocr", ["V1", "V2"])
+    detail = text_signal.describe_match(hits["V1"][0], "ocr", TextMatchMode.substring, "chợ lớn, quán", None, terms = terms)
+    assert _hit_texts(detail.snippet) == ["Quán", "Chợ Lớn"] and _plain(detail.snippet) == "Quán ăn Chợ Lớn"
+    assert (detail.matched_terms, detail.terms_total, detail.exact_phrase) == (["chợ lớn", "quán"], 2, True)
+    assert (detail.rank, detail.total_matched) == (1, 2)             # two terms beat V2's one
+    partial = text_signal.describe_match(hits["V2"][0], "ocr", TextMatchMode.substring, "chợ lớn, quán", None, terms = terms)
+    assert (partial.matched_terms, partial.terms_total, partial.rank, partial.total_matched) == (["quán"], 2, 2, 2)
+
+    scattered_terms = ["lớn chợ", "quán"]
+    scattered_hits = text_lookup.lookup_text_batch_multi(scattered_terms, "ocr", ["V1"])
+    scattered = text_signal.describe_match(scattered_hits["V1"][0], "ocr", TextMatchMode.substring, "lớn chợ, quán", None,
+                                           terms = scattered_terms)
+    assert scattered.exact_phrase is False                            # "lớn chợ" is only its words scattered
+    assert _hit_texts(scattered.snippet) == ["Quán", "Chợ", "Lớn"]   # each word of the scattered term is marked on its own
+
+
+def test_describe_match_ignores_terms_without_term_hits_and_in_other_modes(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, asr = "rau ngò rất tươi", frame_idx = 100)
+    single = text_signal._substring_hits("V1", "ngo", text_signal.asr_text.get_text)[0]
+    detail = text_signal.describe_match(single, "asr", TextMatchMode.substring, "ngo", None, terms = ["ngo", "x"])
+    assert (detail.matched_terms, detail.terms_total) == ([], 0) and _hit_texts(detail.snippet) == ["ngò"]
+    multi = text_signal._asr_multi_hits("V1", ["ngo", "x"], text_signal.asr_text.get_text)[0]
+    regex = text_signal.describe_match(multi, "asr", TextMatchMode.regex, "ng.", re.compile("ng.", re.IGNORECASE), terms = ["ngo", "x"])
+    assert (regex.matched_terms, regex.terms_total) == ([], 0)
