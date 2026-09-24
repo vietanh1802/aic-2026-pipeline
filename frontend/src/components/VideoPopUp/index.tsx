@@ -14,6 +14,7 @@ import { type AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
+import CandidateMarkers from "./CandidateMarkers";
 import CandidateStrip from "./CandidateStrip";
 import FrameMarkStrip from "./FrameMarkStrip";
 import { usePopupStore } from "../../store/popupStore";
@@ -324,6 +325,11 @@ export default function VideoPopup({
             durationS={stripDuration}
             currentTimeS={playhead}
             hidden={trakeSlot !== null}
+            // Header and chips only: the blocks themselves are drawn on the
+            // lower frame bar below (barOverlay), so one bar shows them together
+            // with the playhead and the marks. Was: the strip drew its own track
+            // (showTrack defaulted to true).
+            showTrack={false}
             // Same route as opening on that keyframe: the popup's target time
             // moves to startMsAt(video, frame), and frameId, the marks, +/-,
             // Frame_idx and Đầu/Cuối carry on from there untouched. The request
@@ -350,6 +356,19 @@ export default function VideoPopup({
               setMarkOut(null);
             }}
             onSeek={(seconds) => setStartAt(seconds * 1000)}
+            // Read-only candidate markers ON the bar. A click on one is a click on
+            // the bar, so it seeks to where it was made, exactly as before. The
+            // overlay draws nothing when the bar is zoomed, when the duration is
+            // not this video's (stripDuration, tagged), or wherever the strip
+            // above is hidden; it gets the same `hidden` and duration as the strip.
+            barOverlay={(scale) => (
+              <CandidateMarkers
+                videoId={videoId}
+                stripDuration={stripDuration}
+                hidden={trakeSlot !== null}
+                scale={scale}
+              />
+            )}
             // TRAKE nộp đúng khung đang dừng; KIS/Q&A nộp khung giữa hai đầu.
             // Hai đầu vẫn ghim được ở cả hai — với TRAKE chúng chảy vào ô
             // "từ/đến" của Điền tự động thay vì quyết định khung nộp.
