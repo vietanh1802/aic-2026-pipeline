@@ -1,9 +1,12 @@
+// frontend/src/components/FrameDisplay/index.tsx
+
 import { useEffect, useRef } from "react";
 import type { OcrSearchResult, SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
+import { frameClock, frameIndexFromResult } from "../../helpers/frameIdentity";
 import { describeTextFilter } from "../../helpers/textFilter";
 import TextSignalBadge from "../TextSignalBadge";
 import { useSearchStore } from "../../store/useSearchStore";
@@ -144,6 +147,10 @@ type FrameDisplayProps2 = {
   highlightLabel?: string;
 };
 
+// DEPRECATED - no callers left. Kept (not deleted) with the reason: it reads the
+// trailing number of a keyframe name as MILLISECONDS, but that number is the
+// frame index, so it shows the wrong time for every video (36128 -> 00:36.128,
+// really 20:05.472 at 29.97 fps). Use frameClock() in helpers/frameIdentity.ts.
 export function extractTimestamp(filename: string): string {
   const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
   const timestampMatch = nameWithoutExt.match(/-(\d+)$/);
@@ -182,9 +189,16 @@ const AGREEMENT_TITLE: Record<"both" | "one" | "none", string> = {
   none: "không rõ route",
 };
 
-// Timestamp từ backend, parse tên file chỉ khi backend không trả trường này.
+// The backend's timestamp, else one computed from frame_idx / fps (frameClock).
+// Old fallback, kept for the record: extractTimestamp(result.frame) read the
+// trailing frame number as milliseconds, so frame 36128 printed 00:36.128
+// instead of 00:20:05.472.
 function frameTimestamp(result: SearchResult): string {
-  return result.timestamp || extractTimestamp(result.frame);
+  return (
+    result.timestamp ||
+    frameClock(videoOf(result), frameIndexFromResult(result)) ||
+    "Unknown"
+  );
 }
 
 // Keyframe chưa tải ảnh: vẫn hiện ranking/tên/timestamp thay vì <img> vỡ.

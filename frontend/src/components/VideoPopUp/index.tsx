@@ -1,3 +1,5 @@
+// frontend/src/components/VideoPopUp/index.tsx
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
 import VideoDrive from "./VideoDisplay";
@@ -7,14 +9,18 @@ import { neighbourKeyframesFor } from "../../helpers/keyframes";
 
 import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
-import { extractTimestamp } from "../FrameDisplay";
+// import { extractTimestamp } from "../FrameDisplay"; // read the frame number as ms, see below
 import { type AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
 import FrameMarkStrip from "./FrameMarkStrip";
 import { usePopupStore } from "../../store/popupStore";
-import { startMsAt } from "../../helpers/frameIdentity";
+import {
+  frameClock,
+  frameIdxFromFrameId,
+  startMsAt,
+} from "../../helpers/frameIdentity";
 import { frameRange } from "../../helpers/frameRange";
 import type { MarkedRange } from "../../helpers/basketMath";
 
@@ -248,7 +254,15 @@ export default function VideoPopup({
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold">Timestamp :</span>
-                <span>{extractTimestamp(videoId + "-" + frameId)}</span>
+                {/* Computed from frame / fps: it equals the backend's
+                    timestamp_str (00:20:05.472) and needs nothing threaded in
+                    from the caller, since every way of opening the popup
+                    already gives a frame id. The old
+                    extractTimestamp(videoId + "-" + frameId) read the frame
+                    number as milliseconds and showed 00:36.128 for frame 36128. */}
+                <span>
+                  {frameClock(videoId, frameIdxFromFrameId(frameId)) || "Unknown"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold">Video FPS:</span>

@@ -1,3 +1,5 @@
+// frontend/src/App.tsx
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
@@ -22,6 +24,7 @@ import type {
 } from "./components/CandidateResults/types";
 import {
   frameIdFromName,
+  frameIndexFromResult,
   startMsAt,
   videoIdFromFrame,
 } from "./helpers/frameIdentity";
@@ -46,12 +49,14 @@ import type {
 } from "./types/api";
 import KeyframeFPS from "./mapping/fps_map.json";
 
-function frameIndexFromResult(result: SearchResult): number {
-  if (typeof result.frame_idx === "number") {
-    return result.frame_idx;
-  }
-  return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
-}
+// Moved to helpers/frameIdentity.ts (same body) so FrameDisplay's timestamp
+// fallback and the candidate-strip helper share one copy instead of three.
+// function frameIndexFromResult(result: SearchResult): number {
+//   if (typeof result.frame_idx === "number") {
+//     return result.frame_idx;
+//   }
+//   return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
+// }
 
 function startMsFromResult(result: SearchResult): number {
   return startMsAt(videoIdFromFrame(result.frame), frameIndexFromResult(result));
