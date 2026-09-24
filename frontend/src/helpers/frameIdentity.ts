@@ -8,14 +8,34 @@
  * second copy would be two places to fix the next time a filename changes shape.
  */
 import KeyframeFPS from "../mapping/fps_map.json";
+import { VIDEO_ID_PREFIX, parseFrameName } from "./frameRef";
 
-/** "L26_V194-0012-004707.jpg" -> "L26_V194" */
+/**
+ * "L26_V194-0012-004707.jpg" -> "L26_V194"; "N001-V001-0012-345.jpg" -> "N001-V001".
+ *
+ * Read from the right (parseFrameName), so a hyphen inside the id is fine. The
+ * fallback is the old behaviour for a name that is not scene-frame shaped:
+ * whatever video id it STARTS with, or "".
+ */
 export function videoIdFromFrame(frame: string): string {
-  return frame.match(/^([LK]\d{2}_V\d{3})/)?.[1] ?? "";
+  // Old: return frame.match(/^([LK]\d{2}_V\d{3})/)?.[1] ?? "";
+  // It only knew the L and K batches with an underscore.
+  return parseFrameName(frame)?.videoId ?? frame.match(VIDEO_ID_PREFIX)?.[1] ?? "";
 }
 
-/** "L26_V194-0012-004707.jpg" -> "0012-004707" */
+/**
+ * "L26_V194-0012-004707.jpg" -> "0012-004707" (scene and frame, padding kept).
+ *
+ * Old behaviour stays as the fallback for names parseFrameName rejects, so a
+ * name in a shape nobody planned for gives the same answer as before.
+ */
 export function frameIdFromName(name: string): string {
+  const parsed = parseFrameName(name);
+  if (parsed) {
+    return parsed.frameId;
+  }
+  // Old: the only path. Cut at the FIRST hyphen, which is wrong as soon as a
+  // video id contains one (N001-V001-0012-345 -> "V001-0012-345").
   const baseName = name.replace(/\.[^/.]+$/, "");
   return baseName.split("-").slice(1).join("-");
 }
@@ -51,6 +71,12 @@ export function frameIndexFromResult(result: {
   if (typeof result.frame_idx === "number") {
     return result.frame_idx;
   }
+  const parsed = parseFrameName(result.frame);
+  if (parsed) {
+    return parsed.frameIdx;
+  }
+  // Old: the only path. Still the fallback for a name parseFrameName rejects
+  // (a video id outside VIDEO_ID_PATTERN): it only needs the trailing number.
   return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
 }
 

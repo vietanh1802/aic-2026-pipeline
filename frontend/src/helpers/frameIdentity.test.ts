@@ -130,3 +130,69 @@ describe("frameIndexFromResult", () => {
     expect(frameIndexFromResult({ frame: "not-a-keyframe" })).toBe(0);
   });
 });
+
+describe("video ids from new batches", () => {
+  it.each([
+    ["M01_V001-0049-5059.jpg", "M01_V001", "0049-5059", 5059],
+    ["N001-V001-0012-345.jpg", "N001-V001", "0012-345", 345],
+    ["S01-V001-0001-7.jpg", "S01-V001", "0001-7", 7],
+  ])("reads %j", (name, video, frameId, frameIdx) => {
+    expect(videoIdFromFrame(name)).toBe(video);
+    expect(frameIdFromName(name)).toBe(frameId);
+    expect(frameIndexFromResult({ frame: name })).toBe(frameIdx);
+  });
+
+  it("no longer cuts a hyphenated id at its first hyphen", () => {
+    // The old frameIdFromName answered "V001-0012-345" here.
+    expect(frameIdFromName("N001-V001-0012-345.jpg")).toBe("0012-345");
+  });
+
+  it("still gives the old answer for a name that is not a frame", () => {
+    expect(videoIdFromFrame("not-a-keyframe.jpg")).toBe("");
+    expect(frameIdFromName("not-a-keyframe.jpg")).toBe("a-keyframe");
+  });
+});
+
+// The three parsers as they were before parseFrameName, verbatim.
+const legacyVideoId = (frame: string) => frame.match(/^([LK]\d{2}_V\d{3})/)?.[1] ?? "";
+const legacyFrameId = (name: string) =>
+  name.replace(/\.[^/.]+$/, "").split("-").slice(1).join("-");
+const legacyFrameIndex = (frame: string) => Number(frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
+
+describe("L and K ids give the same answers as the old parsers", () => {
+  const videos = ["L21_V001", "L26_V194", "L30_V095", "K01_V003", "K19_V001"];
+  const scenes = ["0000", "0012", "0224"];
+  const frames = ["0", "3", "33", "004707", "36128"];
+  const names: string[] = [];
+  for (const video of videos) {
+    for (const scene of scenes) {
+      for (const frame of frames) {
+        names.push(`${video}-${scene}-${frame}`);
+      }
+    }
+  }
+
+  it("covers a real spread of names", () => {
+    expect(names).toHaveLength(75);
+  });
+
+  it.each(names)("%s.jpg", (base) => {
+    const name = `${base}.jpg`;
+    expect(videoIdFromFrame(name)).toBe(legacyVideoId(name));
+    expect(frameIdFromName(name)).toBe(legacyFrameId(name));
+    expect(frameIndexFromResult({ frame: name })).toBe(legacyFrameIndex(name));
+    // Without an extension the id parsers agree too; the old frame index gave
+    // 0 there, which is the one deliberate difference (it now reads the number).
+    expect(videoIdFromFrame(base)).toBe(legacyVideoId(base));
+    expect(frameIdFromName(base)).toBe(legacyFrameId(base));
+  });
+
+  it.each(["not-a-keyframe.jpg", "", "L26_V194", "L26_V194-4707.jpg", "foo-bar-baz.jpg"])(
+    "odd input %j",
+    (name) => {
+      expect(videoIdFromFrame(name)).toBe(legacyVideoId(name));
+      expect(frameIdFromName(name)).toBe(legacyFrameId(name));
+      expect(frameIndexFromResult({ frame: name })).toBe(legacyFrameIndex(name));
+    }
+  );
+});
