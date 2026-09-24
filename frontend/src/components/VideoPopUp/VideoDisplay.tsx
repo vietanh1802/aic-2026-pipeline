@@ -1,9 +1,12 @@
+// frontend/src/components/VideoPopUp/VideoDisplay.tsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
 import { useSubmitStore } from "../../store/submitStore";
 import { videoUrl } from "../../helpers/videoSource";
 import { frameAt } from "../../helpers/frameRange";
+import { needsSeek, type SeekRequest } from "../../helpers/seekRequest";
 
 interface DriveVideoProps {
   videoId: string; // e.g. "L30_V095" — builds the key in the video store
@@ -16,6 +19,13 @@ interface DriveVideoProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   setStartAt: (val: number) => void;
   jumpTo: number;
+  /**
+   * "Seek there" as an event: a new request moves the player even when its time
+   * equals the last one, which `jumpTo` (a value, so it only fires on change)
+   * cannot do. Only the candidate strip sends these; every other seek still goes
+   * through `jumpTo`. See helpers/seekRequest.ts.
+   */
+  seekRequest?: SeekRequest | null;
   mapping_frame: {
     smaller: string;
     larger: string;
@@ -32,6 +42,7 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
   videoRef,
   setStartAt,
   jumpTo,
+  seekRequest = null,
   mapping_frame,
   frame_detect,
 }) => {
@@ -75,6 +86,26 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
     setPosition(jumpTo);
     onPosition(jumpTo);
   }, [jumpTo]);
+
+  // A seek REQUEST (the candidate strip). Runs on the request object, so pressing
+  // the same block twice - with the native bar dragged elsewhere in between -
+  // seeks twice; the effect above would not, because `jumpTo` never changed.
+  // When the request also changed `jumpTo` (a different block) that effect has
+  // already moved the player and this one finds it in place.
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element || !seekRequest) return;
+    if (needsSeek(element.currentTime, seekRequest.timeS, frame_detect)) {
+      element.currentTime = seekRequest.timeS;
+    }
+    setPosition(seekRequest.timeS);
+    onPosition(seekRequest.timeS);
+    // Deliberately keyed on the request alone: `onPosition` is a new closure on
+    // every render, so listing it would re-run this on each playback tick and
+    // pull the player back to the requested time four times a second (the same
+    // reason the jumpTo effect above is keyed on jumpTo only).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekRequest]);
 
   // The player moves on its own — the native controls, playback, the keyboard.
   // Nothing used to report that back, so every frame number on screen still

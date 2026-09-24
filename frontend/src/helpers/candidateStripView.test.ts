@@ -17,6 +17,7 @@ import {
   activeGroupIndex,
   candidatesForVideo,
   describeBlock,
+  durationForVideo,
   formatScore,
   isOcrResults,
   jumpOfBlock,
@@ -258,4 +259,45 @@ describe("jumpOfBlock", () => {
     const [block] = scene46Blocks([[1, 90], [0, 90]]);
     expect(jumpOfBlock(block).frameIdx).toBe(2837);
   });
+});
+
+describe("durationForVideo", () => {
+  it("is unknown before any duration was read", () => {
+    expect(durationForVideo(null, "L25_V014")).toBe(0);
+  });
+
+  it("is the tagged duration for the video it was read from", () => {
+    expect(durationForVideo({ videoId: "L25_V014", seconds: 1591.6 }, "L25_V014")).toBe(1591.6);
+  });
+
+  it("is unknown for another video: the previous one's length must not linger", () => {
+    expect(durationForVideo({ videoId: "L25_V008", seconds: 1211.4 }, "L25_V014")).toBe(0);
+  });
+
+  it("follows the video as the popup is pointed at others", () => {
+    // What VideoPopUp does: the tag is written by loadedmetadata, the video id
+    // comes from the props, and the two are compared on every render.
+    let tag: { videoId: string; seconds: number } | null = null;
+    expect(durationForVideo(tag, "L25_V008")).toBe(0);
+
+    tag = { videoId: "L25_V008", seconds: 1211.4 };
+    expect(durationForVideo(tag, "L25_V008")).toBe(1211.4);
+
+    // Popup re-pointed at L25_V014; its metadata has not arrived yet.
+    expect(durationForVideo(tag, "L25_V014")).toBe(0);
+
+    tag = { videoId: "L25_V014", seconds: 1591.6 };
+    expect(durationForVideo(tag, "L25_V014")).toBe(1591.6);
+
+    // And back: the tag now belongs to L25_V014, so L25_V008 is unknown again
+    // until its own metadata arrives (the player element is new for each video).
+    expect(durationForVideo(tag, "L25_V008")).toBe(0);
+  });
+
+  it.each([[0], [-5], [Number.NaN], [Number.POSITIVE_INFINITY]])(
+    "treats a tagged %s as unknown",
+    (seconds) => {
+      expect(durationForVideo({ videoId: "L25_V014", seconds }, "L25_V014")).toBe(0);
+    }
+  );
 });

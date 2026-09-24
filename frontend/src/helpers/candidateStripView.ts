@@ -147,3 +147,27 @@ export function jumpOfBlock(block: Block): Jump {
     timeS: block.bestTimeS,
   };
 }
+
+/** A duration together with the video it was read from. */
+export interface DurationTag {
+  videoId: string;
+  seconds: number;
+}
+
+/**
+ * The duration to lay the strip out with: the tagged one, but only for the
+ * video it belongs to, else 0 (unknown).
+ *
+ * The popup is not remounted when it is pointed at another video (a basket row,
+ * Go to frame, the badge), and its `duration` state is only ever written by the
+ * player's loadedmetadata - so for a moment after the switch it still holds the
+ * PREVIOUS video's length, and a strip laid out with it would put the blocks in
+ * the wrong places. Tagging the value with its video makes the stale one
+ * unusable rather than merely short-lived. Unknown shows the chips only.
+ */
+export function durationForVideo(tag: DurationTag | null, videoId: string): number {
+  if (tag === null || tag.videoId !== videoId) {
+    return 0;
+  }
+  return Number.isFinite(tag.seconds) && tag.seconds > 0 ? tag.seconds : 0;
+}
