@@ -1211,3 +1211,72 @@ def test_split_terms_without_a_separator_gives_the_stripped_text() :
     """The wiring relies on this: no separator means today's code gets the same string."""
     for text in ["ngò", "quán trọ", "  ngò  ", "a b c", "(", "1.5", "x" * 50] :
         assert text_signal.split_terms(text) == [text.strip()]
+
+
+# ── multi-term ASR scanner: _substring_matches_multi() ──────────────────────
+#
+# Contract: for every term the per-frame kinds equal what a separate
+# _substring_hits() (and the old per-frame fold, _reference_substring_hits) says.
+
+def _hits_of_term(video_id : str, matches, index : int) :
+    """The hit list _substring_hits() returns for terms[index], rebuilt from the
+    per-frame kinds with plain loops, independent of the code under test."""
+    exact = [name for name, kinds in matches if kinds[index] == "exact"]
+    normalized = [name for name, kinds in matches if kinds[index] == "normalized"]
+    total = len(exact) + len(normalized)
+    hits = [text_lookup.TextHit(video_id, name, "exact", rank, total) for rank, name in enumerate(exact, 1)]
+    hits += [text_lookup.TextHit(video_id, name, "normalized", rank, total) for rank, name in enumerate(normalized, len(exact) + 1)]
+    return hits
+
+
+def _reference_combos() -> list[list[str]] :
+    """Pairs and triples drawn from REFERENCE_TERMS (accents, uppercase, đ, regex
+    specials, other scripts, astral characters, empty and blank terms), plus
+    overlapping and accent-variant terms."""
+    count = len(REFERENCE_TERMS)
+    combos = []
+    for k in range(count) :
+        combos.append([REFERENCE_TERMS[k], REFERENCE_TERMS[(k * 7 + 3) % count]])
+        combos.append([REFERENCE_TERMS[k], REFERENCE_TERMS[(k + 13) % count], REFERENCE_TERMS[(k * 5 + 2) % count]])
+    combos += [["nước", "nước sôi"], ["nuoc", "nước", "NƯỚC"], ["ngo", "ngò", "ngõ"], ["thể thao", "the thao"],
+               ["d", "đ", "Đ"], ["a", "a b", "ab"], ["sôi", "nước sôi", "nuoc soi"]]
+    return combos
+
+
+def test_multi_term_scan_equals_separate_substring_hits_for_every_term(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(len(REFERENCE_TEXTS))]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, REFERENCE_TEXTS))
+
+    def get_text(name : str) -> str :
+        return texts.get(name, "")
+
+    combos = _reference_combos()
+    assert len(combos) >= 150
+    for terms in combos :
+        matches = text_signal._substring_matches_multi("V1", terms, get_text)
+        for index, term in enumerate(terms) :
+            expected = text_signal._substring_hits("V1", term, get_text)
+            assert _hits_of_term("V1", matches, index) == expected, (terms, term)
+            assert expected == _reference_substring_hits("V1", term, get_text), (terms, term)
+
+
+def test_multi_term_scan_lists_frames_in_order_and_skips_empty_and_unmatched_frames(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(5)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "", "nước sôi", "khong co", "rau ngo nuoc"]))
+    matches = text_signal._substring_matches_multi("V1", ["ngo", "nuoc"], lambda name : texts[name])
+    assert matches == [(names[0], ("normalized", None)), (names[2], (None, "normalized")), (names[4], ("exact", "exact"))]
+    assert text_signal._substring_matches_multi("V1", [], lambda name : texts[name]) == []
+    assert text_signal._substring_matches_multi("GHOST", ["ngo"], lambda name : texts[name]) == []
+
+
+def test_multi_term_scan_classifies_each_distinct_text_once_per_term(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(6)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "rau ngò", "rau ngò", "khong co", "khong co", "khong co"]))
+    calls = []
+    real = text_signal._classify_text
+    monkeypatch.setattr(text_signal, "_classify_text", lambda *args : calls.append(args[0]) or real(*args))
+    text_signal._substring_matches_multi("V1", ["ngo", "co", "zzz"], lambda name : texts[name])
+    assert len(calls) == 2 * 3 and sorted(set(calls)) == ["khong co", "rau ngò"]

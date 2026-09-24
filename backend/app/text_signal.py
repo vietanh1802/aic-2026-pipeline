@@ -472,6 +472,40 @@ def _substring_hits(video_id : str, term : str, get_text) :
     return hits
 
 
+def _substring_matches_multi(video_id : str, terms : list[str], get_text) -> list[tuple[str, tuple[Optional[str], ...]]] :
+    """Multi-term ASR substring scan of ONE video: [(frame name, kinds), ...] for
+    every frame that holds at least one term, in frame order (earliest first).
+    kinds[i] is "exact", "normalized" or None for terms[i] on that frame, decided
+    by exactly the per-text rule of _substring_hits() (_classify_text(): the same
+    accent-tolerant prefilter and the same fallback for terms outside the audited
+    scope or texts above the BMP), so kinds[i] is what a separate
+    _substring_hits(video_id, terms[i], ...) would say for that frame.
+
+    One walk over the frames and one per-video memo of text -> kinds, so N terms
+    cost N classifications per DISTINCT text (about 5 percent of the frames), not N
+    passes over every frame. A combined alternation regex is deliberately NOT used:
+    measured slower than N passes (the regex engine tries every alternative at
+    every position) and it cannot separate overlapping terms such as "nước" and
+    "nước sôi", because finditer consumes the text a match covers."""
+    plans = []
+    for term in terms :
+        term_folded = _strip_marks(term).lower()
+        plans.append((term.lower(), term_folded, _folded_pattern(term_folded)))
+
+    matches : list[tuple[str, tuple[Optional[str], ...]]] = []
+    memo : dict[str, tuple[Optional[str], ...]] = {}
+    for name in preprocess.frames_for_video(video_id) :
+        text = get_text(name)
+        if not text :
+            continue
+        kinds = memo.get(text)
+        if kinds is None :
+            kinds = memo[text] = tuple(_classify_text(text, lower, folded, pattern) for lower, folded, pattern in plans)
+        if any(kinds) :
+            matches.append((name, kinds))
+    return matches
+
+
 def _regex_hits(video_id : str, pattern : re.Pattern, get_text) :
     """Not diacritic-folded -- folding would make capture groups and
     quantifiers behave unpredictably against text that no longer resembles
