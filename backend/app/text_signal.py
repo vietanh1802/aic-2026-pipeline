@@ -394,6 +394,43 @@ def _folded_pattern(term_folded : str) -> Optional[re.Pattern] :
 #     return hits
 
 
+# Version with the prefilter but WITHOUT the per-video memo, kept for reference
+# (replaced by the memo version below; the per-text logic now lives, unchanged,
+# in _classify_text()). Same output; it re-ran the regex for every frame although
+# adjacent keyframes share one transcript window:
+#
+#     for name in preprocess.frames_for_video(video_id) :
+#         text = get_text(name)
+#         if not text :
+#             continue
+#         # A UTF-16 encoding is longer than 2 bytes per character exactly when
+#         # the text has a character above U+FFFF (which _MARK_CLASS ignores).
+#         if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
+#             if pattern.search(text) :
+#                 (exact if term_lower in text.lower() else normalized).append(name)
+#         elif term_lower in text.lower() :
+#             exact.append(name)  # fallback: term outside the audited scope, or a non-BMP frame
+#         elif term_folded in _strip_marks(text).lower() :
+#             normalized.append(name)
+
+
+def _classify_text(text : str, term_lower : str, term_folded : str, pattern : Optional[re.Pattern]) -> Optional[str] :
+    """"exact", "normalized" or None for ONE non-empty text and one term: the
+    per-frame rule of _substring_hits(), lifted out so the per-video memo (and the
+    multi-term scanner) run exactly the same logic once per distinct text."""
+    # A UTF-16 encoding is longer than 2 bytes per character exactly when the
+    # text has a character above U+FFFF (which _MARK_CLASS ignores).
+    if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
+        if pattern.search(text) :
+            return "exact" if term_lower in text.lower() else "normalized"
+        return None
+    if term_lower in text.lower() :
+        return "exact"  # fallback: term outside the audited scope, or a non-BMP frame
+    if term_folded in _strip_marks(text).lower() :
+        return "normalized"
+    return None
+
+
 def _substring_hits(video_id : str, term : str, get_text) :
     """Diacritic-folded substring match, checked frame by frame instead of
     against one concatenated blob -- this is what fixes attribution and
@@ -402,25 +439,29 @@ def _substring_hits(video_id : str, term : str, get_text) :
 
     Output is identical to folding every frame (see the block comment above):
     the compiled pattern only decides WHICH frames match, and exact versus
-    normalized is still the original `term_lower in text.lower()` check."""
+    normalized is still the original `term_lower in text.lower()` check.
+
+    Per-video memo: only about 5 percent of ASR frame texts are distinct (one
+    transcript window covers many adjacent keyframes), so each distinct text is
+    classified once per call. The memo lives inside the call: nothing is shared
+    between requests or threads, and it holds references to the existing strings."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
     term_lower = term.lower()
     term_folded = _strip_marks(term).lower()
     pattern = _folded_pattern(term_folded)
     exact, normalized = [], []
+    kinds : dict[str, Optional[str]] = {}
     for name in preprocess.frames_for_video(video_id) :
         text = get_text(name)
         if not text :
             continue
-        # A UTF-16 encoding is longer than 2 bytes per character exactly when
-        # the text has a character above U+FFFF (which _MARK_CLASS ignores).
-        if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
-            if pattern.search(text) :
-                (exact if term_lower in text.lower() else normalized).append(name)
-        elif term_lower in text.lower() :
-            exact.append(name)  # fallback: term outside the audited scope, or a non-BMP frame
-        elif term_folded in _strip_marks(text).lower() :
+        if text not in kinds :
+            kinds[text] = _classify_text(text, term_lower, term_folded, pattern)
+        kind = kinds[text]
+        if kind == "exact" :
+            exact.append(name)
+        elif kind == "normalized" :
             normalized.append(name)
 
     total = len(exact) + len(normalized)

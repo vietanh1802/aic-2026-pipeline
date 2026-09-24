@@ -1178,6 +1178,21 @@ def test_split_terms_table(text, terms) :
     assert text_signal.split_terms(text) == terms
 
 
+def test_substring_hits_classifies_each_distinct_text_once_per_video(monkeypatch) :
+    """Adjacent keyframes share one transcript window, so the per-video memo must
+    run the per-text rule once per DISTINCT text, with the same hits as before."""
+    names = [f"V1-0000-{index}.jpg" for index in range(5)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "rau ngò", "rau ngò", "khong co", "khong co"]))
+    calls = []
+    real = text_signal._classify_text
+    monkeypatch.setattr(text_signal, "_classify_text", lambda *args : calls.append(args[0]) or real(*args))
+    hits = text_signal._substring_hits("V1", "ngo", lambda name : texts[name])
+    assert sorted(calls) == ["khong co", "rau ngò"]
+    assert hits == _reference_substring_hits("V1", "ngo", lambda name : texts[name])
+    assert [hit.frame_name for hit in hits] == names[ : 3]
+
+
 def test_split_terms_keeps_at_most_max_filter_terms() :
     assert text_signal.MAX_FILTER_TERMS == 5
     assert len(text_signal.split_terms(",".join(str(index) for index in "abcdefghij"))) == 5
