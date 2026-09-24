@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+// frontend/src/components/VideoPopUp/FrameMarkStrip.tsx
+
+import { useEffect, useState, type ReactNode } from "react";
 
 import FramePreview from "../FramePreview";
 import {
@@ -41,6 +43,7 @@ export default function FrameMarkStrip({
   onClear,
   onSeek,
   submits = "midpoint",
+  barOverlay,
 }: {
   /** Để tra keyframe gần nhất cho ba ô xem trước. */
   videoId: string;
@@ -64,6 +67,15 @@ export default function FrameMarkStrip({
    * trong giỏ, để rải các dòng sau nằm trong đúng đoạn đã xem.
    */
   submits?: "midpoint" | "playhead";
+  /**
+   * Optional read-only layer drawn ON the bar, as its first child (so the pinned
+   * in/out block and the playhead paint above it). Called with the bar's current
+   * scale, the seconds its left and right edges stand for, so the layer can tell
+   * whether it may draw. It must be pointer-transparent: the bar's own onClick
+   * keeps doing the seeking. Nothing is rendered, and the markup is unchanged,
+   * when this is not passed.
+   */
+  barOverlay?: (scale: { low: number; high: number }) => ReactNode;
 }) {
   // Ba ô ảnh đầu/giữa/cuối, mở bằng nút. Mặc định đóng: phần lớn thời gian
   // người dùng đang nhìn chính cái video ngay trên, ba ô này chỉ có việc vào
@@ -190,9 +202,12 @@ export default function FrameMarkStrip({
 
       {/* Thang của thanh: cả video, hoặc đúng đoạn đã ghim khi đang thu về. */}
       <div
+        // Headroom for the overlay's score labels, only while an overlay that is
+        // actually drawing is there (a CSS :has on its marker, so an overlay that
+        // draws nothing leaves the bar exactly where it was).
         className={`relative h-2.5 rounded-full cursor-pointer mb-2 ${
           zoomed ? "bg-proto-primary/25" : "bg-proto-line"
-        }`}
+        }${barOverlay ? " has-[[data-candidate-markers]]:mt-4" : ""}`}
         onClick={(event) => {
           const box = event.currentTarget.getBoundingClientRect();
           const fraction = (event.clientX - box.left) / box.width;
@@ -200,6 +215,7 @@ export default function FrameMarkStrip({
         }}
         title={zoomed ? "Bấm để chọn khung trong đoạn" : "Bấm để tua"}
       >
+        {barOverlay?.({ low: barLow, high: barHigh })}
         {/* Khi đã thu về thì CẢ thanh là đoạn ghim, nên vệt xanh chỉ còn là
             trang trí chồng lên chính nó — bỏ đi cho đỡ rối. */}
         {marked && !zoomed && (
