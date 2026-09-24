@@ -1131,3 +1131,68 @@ def test_request_model_accepts_the_split_fields_and_enforces_the_caps() :
     with pytest.raises(ValidationError) :
         EnsembleSearchRequest(query = "q", text_filter = "x" * (cap + 1))
     assert SingleSearchRequest(query = "q", ocr_filter = "z").ocr_filter == "z"  # inherited, and ignored by that endpoint
+
+
+# ── multi-term filters: split_terms() ───────────────────────────────────────
+
+@pytest.mark.parametrize("text, terms", [
+    ("lửa, nước", ["lửa", "nước"]),
+    ("lửa,nước", ["lửa", "nước"]),
+    ("lửa; nước", ["lửa", "nước"]),
+    ("lửa;nước", ["lửa", "nước"]),
+    ("lửa，nước", ["lửa", "nước"]),                # full-width comma
+    ("lửa；nước", ["lửa", "nước"]),                # full-width semicolon
+    ("lửa、nước", ["lửa", "nước"]),                # ideographic comma
+    ("lửa, nước", ["lửa", "nước"]),           # a comma followed by a no-break space splits
+    (" lửa , nước ", ["lửa", "nước"]),  # NBSP is trimmed
+    ("1,5", ["1,5"]),                               # decimal comma: digit on both sides
+    ("1,5 kg", ["1,5 kg"]),
+    ("1,5,2", ["1,5,2"]),
+    ("2018,2019", ["2018,2019"]),
+    ("2018, 2019", ["2018", "2019"]),
+    ("2018;2019", ["2018", "2019"]),
+    ("a,1", ["a", "1"]),
+    ("1,a", ["1", "a"]),
+    ("1,,5", ["1", "5"]),
+    ("giá 1,5 kg, quán trọ", ["giá 1,5 kg", "quán trọ"]),
+    ("١,٥", ["١", "٥"]),                            # only ASCII digits make a decimal comma
+    (",,", []),
+    (" , ; ", []),
+    ("", []),
+    ("   ", []),
+    ("lửa,", ["lửa"]),
+    (",lửa", ["lửa"]),
+    ("  lửa  ", ["lửa"]),
+    ("lửa", ["lửa"]),
+    ("lửa nước", ["lửa nước"]),                     # a space is not a separator
+    ("lửa\tnước", ["lửa\tnước"]),
+    ("lửa, Lửa, LỬA", ["lửa"]),                     # duplicates: case-insensitive, first typed form wins
+    ("Lửa, lửa", ["Lửa"]),
+    ("nuoc, nước", ["nuoc"]),                       # accent-insensitive too: the FIRST typed form wins
+    ("nước, nuoc", ["nước"]),
+    ("đường, DUONG", ["đường"]),
+    ("a, b, c, d, e, f, g", ["a", "b", "c", "d", "e"]),
+    ("a, a, b, c, d, e, f", ["a", "b", "c", "d", "e"]),  # duplicates do not use up the cap
+])
+def test_split_terms_table(text, terms) :
+    assert text_signal.split_terms(text) == terms
+
+
+def test_split_terms_keeps_at_most_max_filter_terms() :
+    assert text_signal.MAX_FILTER_TERMS == 5
+    assert len(text_signal.split_terms(",".join(str(index) for index in "abcdefghij"))) == 5
+
+
+def test_split_terms_handles_a_request_sized_input() :
+    cap = text_signal.TEXT_FILTER_MAX_CHARS
+    assert text_signal.split_terms("x" * cap) == ["x" * cap]
+    text = ",".join(["ab"] * (cap // 3))  # 200 characters or fewer, one distinct term
+    assert len(text) <= cap and text_signal.split_terms(text) == ["ab"]
+    distinct = ",".join(f"t{index}" for index in range(60))[ : cap]
+    assert len(text_signal.split_terms(distinct)) == text_signal.MAX_FILTER_TERMS
+
+
+def test_split_terms_without_a_separator_gives_the_stripped_text() :
+    """The wiring relies on this: no separator means today's code gets the same string."""
+    for text in ["ngò", "quán trọ", "  ngò  ", "a b c", "(", "1.5", "x" * 50] :
+        assert text_signal.split_terms(text) == [text.strip()]

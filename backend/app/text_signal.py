@@ -128,6 +128,43 @@ BM25_B = 0.75
 # pin a request thread.
 TEXT_FILTER_MAX_CHARS = 200
 
+# Multi-term substring filters ("lửa, nước" = two terms, a frame matches when it
+# holds at least one). Only the split ASR / OCR filters in substring mode use
+# split_terms(); bm25, regex and the legacy text_filter never do.
+#
+#   * separators are "," and ";" plus the full-width "，" "；" "、";
+#   * an ASCII comma with an ASCII digit on BOTH sides is a decimal comma and does
+#     not split, so "1,5 kg" stays one term. The same rule keeps "2018,2019" and
+#     "1,5,2" whole: write "2018, 2019" or "2018;2019" to get two terms;
+#   * terms are trimmed (NBSP included) and empty ones dropped;
+#   * duplicates are dropped case- and accent-insensitively and the FIRST typed
+#     form wins, so "nuoc, nước" is the single term "nuoc" (and is matched with
+#     that spelling's exact / normalized tiers);
+#   * at most MAX_FILTER_TERMS terms are kept, the rest are dropped silently. The
+#     200 character request cap already bounds the summed length of the terms,
+#     hence the regex compile cost, exactly as for one long term today.
+MAX_FILTER_TERMS = 5
+_TERM_SEPARATOR_RE = re.compile(r"(?<![0-9]),|,(?![0-9])|[;，；、]")
+
+
+def split_terms(text : str) -> list[str] :
+    """Terms of a multi-term substring filter, see the block comment above. An
+    empty list (blank text, ",,") means the source is inactive. A text without any
+    separator gives [text.strip()], which is what today's single-term code gets."""
+    seen : set[str] = set()
+    terms : list[str] = []
+    for part in _TERM_SEPARATOR_RE.split(text or "") :
+        term = part.strip()
+        if not term :
+            continue
+        key = _strip_marks(term).lower()
+        if key in seen :
+            continue
+        seen.add(key)
+        terms.append(term)
+    return terms[ : MAX_FILTER_TERMS]
+
+
 # Width of the snippet shown in the Text signal popover: the window holding the
 # matched words is about this many characters, its edges move to the nearest
 # whitespace within _SNIPPET_EDGE_SLACK. _MAX_HIGHLIGHT_SPANS bounds the work for
