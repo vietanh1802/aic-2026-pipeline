@@ -14,6 +14,7 @@ import { type AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
+import CandidateStrip from "./CandidateStrip";
 import FrameMarkStrip from "./FrameMarkStrip";
 import { usePopupStore } from "../../store/popupStore";
 import {
@@ -294,6 +295,25 @@ export default function VideoPopup({
               frame_detect={frame_detect}
             />
           </div>
+
+          {/* Other candidate moments of this video from the current results.
+              Mounted here rather than inside VideoDrive: that component owns
+              the <video> and the seek effect, and a slot in it would mean
+              reshaping a file every seek path goes through. Here it needs no
+              change to the player at all, and it sits next to the other
+              timeline strip. Renders nothing when there is nothing to show. */}
+          <CandidateStrip
+            videoId={videoId}
+            durationS={duration}
+            currentTimeS={playhead}
+            hidden={trakeSlot !== null}
+            // Same route as opening on that keyframe: the popup's target time
+            // moves, and frameId, the marks, +/-, Frame_idx and Đầu/Cuối carry
+            // on from there untouched.
+            onJump={(_frameName, _timeS, frameIdx) =>
+              setStartAt(startMsAt(videoId, frameIdx))
+            }
+          />
 
           <FrameMarkStrip
             videoId={videoId}
