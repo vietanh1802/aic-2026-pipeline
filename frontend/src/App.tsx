@@ -33,6 +33,7 @@ import { filterByFocus } from "./helpers/focusFilter";
 import { buildGridResults } from "./helpers/groupResults";
 import { isOcrResults } from "./helpers/candidateStripView";
 import { buildTextFilterParams, hasTextFilter } from "./helpers/textFilter";
+import { sourcesSearched } from "./helpers/textSignalView";
 import { eventWindowFields, type MarkedRange } from "./helpers/basketMath";
 import { nearestKeyframeFor } from "./helpers/keyframes";
 import { keyframeUrl } from "./helpers/videoSource";
@@ -541,7 +542,15 @@ function App({
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
       useSearchStore.getState().setMaxDistance(response.max_distance);
-      useSearchStore.getState().setVideoAnnotations(response.video_annotations ?? null);
+      // Old call, kept for the record: stored the annotations alone, so the popover
+      // could only ask the LIVE filter boxes which sources had run - wrong when a
+      // box is edited while the search is still in flight.
+      //   useSearchStore.getState().setVideoAnnotations(response.video_annotations ?? null);
+      // sourcesSearched reads the same textFilterFields snapshot the request was
+      // built from, so "not searched" always describes the search that is on screen.
+      useSearchStore
+        .getState()
+        .setVideoAnnotations(response.video_annotations ?? null, sourcesSearched(textFilterFields));
       setSummary({
         count: response.results.length,
         unit: "frames",
