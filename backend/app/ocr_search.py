@@ -1,3 +1,4 @@
+# backend/app/ocr_search.py
 # -*- coding: utf-8 -*-
 """
 ocr_search.py — find keyframes by the TEXT VISIBLE ON SCREEN
@@ -256,6 +257,64 @@ def search(query: str,
         "searched_frames": len(haystacks),
         "processing_time": round(time.time() - started, 4),
     }
+
+
+def search_terms(terms : list[str], strip_diacritics : bool = True) -> dict[str, tuple[int, list[tuple[int, bool]]]] :
+    """Sibling of search() for a LIST of terms: one scan of the haystack tests
+    every term, instead of one scan per term (search() is left untouched).
+
+    Returns {frame name : (len(display text), [(term index, whole_phrase), ...])}
+    for every frame that holds at least one term, the matches in term order. The
+    display length is what search() breaks ranking ties on (shorter text first),
+    so a caller can rank frames without a second lookup. No rows, no limit, no
+    ranking here: that is the caller's job (text_lookup.lookup_text_batch_multi).
+
+    Per term the rule is search()'s own: every WORD of the term must be a
+    substring of the frame text, and whole_phrase says the typed phrase itself is
+    (needle in haystack). A blank term matches nothing and is not counted below.
+    With ONE term the result reproduces search() exactly, quirk included: a term
+    without a single word character (for example "(" or an emoji) has nothing to
+    require, so it matches every frame with text. With two or more terms that
+    quirk would turn an OR list into "everything", so a term without word
+    characters is matched as a literal phrase there.
+
+    Speed: search() spends most of its time in the all(... generator ...) of its
+    inner test (about 250 of 320 ms per pass, against 72 ms for a bare `in` loop).
+    Here the longest word of each term (the rarest, so the one that rejects most
+    frames) is tested first with a plain `in`, and only frames that pass it get the
+    remaining words. Measured against N calls of search() with its row limit
+    lifted, both diacritic modes, on the 179,728 real frames: 2.3 to 5.5 times
+    faster (1 term 2.3 to 4.2x, 3 and 5 terms 3.9 to 5.5x), because the scan is
+    shared and no row dicts are built."""
+    _load()
+    haystacks = _haystack["no_marks" if strip_diacritics else "with_marks"]
+    needles = [(index, (_strip_marks(term) if strip_diacritics else term).lower().strip())
+               for index, term in enumerate(terms)]
+    needles = [(index, needle) for index, needle in needles if needle]
+    plans = []  # (term index, needle, first probe, other probes)
+    for index, needle in needles :
+        probes = sorted(set(_tokenize(needle)), key=len, reverse=True)
+        if probes :
+            plans.append((index, needle, probes[0], probes[1 : ]))
+        elif len(needles) > 1 :
+            plans.append((index, needle, needle, []))  # literal phrase
+        else :
+            plans.append((index, needle, "", []))      # search()'s quirk: "" is in every text
+
+    found : dict[str, tuple[int, list[tuple[int, bool]]]] = {}
+    for name, haystack in haystacks.items() :
+        for index, needle, first, rest in plans :
+            if first not in haystack :
+                continue
+            for word in rest :
+                if word not in haystack :
+                    break
+            else :
+                entry = found.get(name)
+                if entry is None :
+                    entry = found[name] = (len(_display[name]), [])
+                entry[1].append((index, needle in haystack))
+    return found
 
 
 def get_text(name: str) -> str:
