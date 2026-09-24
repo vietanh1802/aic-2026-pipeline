@@ -67,6 +67,28 @@ export interface VideoAnnotation {
   ocr: SourceMatch;
 }
 
+/**
+ * Modes of the two independent text filters. Match the backend's TextMatchMode
+ * (ASR) and OcrFilterMode (OCR) in backend/app/text_signal.py: OCR has no BM25
+ * index, so it has no "bm25" (the backend answers HTTP 422 to it).
+ */
+export type AsrFilterMode = "substring" | "regex" | "bm25";
+export type OcrFilterMode = "substring" | "regex";
+
+/**
+ * The text-filter part of the /ensemble-search request: an ASR filter and an
+ * OCR filter, each with its own mode. When either string is non-empty the
+ * backend uses these and ignores the legacy text_filter / text_filter_mode
+ * (still accepted, so an older frontend keeps working). Both strings are capped
+ * at 200 characters (TEXT_FILTER_MAX_CHARS); a longer one fails the whole search.
+ */
+export interface TextFilterRequestFields {
+  asr_filter?: string;
+  asr_filter_mode?: AsrFilterMode;
+  ocr_filter?: string;
+  ocr_filter_mode?: OcrFilterMode;
+}
+
 export interface SearchResponse {
   total_results: number;
   returned_results: number;
@@ -76,11 +98,18 @@ export interface SearchResponse {
   max_distance: number;
   // true nếu backend đang chạy demo mode (chưa có beit3.index/clip.index thật)
   demo_mode?: boolean;
-  // Present only on /ensemble-search when text_filter was non-empty — keyed
+  // Present only on /ensemble-search when a text filter was non-empty — keyed
   // by video_id. No frame is ever dropped because of this; see main.py.
   video_annotations?: Record<string, VideoAnnotation>;
+  // True when ANY text filter is active (split or the legacy single one).
   text_filter_active?: boolean;
+  // The active source's mode, or "mixed" when both filters are used.
   text_filter_mode?: string;
+  // Independent ASR / OCR filters: which sources ran, and with which mode.
+  asr_filter_active?: boolean;
+  ocr_filter_active?: boolean;
+  asr_filter_mode?: AsrFilterMode | null;
+  ocr_filter_mode?: OcrFilterMode | null;
 }
 
 /** One OCR text hit. Same shape as SearchResult, so the grid is reused. */
@@ -305,16 +334,20 @@ class VideoSearchApi {
     limit = 100,
     topM = 50,
     useRerank = true,
-    textFilter = "",
-    textFilterMode = "substring"
+    textFilter?: TextFilterRequestFields
   ): Promise<SearchResponse> {
+    // The text filter is sent as the four asr_filter / ocr_filter fields, and
+    // only when at least one is set (the caller passes undefined otherwise).
+    // Previous version sent the single legacy pair on every request:
+    //   text_filter: textFilter,
+    //   text_filter_mode: textFilterMode,
+    // The backend still accepts it, but this client no longer sends it.
     return this.post<SearchResponse>("/ensemble-search", {
       query,
       limit,
       top_m: topM,
       use_rerank: useRerank,
-      text_filter: textFilter,
-      text_filter_mode: textFilterMode,
+      ...(textFilter ?? {}),
     });
   }
 

@@ -1,3 +1,5 @@
+// frontend/src/store/useSearchStore.test.ts
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { filterByFocus } from "../helpers/focusFilter";
@@ -6,7 +8,7 @@ import { useSearchStore } from "./useSearchStore";
 
 // Store là singleton, nên mỗi test phải bắt đầu từ bàn trống.
 beforeEach(() => {
-  useSearchStore.setState({ focusVideos: [], showOnlyPinned: false });
+  useSearchStore.setState({ focusVideos: [], showOnlyPinned: false, onePerVideo: false });
 });
 
 function result(frame: string, video: string): SearchResult {
@@ -77,5 +79,66 @@ describe("focusVideos / showOnlyPinned", () => {
     expect(useSearchStore.getState().focusVideos).toEqual([]);
     expect(useSearchStore.getState().showOnlyPinned).toBe(false);
     expect(shownResults(RESULTS)).toEqual(RESULTS);
+  });
+});
+
+// A view preference: it must survive everything that resets or replaces the
+// search, or the grid would flip back to one-card-per-frame under the user.
+describe("onePerVideo", () => {
+  it("is off by default", () => {
+    expect(useSearchStore.getState().onePerVideo).toBe(false);
+  });
+
+  it("toggleOnePerVideo flips it on and back off", () => {
+    const { toggleOnePerVideo } = useSearchStore.getState();
+
+    toggleOnePerVideo();
+    expect(useSearchStore.getState().onePerVideo).toBe(true);
+
+    toggleOnePerVideo();
+    expect(useSearchStore.getState().onePerVideo).toBe(false);
+  });
+
+  it("clearFocus leaves it alone: it is not part of the pin state", () => {
+    const { toggleOnePerVideo, toggleFocusVideo, toggleShowOnlyPinned, clearFocus } =
+      useSearchStore.getState();
+
+    toggleOnePerVideo();
+    toggleFocusVideo("A");
+    toggleShowOnlyPinned();
+    clearFocus();
+
+    expect(useSearchStore.getState().onePerVideo).toBe(true);
+    expect(useSearchStore.getState().showOnlyPinned).toBe(false);
+    expect(useSearchStore.getState().focusVideos).toEqual([]);
+  });
+
+  it("pinning and narrowing do not touch it, and it does not touch them", () => {
+    const { toggleOnePerVideo, toggleFocusVideo, toggleShowOnlyPinned } =
+      useSearchStore.getState();
+
+    toggleFocusVideo("A");
+    toggleShowOnlyPinned();
+    expect(useSearchStore.getState().onePerVideo).toBe(false);
+
+    toggleOnePerVideo();
+    expect(useSearchStore.getState().focusVideos).toEqual(["A"]);
+    expect(useSearchStore.getState().showOnlyPinned).toBe(true);
+  });
+
+  it("survives a new search: nothing that a search writes resets it", () => {
+    // There is no reset action on this store; a search replaces these fields.
+    // doSearch calls exactly these setters (App.tsx), so they are what to check.
+    const state = useSearchStore.getState();
+    state.toggleOnePerVideo();
+
+    state.setVideoAnnotations(null);
+    state.setSummary(null);
+    state.setTotalTime(1.5);
+    state.setMaxDistance(99);
+    state.setResults(RESULTS);
+    state.setSummary({ count: RESULTS.length, unit: "frames", seconds: 1.5 });
+
+    expect(useSearchStore.getState().onePerVideo).toBe(true);
   });
 });

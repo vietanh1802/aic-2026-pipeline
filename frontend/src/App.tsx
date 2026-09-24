@@ -1,3 +1,5 @@
+// frontend/src/App.tsx
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import FrameDisplay from "./components/FrameDisplay";
@@ -22,11 +24,15 @@ import type {
 } from "./components/CandidateResults/types";
 import {
   frameIdFromName,
+  frameIndexFromResult,
   startMsAt,
   videoIdFromFrame,
 } from "./helpers/frameIdentity";
 import { splitQueryParts } from "./helpers/candidates";
 import { filterByFocus } from "./helpers/focusFilter";
+import { buildGridResults } from "./helpers/groupResults";
+import { isOcrResults } from "./helpers/candidateStripView";
+import { buildTextFilterParams, hasTextFilter } from "./helpers/textFilter";
 import { eventWindowFields, type MarkedRange } from "./helpers/basketMath";
 import { nearestKeyframeFor } from "./helpers/keyframes";
 import { keyframeUrl } from "./helpers/videoSource";
@@ -45,12 +51,14 @@ import type {
 } from "./types/api";
 import KeyframeFPS from "./mapping/fps_map.json";
 
-function frameIndexFromResult(result: SearchResult): number {
-  if (typeof result.frame_idx === "number") {
-    return result.frame_idx;
-  }
-  return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
-}
+// Moved to helpers/frameIdentity.ts (same body) so FrameDisplay's timestamp
+// fallback and the candidate-strip helper share one copy instead of three.
+// function frameIndexFromResult(result: SearchResult): number {
+//   if (typeof result.frame_idx === "number") {
+//     return result.frame_idx;
+//   }
+//   return Number(result.frame.match(/-(\d+)\.jpg$/)?.[1] ?? 0);
+// }
 
 function startMsFromResult(result: SearchResult): number {
   return startMsAt(videoIdFromFrame(result.frame), frameIndexFromResult(result));
@@ -81,6 +89,8 @@ function App({
   const clearFocus = useSearchStore((state) => state.clearFocus);
   const showOnlyPinned = useSearchStore((state) => state.showOnlyPinned);
   const toggleShowOnlyPinned = useSearchStore((state) => state.toggleShowOnlyPinned);
+  const onePerVideo = useSearchStore((state) => state.onePerVideo);
+  const toggleOnePerVideo = useSearchStore((state) => state.toggleOnePerVideo);
   // resultLimit/topM/useRerank/ocrStripDiacritics/singleModel từng được đăng ký
   // ở đây và doSearch đọc qua closure. Giờ doSearch đọc thẳng từ store, vì nó
   // còn được gọi ngay sau khi áp truy vấn của người khác vào store — closure
@@ -417,9 +427,15 @@ function App({
       useRerank,
       singleModel,
       ocrStripDiacritics,
-      textFilter,
-      textFilterMode,
+      asrFilter,
+      asrFilterMode,
+      ocrFilter,
+      ocrFilterMode,
     } = useQueryStore.getState();
+    // The two text filters (ASR and OCR) are sent only with the ensemble search
+    // and only when at least one has text, from this snapshot like every other
+    // parameter, so editing a field while the search runs cannot change it.
+    const textFilterFields = { asrFilter, asrFilterMode, ocrFilter, ocrFilterMode };
     setIsLoading(true);
     // Annotations from the PREVIOUS search must not linger onto results from
     // a route that never sets them (single/temporal/trake/ocr) or a fresh
@@ -518,8 +534,9 @@ function App({
               Number(resultLimit),
               topM,
               useRerank,
-              textFilter,
-              textFilterMode
+              hasTextFilter(textFilterFields)
+                ? buildTextFilterParams(textFilterFields)
+                : undefined
             );
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
@@ -604,12 +621,16 @@ function App({
   }, [results, hasQueried, setHasQueried, queryText, isLoading]);
 
   // A text filter found relevant for one task's video content has no bearing
-  // on the next task — clear it back to defaults whenever a different task
-  // opens. Translate/Expand deliberately do NOT do this (they only touch
-  // queryText), so this effect is scoped to just these two fields.
+  // on the next task — clear both filters (ASR and OCR) back to defaults
+  // whenever a different task opens. Translate/Expand deliberately do NOT do
+  // this (they only touch queryText), so this effect is scoped to just these
+  // four fields.
   useEffect(() => {
-    useQueryStore.getState().setTextFilter("");
-    useQueryStore.getState().setTextFilterMode("substring");
+    const query = useQueryStore.getState();
+    query.setAsrFilter("");
+    query.setAsrFilterMode("substring");
+    query.setOcrFilter("");
+    query.setOcrFilterMode("substring");
   }, [activeTask?.id]);
 
   // Everything below renders `shownResults`, never `results`, so the grid, the
@@ -631,6 +652,24 @@ function App({
     [results, focusVideos, showOnlyPinned]
   );
 
+  // "Mỗi video một thẻ" (onePerVideo, default off): one card per video, its best
+  // frame. Grouped AFTER shownResults, so the pin filter still narrows first, and
+  // over the whole list, not the visible page. Never on OCR results (their
+  // `distance` is a word count; detected from the data, as the popup strip does)
+  // and never on the temporal/TRAKE routes (isFrameRoute is false there).
+  //
+  // A memo, not an effect that sets state: the grouping effect this file used to
+  // have re-ran forever on an unmemoised dependency. With the option off,
+  // buildGridResults hands back `shownResults` itself, so `gridResults` IS
+  // shownResults and everything below behaves exactly as before.
+  const resultsAreOcr = useMemo(() => isOcrResults(results), [results]);
+  const groupingAllowed = isFrameRoute && !resultsAreOcr;
+  const grid = useMemo(
+    () => buildGridResults(shownResults, onePerVideo, groupingAllowed),
+    [shownResults, onePerVideo, groupingAllowed]
+  );
+  const gridResults = grid.cards;
+
   // Show Top can be 500 (2000 on the OCR route) and that is deliberate — the
   // frame you want may rank 300th, and you cannot pick what you cannot see.
   // What is NOT affordable is painting all of them at once: each keyframe is a
@@ -642,16 +681,21 @@ function App({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const moreRef = useRef<HTMLDivElement | null>(null);
 
-  // A new result set, or a change of filter, starts the window over.
+  // A new result set, a change of filter, or flipping the one-card-per-video
+  // option starts the window over: visibleCount counts CARDS, and the list that
+  // pages is the grid list (grouped or not). Was keyed on [shownResults], which
+  // is the same array whenever the option is off.
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [shownResults]);
+  }, [gridResults]);
 
+  // Was: shownResults.slice(0, visibleCount)
   const visibleResults = useMemo(
-    () => shownResults.slice(0, visibleCount),
-    [shownResults, visibleCount]
+    () => gridResults.slice(0, visibleCount),
+    [gridResults, visibleCount]
   );
-  const hasMore = visibleCount < shownResults.length;
+  // Was: visibleCount < shownResults.length
+  const hasMore = visibleCount < gridResults.length;
 
   // Grow when the sentinel scrolls into view. The button below it does the same
   // thing on click, so a browser that never fires this is still fully usable.
@@ -868,6 +912,35 @@ function App({
         </div>
       )}
 
+      {/* Toggle for the one-card-per-video view. Its own row above the grid, not
+          in the pin chip row (that row only exists while videos are pinned), and
+          only where grouping is allowed. The nav bar's "N khung" is the size of
+          the search and does not change; while grouped, the count of cards is
+          shown here instead. Same button style as "Chỉ hiện video đã ghim". */}
+      {groupingAllowed && hasQueried && results.length > 0 && (
+        <div className="max-w-[98%] mx-auto mb-2 flex flex-wrap items-center gap-1.5 font-baloo">
+          <button
+            type="button"
+            onClick={toggleOnePerVideo}
+            aria-pressed={onePerVideo}
+            title="Gộp mỗi video thành một thẻ (khung điểm cao nhất). Mở video để xem các khung khác."
+            className={`text-[12px] px-2.5 py-1 rounded-[7px] border font-bold ${
+              onePerVideo
+                ? "bg-proto-primary border-proto-primary text-white"
+                : "border-proto-line text-proto-muted"
+            }`}
+          >
+            {onePerVideo ? "Đang gộp · Hiện tất cả khung" : "Mỗi video một thẻ"}
+          </button>
+          {onePerVideo && (
+            <span className="text-[12px] text-proto-muted">
+              <b className="font-mono text-proto-ink">{gridResults.length}</b> video ·{" "}
+              <b className="font-mono text-proto-ink">{shownResults.length}</b> khung
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Dòng "50 kết quả · 1.8s" đã lên thanh điều hướng. Ở đây nó là một
           khung riêng cao 40px nằm giữa đề bài và lưới ảnh, đẩy hàng kết quả
           đầu tiên xuống mà chỉ để nói hai con số. Thanh nav đọc thẳng từ
@@ -904,6 +977,12 @@ function App({
             // đâu". Lưới kia bỏ rồi, nên chúng về đúng chỗ duy nhất còn lại.
             highlightFrame={pickedFrame ?? undefined}
             highlightLabel={pickedFrom ?? undefined}
+            // Present only while grouped. Spread rather than passed as
+            // `groupInfoByFrame={undefined}`, so with the option off FrameDisplay
+            // receives the very same props as before this option existed.
+            {...(grid.groupInfoByFrame
+              ? { groupInfoByFrame: grid.groupInfoByFrame }
+              : {})}
             onClick={(result) => {
               setframeId(frameIdFromName(result.name));
               setVideoUrl(videoIdFromFrame(result.frame));
@@ -928,7 +1007,7 @@ function App({
             onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
             className="text-[12.5px] px-4 py-2 rounded-[8px] border border-proto-line bg-white text-proto-body"
           >
-            Xem thêm — đang hiện {visibleResults.length}/{shownResults.length}
+            Xem thêm — đang hiện {visibleResults.length}/{gridResults.length}
           </button>
         </div>
       )}

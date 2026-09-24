@@ -7,12 +7,14 @@ import Dropdown, { type DropdownOption } from "../DropDown";
 import TextIndexStatus from "../TextIndexStatus";
 import {
   useQueryStore,
+  type AsrFilterMode,
+  type OcrFilterMode,
   type SearchType,
-  type TextFilterMode,
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
 import { expandQuery, type ExpansionResult } from "../../api/expansion";
+import { hasTextFilter } from "../../helpers/textFilter";
 
 // Longest text filter the backend accepts: keep in sync with TEXT_FILTER_MAX_CHARS
 // in backend/app/text_signal.py. A longer value is rejected with HTTP 422 for the
@@ -20,6 +22,66 @@ import { expandQuery, type ExpansionResult } from "../../api/expansion";
 // (maxLength counts UTF-16 units and the backend counts characters, so an astral
 // character such as an emoji counts double here: the limit is never exceeded.)
 const TEXT_FILTER_MAX_CHARS = 200;
+
+interface TextFilterRowProps {
+  label: string;
+  options: DropdownOption[];
+  mode: string;
+  onModeChange: (mode: string) => void;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}
+
+// One text filter (ASR or OCR): source label, mode dropdown, input, clear
+// button. Both rows share this markup so they look and behave the same.
+function TextFilterRow({
+  label,
+  options,
+  mode,
+  onModeChange,
+  value,
+  onChange,
+  placeholder,
+}: TextFilterRowProps) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-[8px] p-1.5 transition-colors ${
+        value.trim() !== "" ? "bg-proto-primary/10" : ""
+      }`}
+    >
+      <span className="w-7 shrink-0 text-[11.5px] font-bold text-proto-muted">
+        {label}
+      </span>
+      <Dropdown
+        options={options}
+        value={mode}
+        onChange={(opt) => onModeChange(opt.value as string)}
+        dropDownWidth={130}
+        dropDirection="down"
+        size="sm"
+      />
+      <input
+        type="text"
+        value={value}
+        maxLength={TEXT_FILTER_MAX_CHARS}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-white px-2 py-1.5 text-[12.5px] text-proto-ink"
+      />
+      {value !== "" && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          title="Xoá bộ lọc"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-proto-line bg-white text-proto-muted"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
 
 interface QueryInputProps {
   doSearch: () => void;
@@ -56,15 +118,22 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     (state) => state.setQueryTranslated
   );
 
-  // ── Text-signal filter (ASR/OCR annotation, /ensemble-search only) ────────
-  const textFilter = useQueryStore((state) => state.textFilter);
-  const setTextFilter = useQueryStore((state) => state.setTextFilter);
-  const textFilterMode = useQueryStore((state) => state.textFilterMode);
-  const setTextFilterMode = useQueryStore((state) => state.setTextFilterMode);
-  // Hidden by default; starts open if a filter is already set (e.g. this
+  // ── Text-signal filters (ASR and OCR annotation, /ensemble-search only) ───
+  // Two independent inputs, each with its own mode (OCR has no BM25).
+  const asrFilter = useQueryStore((state) => state.asrFilter);
+  const setAsrFilter = useQueryStore((state) => state.setAsrFilter);
+  const asrFilterMode = useQueryStore((state) => state.asrFilterMode);
+  const setAsrFilterMode = useQueryStore((state) => state.setAsrFilterMode);
+  const ocrFilter = useQueryStore((state) => state.ocrFilter);
+  const setOcrFilter = useQueryStore((state) => state.setOcrFilter);
+  const ocrFilterMode = useQueryStore((state) => state.ocrFilterMode);
+  const setOcrFilterMode = useQueryStore((state) => state.setOcrFilterMode);
+  // Hidden by default; starts open if either filter is already set (e.g. this
   // component remounted). Stays open until the user clicks the toggle again
-  // — it does not auto-collapse just because the field is empty.
-  const [filterRowOpen, setFilterRowOpen] = useState(textFilter.trim() !== "");
+  // — it does not auto-collapse just because the fields are empty.
+  const [filterRowOpen, setFilterRowOpen] = useState(
+    hasTextFilter({ asrFilter, asrFilterMode, ocrFilter, ocrFilterMode })
+  );
   // Cụm tuỳ chọn (Show Top, Top-M, Rerank, Language, Translate, Search Type)
   // trước đây gấp sau nút "Tuỳ chọn", đóng sẵn. Bỏ nút, để hiện thường trực:
   // Search Type nằm trong cụm đó, mà chuyển sang TRAKE hay OCR là việc làm
@@ -188,32 +257,41 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     { id: 1, label: "CLIP", value: "clip" as ModelName },
   ];
 
-  const textFilterModeOptions: DropdownOption[] = [
+  // ASR takes all three modes; OCR has no BM25 index, so it gets the first
+  // two. Same labels and descriptions for both.
+  const asrFilterModeOptions: DropdownOption[] = [
     {
       id: 0,
       label: "Substring",
-      value: "substring" as TextFilterMode,
+      value: "substring" as AsrFilterMode,
       description: "exact text match, diacritics ignored",
     },
     {
       id: 1,
       label: "Regex",
-      value: "regex" as TextFilterMode,
+      value: "regex" as AsrFilterMode,
       description: "pattern match, e.g. (ngò|ngo) or đường\\s+\\w+",
     },
     {
       id: 2,
       label: "BM25",
-      value: "bm25" as TextFilterMode,
+      value: "bm25" as AsrFilterMode,
       description: "lexical relevance score across transcript",
     },
   ];
+  const ocrFilterModeOptions: DropdownOption[] = asrFilterModeOptions.filter(
+    (option) => (option.value as AsrFilterMode) !== "bm25"
+  );
 
-  const textFilterPlaceholder = {
+  const asrFilterPlaceholder = {
     substring: "e.g. ngò, quán trọ, 2018",
     regex: "e.g. (ngò|ngo), đường\\s+\\w+",
     bm25: "e.g. khu vườn trái cây miền Tây",
-  }[textFilterMode];
+  }[asrFilterMode];
+  const ocrFilterPlaceholder: Record<OcrFilterMode, string> = {
+    substring: "on-screen text, e.g. QUÁN TRỌ, 2018",
+    regex: "on-screen pattern, e.g. (quán|quan)\\s+trọ",
+  };
 
   return (
     // Không còn `border rounded-xl`: khung bao ngoài giờ là cột trái cố định
@@ -384,37 +462,25 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
           </div>
 
           {filterRowOpen && (
-            <div
-              className={`flex items-center gap-2 rounded-[8px] p-1.5 transition-colors ${
-                textFilter.trim() !== "" ? "bg-proto-primary/10" : ""
-              }`}
-            >
-              <Dropdown
-                options={textFilterModeOptions}
-                value={textFilterMode}
-                onChange={(opt) => setTextFilterMode(opt.value as TextFilterMode)}
-                dropDownWidth={130}
-                dropDirection="down"
-                size="sm"
+            <div className="flex flex-col gap-1">
+              <TextFilterRow
+                label="ASR"
+                options={asrFilterModeOptions}
+                mode={asrFilterMode}
+                onModeChange={(mode) => setAsrFilterMode(mode as AsrFilterMode)}
+                value={asrFilter}
+                onChange={setAsrFilter}
+                placeholder={asrFilterPlaceholder}
               />
-              <input
-                type="text"
-                value={textFilter}
-                maxLength={TEXT_FILTER_MAX_CHARS}
-                onChange={(e) => setTextFilter(e.target.value)}
-                placeholder={textFilterPlaceholder}
-                className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-white px-2 py-1.5 text-[12.5px] text-proto-ink"
+              <TextFilterRow
+                label="OCR"
+                options={ocrFilterModeOptions}
+                mode={ocrFilterMode}
+                onModeChange={(mode) => setOcrFilterMode(mode as OcrFilterMode)}
+                value={ocrFilter}
+                onChange={setOcrFilter}
+                placeholder={ocrFilterPlaceholder[ocrFilterMode]}
               />
-              {textFilter !== "" && (
-                <button
-                  type="button"
-                  onClick={() => setTextFilter("")}
-                  title="Xoá bộ lọc"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-proto-line bg-white text-proto-muted"
-                >
-                  <X size={14} />
-                </button>
-              )}
             </div>
           )}
         </div>

@@ -1,10 +1,16 @@
+// frontend/src/components/FrameDisplay/index.tsx
+
 import { useEffect, useRef } from "react";
 import type { OcrSearchResult, SearchResult } from "../../types/api";
 import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loading-skeleton
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
+import { frameClock, frameIndexFromResult } from "../../helpers/frameIdentity";
+import { pickedKind, type GroupInfoByFrame } from "../../helpers/groupResults";
+import { describeTextFilter } from "../../helpers/textFilter";
 import TextSignalBadge from "../TextSignalBadge";
+import GroupBadge from "./GroupBadge";
 import { useSearchStore } from "../../store/useSearchStore";
 import { useQueryStore } from "../../store/queryStore";
 
@@ -141,8 +147,23 @@ type FrameDisplayProps2 = {
    * Bỏ trống khi tự bấm chọn — lúc đó nhãn ghi "khung bạn đã chọn".
    */
   highlightLabel?: string;
+  /**
+   * Set only while the "one card per video" option is on (App.tsx). Keyed by
+   * the name of the frame a card shows: how many frames of that video the card
+   * stands for, and their names. Two things depend on it: a "N khung" badge on a
+   * card with more than one, and the picked-frame ring, which must also land on
+   * the card whose group HIDES the picked frame.
+   *
+   * Absent (the option off, and every caller that does not know about it), the
+   * component renders exactly as it did before this prop existed.
+   */
+  groupInfoByFrame?: GroupInfoByFrame;
 };
 
+// DEPRECATED - no callers left. Kept (not deleted) with the reason: it reads the
+// trailing number of a keyframe name as MILLISECONDS, but that number is the
+// frame index, so it shows the wrong time for every video (36128 -> 00:36.128,
+// really 20:05.472 at 29.97 fps). Use frameClock() in helpers/frameIdentity.ts.
 export function extractTimestamp(filename: string): string {
   const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
   const timestampMatch = nameWithoutExt.match(/-(\d+)$/);
@@ -181,9 +202,16 @@ const AGREEMENT_TITLE: Record<"both" | "one" | "none", string> = {
   none: "không rõ route",
 };
 
-// Timestamp từ backend, parse tên file chỉ khi backend không trả trường này.
+// The backend's timestamp, else one computed from frame_idx / fps (frameClock).
+// Old fallback, kept for the record: extractTimestamp(result.frame) read the
+// trailing frame number as milliseconds, so frame 36128 printed 00:36.128
+// instead of 00:20:05.472.
 function frameTimestamp(result: SearchResult): string {
-  return result.timestamp || extractTimestamp(result.frame);
+  return (
+    result.timestamp ||
+    frameClock(videoOf(result), frameIndexFromResult(result)) ||
+    "Unknown"
+  );
 }
 
 // Keyframe chưa tải ảnh: vẫn hiện ranking/tên/timestamp thay vì <img> vỡ.
@@ -210,14 +238,26 @@ export default function FrameDisplay({
   focusVideos = [],
   highlightFrame,
   highlightLabel,
+  groupInfoByFrame,
 }: FrameDisplayProps2) {
   // Text-signal annotation (ASR/OCR match) from /ensemble-search, read
   // directly from the stores rather than threaded through as props — purely
   // additive metadata, so every existing <FrameDisplay .../> call site is
   // unaffected. null/missing -> TextSignalBadge renders nothing.
   const videoAnnotations = useSearchStore((state) => state.videoAnnotations);
-  const textFilter = useQueryStore((state) => state.textFilter);
-  const textFilterMode = useQueryStore((state) => state.textFilterMode);
+  // Two independent filters now (ASR and OCR). The badge still takes one
+  // filterQuery and one mode string, so compose them here (describeTextFilter);
+  // each field is its own selector so no new object is created per render.
+  const asrFilter = useQueryStore((state) => state.asrFilter);
+  const asrFilterMode = useQueryStore((state) => state.asrFilterMode);
+  const ocrFilter = useQueryStore((state) => state.ocrFilter);
+  const ocrFilterMode = useQueryStore((state) => state.ocrFilterMode);
+  const { term: textFilter, mode: textFilterMode } = describeTextFilter({
+    asrFilter,
+    asrFilterMode,
+    ocrFilter,
+    ocrFilterMode,
+  });
 
   const timestamp = results.map(frameTimestamp);
   // The ramp is normalised across the results actually on screen. Raw distance
@@ -255,8 +295,13 @@ export default function FrameDisplay({
             // So theo `name` chứ không theo thứ hạng: cùng một truy vấn chạy
             // lại có thể xáo nhẹ thứ tự khi index được cập nhật, còn tên
             // keyframe thì cố định.
-            const picked =
-              highlightFrame !== undefined && result.name === highlightFrame;
+            // Old rule, kept for the record:
+            //   const picked = highlightFrame !== undefined && result.name === highlightFrame;
+            // Still what pickedKind answers without groupInfoByFrame. With it, a
+            // card also counts as picked when the picked frame is folded into it.
+            const pickedHow = pickedKind(result, highlightFrame, groupInfoByFrame);
+            const picked = pickedHow !== null;
+            const group = groupInfoByFrame?.get(result.name);
             // Cards belonging to a pinned video, so a pin reads as "marked"
             // on sight even while the grid still shows every other video too
             // (shownResults only narrows down when showOnlyPinned is on --
@@ -295,7 +340,13 @@ export default function FrameDisplay({
               >
                 {picked && (
                   <span className="absolute top-0 left-0 right-0 z-10 bg-[#c64545] text-white text-[11px] font-bold px-2 py-1 text-center tracking-wide">
-                    {highlightLabel
+                    {pickedHow === "hidden"
+                      ? // The picked frame is another frame of this video, folded
+                        // into this card; saying "this frame" would be wrong.
+                        highlightLabel
+                        ? `${highlightLabel} bấm vào một khung của video này`
+                        : "khung bạn đã chọn nằm trong video này"
+                      : highlightLabel
                       ? `${highlightLabel} bấm vào khung này`
                       : "khung bạn đã chọn"}
                   </span>
@@ -353,6 +404,7 @@ export default function FrameDisplay({
                       title={AGREEMENT_TITLE[routeAgreement(result)]}
                     />
                     <span className="truncate">{result.name}</span>
+                    {group && <GroupBadge count={group.count} />}
                   </span>
                   <span className="flex items-center justify-between">
                     <span>{timestamp[index]}</span>

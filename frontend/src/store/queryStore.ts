@@ -1,6 +1,6 @@
 // src/store/queryStore.ts
 import { create } from "zustand";
-import type { ModelName } from "../types/api";
+import type { AsrFilterMode, ModelName, OcrFilterMode } from "../types/api";
 import { useSearchStore } from "./useSearchStore";
 
 export type QueryType = "text" | "image" | "audio";
@@ -19,9 +19,12 @@ export type SearchType = "ensemble" | "single" | "temporal" | "trake" | "ocr";
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 
-// Matches backend's TextMatchMode (backend/app/text_signal.py). Only applies
-// to /ensemble-search — see EnsembleSearchRequest.text_filter_mode.
-export type TextFilterMode = "substring" | "regex" | "bm25";
+// The two text filters are independent, each with its own mode: ASR takes
+// substring | regex | bm25 (backend TextMatchMode), OCR takes substring | regex
+// only (backend OcrFilterMode: OCR has no BM25 index). Defined in types/api.ts
+// with the request contract and re-exported here. Only applies to
+// /ensemble-search — see EnsembleSearchRequest.asr_filter / ocr_filter.
+export type { AsrFilterMode, OcrFilterMode };
 
 export interface QueryStore {
   queryType: QueryType;
@@ -58,13 +61,19 @@ export interface QueryStore {
   queryTranslated: string;
   setQueryTranslated: (text: string) => void;
 
-  // ── Text-signal filter (ASR/OCR annotation, /ensemble-search only) ────────
-  // Purely additive metadata on the results — never drops a frame. Empty
-  // string disables it, matching the backend's own default.
-  textFilter: string;
-  setTextFilter: (value: string) => void;
-  textFilterMode: TextFilterMode;
-  setTextFilterMode: (mode: TextFilterMode) => void;
+  // ── Text-signal filters (ASR and OCR annotation, /ensemble-search only) ───
+  // Purely additive metadata on the results — never drops a frame. An empty
+  // string disables that source, matching the backend's own default. Every
+  // setter clears videoAnnotations at once: the badges on screen describe the
+  // PREVIOUS filter and must not linger next to a field the user has edited.
+  asrFilter: string;
+  setAsrFilter: (value: string) => void;
+  asrFilterMode: AsrFilterMode;
+  setAsrFilterMode: (mode: AsrFilterMode) => void;
+  ocrFilter: string;
+  setOcrFilter: (value: string) => void;
+  ocrFilterMode: OcrFilterMode;
+  setOcrFilterMode: (mode: OcrFilterMode) => void;
 }
 
 export const useQueryStore = create<QueryStore>((set) => ({
@@ -102,16 +111,26 @@ export const useQueryStore = create<QueryStore>((set) => ({
   queryTranslated: "",
   setQueryTranslated: (text) => set({ queryTranslated: text }),
 
-  textFilter: "",
-  setTextFilter: (value) => {
-    set({ textFilter: value });
+  asrFilter: "",
+  setAsrFilter: (value) => {
+    set({ asrFilter: value });
     // Badges on screen describe the PREVIOUS filter query — clear them so
     // they never linger next to a field the user has since edited.
     useSearchStore.getState().setVideoAnnotations(null);
   },
-  textFilterMode: "substring",
-  setTextFilterMode: (mode) => {
-    set({ textFilterMode: mode });
+  asrFilterMode: "substring",
+  setAsrFilterMode: (mode) => {
+    set({ asrFilterMode: mode });
+    useSearchStore.getState().setVideoAnnotations(null);
+  },
+  ocrFilter: "",
+  setOcrFilter: (value) => {
+    set({ ocrFilter: value });
+    useSearchStore.getState().setVideoAnnotations(null);
+  },
+  ocrFilterMode: "substring",
+  setOcrFilterMode: (mode) => {
+    set({ ocrFilterMode: mode });
     useSearchStore.getState().setVideoAnnotations(null);
   },
 }));

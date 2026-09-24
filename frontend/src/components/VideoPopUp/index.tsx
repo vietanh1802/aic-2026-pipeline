@@ -1,3 +1,5 @@
+// frontend/src/components/VideoPopUp/index.tsx
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
 import VideoDrive from "./VideoDisplay";
@@ -7,15 +9,22 @@ import { neighbourKeyframesFor } from "../../helpers/keyframes";
 
 import Button from "../Button";
 import KeyframeFPS from "../../mapping/fps_map.json";
-import { extractTimestamp } from "../FrameDisplay";
+// import { extractTimestamp } from "../FrameDisplay"; // read the frame number as ms, see below
 import { type AnswerRow } from "../../api/answers";
 import type { BoardTask } from "../../api/board";
 import TaskBrief from "../TaskBrief";
 import AnswerPanel from "./AnswerPanel";
+import CandidateStrip from "./CandidateStrip";
 import FrameMarkStrip from "./FrameMarkStrip";
 import { usePopupStore } from "../../store/popupStore";
-import { startMsAt } from "../../helpers/frameIdentity";
+import {
+  frameClock,
+  frameIdxFromFrameId,
+  startMsAt,
+} from "../../helpers/frameIdentity";
 import { frameRange } from "../../helpers/frameRange";
+import { durationForVideo, type DurationTag } from "../../helpers/candidateStripView";
+import { nextSeekRequest, type SeekRequest } from "../../helpers/seekRequest";
 import type { MarkedRange } from "../../helpers/basketMath";
 
 /**
@@ -155,6 +164,17 @@ export default function VideoPopup({
   // gated on `duration !== 1`, which silently tied the submission form to the
   // Drive metadata request being the only caller of onDuration.
   const [duration, setDuration] = useState<number>(0);
+  // The same duration, tagged with the video it was read from, for the candidate
+  // strip only. `duration` above is left as it was for FrameMarkStrip and the
+  // submit form. It is written only by the player's loadedmetadata and this
+  // popup is not remounted when pointed at another video, so after a switch it
+  // holds the previous video's length until the new metadata arrives; the strip
+  // must never be laid out with that (see durationForVideo).
+  const [durationTag, setDurationTag] = useState<DurationTag | null>(null);
+  const stripDuration = durationForVideo(durationTag, videoId);
+  // Set by a press on a candidate block; VideoDrive seeks on each new request,
+  // including a second press on the same block (see helpers/seekRequest.ts).
+  const [seekRequest, setSeekRequest] = useState<SeekRequest | null>(null);
   const frame_detect = KeyframeFPS[videoId as VideoId] as number;
 
   const computed = Number(parseInt(frameIdx) * frame_detect);
@@ -248,7 +268,15 @@ export default function VideoPopup({
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold">Timestamp :</span>
-                <span>{extractTimestamp(videoId + "-" + frameId)}</span>
+                {/* Computed from frame / fps: it equals the backend's
+                    timestamp_str (00:20:05.472) and needs nothing threaded in
+                    from the caller, since every way of opening the popup
+                    already gives a frame id. The old
+                    extractTimestamp(videoId + "-" + frameId) read the frame
+                    number as milliseconds and showed 00:36.128 for frame 36128. */}
+                <span>
+                  {frameClock(videoId, frameIdxFromFrameId(frameId)) || "Unknown"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold">Video FPS:</span>
@@ -268,18 +296,45 @@ export default function VideoPopup({
           <div className="flex justify-center items-center">
             <VideoDrive
               videoId={videoId}
-              onDuration={(s) => setDuration(s)}
+              onDuration={(s) => {
+                setDuration(s);
+                setDurationTag({ videoId, seconds: s });
+              }}
               videoRef={videoRef}
               onPosition={(seconds) => {
                 setPlayhead(seconds);
                 setFrameIdx(String(seconds));
               }}
               jumpTo={startAt / 1000}
+              seekRequest={seekRequest}
               setStartAt={setStartAt}
               mapping_frame={matching_keyframe}
               frame_detect={frame_detect}
             />
           </div>
+
+          {/* Other candidate moments of this video from the current results.
+              Mounted here rather than inside VideoDrive: that component owns
+              the <video> and the seek effect, and a slot in it would mean
+              reshaping a file every seek path goes through. Here it needs no
+              change to the player at all, and it sits next to the other
+              timeline strip. Renders nothing when there is nothing to show. */}
+          <CandidateStrip
+            videoId={videoId}
+            durationS={stripDuration}
+            currentTimeS={playhead}
+            hidden={trakeSlot !== null}
+            // Same route as opening on that keyframe: the popup's target time
+            // moves to startMsAt(video, frame), and frameId, the marks, +/-,
+            // Frame_idx and Đầu/Cuối carry on from there untouched. The request
+            // on top is what makes a SECOND press on the same block seek again:
+            // setStartAt with the value it already holds does nothing.
+            onJump={(_frameName, _timeS, frameIdx) => {
+              const targetMs = startMsAt(videoId, frameIdx);
+              setStartAt(targetMs);
+              setSeekRequest((previous) => nextSeekRequest(previous, targetMs / 1000));
+            }}
+          />
 
           <FrameMarkStrip
             videoId={videoId}
