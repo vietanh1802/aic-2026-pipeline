@@ -1050,13 +1050,17 @@ def _asr_multi_hits(video_id : str, terms : list[str], get_text) -> list :
 
 
 def _asr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optional[re.Pattern],
-              batch : dict[str, list]) -> list :
+              batch : dict[str, list], terms : Optional[list[str]] = None) -> list :
     """TextHits of one video for the ASR source. bm25 comes from the
     corpus-wide batch (one postings walk for all candidates), substring and
-    regex scan the video's own frames."""
+    regex scan the video's own frames. terms (substring only): the two or more
+    terms of a multi-term filter, scanned by _asr_multi_hits(); None is today's
+    single-phrase scan of `query`."""
     if mode == TextMatchMode.bm25 :
         return batch.get(video_id, [])
     if mode == TextMatchMode.substring :
+        if terms is not None :
+            return _asr_multi_hits(video_id, terms, asr_text.get_text)
         return _substring_hits(video_id, query, asr_text.get_text)
     if mode == TextMatchMode.regex :
         return _regex_hits(video_id, pattern, asr_text.get_text)
@@ -1075,6 +1079,23 @@ def _ocr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optio
     raise ValueError(f"unknown OCR mode: {mode}")
 
 
+def _plan_terms(query : str) -> tuple[Optional[str], Optional[list[str]]] :
+    """How ONE substring source is searched when multi_term is on, from its
+    stripped, non-empty query: (query, terms).
+
+      no terms at all (",,")   -> (None, None): the source is inactive
+      exactly one term         -> (that term, None): today's single-term code runs
+                                  with it. A query without a separator gives the
+                                  very same string back; "lửa," gives "lửa"
+      two or more terms        -> (query, terms): the multi-term scanners run"""
+    terms = split_terms(query)
+    if not terms :
+        return None, None
+    if len(terms) == 1 :
+        return terms[0], None
+    return query, terms
+
+
 def annotate_videos_split(
         video_ids : list[str],
         frame_names : dict[str, list[str]],
@@ -1083,6 +1104,7 @@ def annotate_videos_split(
         ocr_query : Optional[str],
         ocr_mode : Optional[Enum],
         mode_label : Optional[str] = None,
+        multi_term : bool = False,
 ) -> dict[str, VideoAnnotation] :
     """Annotate videos with an ASR filter and an OCR filter that are
     independent: each has its own query and mode (asr: substring | regex |
@@ -1095,6 +1117,15 @@ def annotate_videos_split(
     mode_label becomes VideoAnnotation.mode (default: _mode_label() of the
     requested sources). Each source builds its match detail with ITS OWN mode,
     term and pattern.
+
+    multi_term (default False, which is exactly the behaviour before it existed;
+    the legacy annotate_videos() always passes False): a source in SUBSTRING mode
+    reads its query as a list of terms, see split_terms() and _plan_terms(). A
+    frame matches when it holds at least one term, the video's frame is the one
+    with the most terms, and the detail lists which terms it found (MatchDetail).
+    bm25 and regex sources ignore the flag. A query that splits into no terms
+    (",,") makes that source inactive, like an invalid regex: the label still
+    comes from the requested modes.
 
     Never raises, and each video is handled in its own try/except: one video's
     failure must not blank out every other video's real annotation. A detail
@@ -1125,6 +1156,20 @@ def annotate_videos_split(
         except re.error :
             ocr_active = None
 
+    # Multi-term substring: only when the caller asked (annotate_request's split
+    # branch), only for a source in substring mode. asr_terms / ocr_terms stay None
+    # for a single term, which then runs today's code below with that one term.
+    asr_terms : Optional[list[str]] = None
+    ocr_terms : Optional[list[str]] = None
+    if multi_term and (asr_active == TextMatchMode.substring) :
+        asr_query, asr_terms = _plan_terms(asr_query)
+        if asr_query is None :
+            asr_active = None
+    if multi_term and (ocr_active == TextMatchMode.substring) :
+        ocr_query, ocr_terms = _plan_terms(ocr_query)
+        if ocr_query is None :
+            ocr_active = None
+
     if (asr_active is None) and (ocr_active is None) :
         return {video_id : VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH) for video_id in video_ids}
 
@@ -1138,15 +1183,27 @@ def annotate_videos_split(
     ocr_batch : dict[str, list] = {}
     if asr_active == TextMatchMode.bm25 :
         asr_batch = text_lookup.lookup_text_batch(asr_query, source="asr", video_ids=video_ids)
-    if ocr_active == TextMatchMode.substring :
+    if (ocr_active == TextMatchMode.substring) and (ocr_terms is None) :
         ocr_batch = text_lookup.lookup_text_batch(ocr_query, source="ocr", video_ids=video_ids)
+    elif ocr_active == TextMatchMode.substring :
+        # Multi-term OCR. lookup_text_batch_multi() already logs and returns "no
+        # hits" when its own scan fails; this second guard is for anything else it
+        # could raise, so a broken OCR side yields "no OCR match" for every video
+        # (logged once for the request) instead of failing the whole annotation.
+        try :
+            ocr_batch = text_lookup.lookup_text_batch_multi(ocr_terms, source="ocr", video_ids=video_ids)
+        except Exception :
+            logger.exception("[text_signal] multi-term OCR lookup failed (OCR reported as no match)")
+            ocr_batch = {}
 
     out : dict[str, VideoAnnotation] = {}
     detail_failure_logged = False
+    video_failure_logged = False
     for video_id in video_ids :
         here = frame_names.get(video_id, [])
         try :
-            asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch) if asr_active is not None else []
+            # Previous: asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch) if ... (same call, no terms)
+            asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch, asr_terms) if asr_active is not None else []
             ocr_hits = _ocr_hits(video_id, ocr_query, ocr_active, ocr_pattern, ocr_batch) if ocr_active is not None else []
             asr_match = _best_match(asr_hits, here)
             ocr_match = _best_match(ocr_hits, here)
@@ -1157,13 +1214,17 @@ def annotate_videos_split(
             # video. Built only for matched sources and only for the ONE chosen
             # hit, so it adds nothing for non-matching videos or extra frames.
             # Each source describes its match with its own mode, term, pattern.
-            for source, match, hits, source_mode, source_query, source_pattern in (
-                    ("asr", asr_match, asr_hits, asr_active, asr_query, asr_pattern),
-                    ("ocr", ocr_match, ocr_hits, ocr_active, ocr_query, ocr_pattern)) :
+            for source, match, hits, source_mode, source_query, source_pattern, source_terms in (
+                    ("asr", asr_match, asr_hits, asr_active, asr_query, asr_pattern, asr_terms),
+                    ("ocr", ocr_match, ocr_hits, ocr_active, ocr_query, ocr_pattern, ocr_terms)) :
                 if match.location == "none" :
                     continue
                 try :
-                    match.detail = describe_match(_choose_hit(hits, here), source, source_mode, source_query, source_pattern)
+                    chosen = _choose_hit(hits, here)
+                    if source_terms is None :
+                        match.detail = describe_match(chosen, source, source_mode, source_query, source_pattern)
+                    else :
+                        match.detail = describe_match(chosen, source, source_mode, source_query, source_pattern, terms=source_terms)
                 except Exception :
                     if not detail_failure_logged :  # once per call, not once per video
                         logger.exception("[text_signal] match detail failed (annotation kept without it)")
@@ -1172,6 +1233,12 @@ def annotate_videos_split(
             matched = (asr_match.location != "none") or (ocr_match.location != "none")
             out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, label, asr_match, ocr_match)
         except Exception :
+            # One video's failure blanks that video only. Logged once per call
+            # (it used to be silent): with the multi-term scanners a bug here would
+            # otherwise turn every ASR match into "no match" without a trace.
+            if not video_failure_logged :
+                logger.exception("[text_signal] video annotation failed (reported as no match)")
+                video_failure_logged = True
             out[video_id] = VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH)
     return out
 
@@ -1197,7 +1264,7 @@ def annotate_videos(
     else :
         asr_mode, ocr_mode = mode, mode
     return annotate_videos_split(video_ids, frame_names, filter_query, asr_mode, filter_query, ocr_mode,
-                                 mode_label=mode.value)
+                                 mode_label=mode.value, multi_term=False)  # the legacy path never splits on commas
 
 
 # Previous body of annotate_videos(), kept for reference (replaced by the mapping
@@ -1297,7 +1364,14 @@ def annotate_request(
     and the legacy fields are ignored. Otherwise the legacy text_filter runs
     EXACTLY as before (this protects old callers, and the deploy window in which
     an old frontend talks to the new backend). `results` are the visual result
-    rows ("video" and "name" keys); nothing is removed or reordered."""
+    rows ("video" and "name" keys); nothing is removed or reordered.
+
+    Only the split path reads a substring filter as a list of terms ("lửa, nước",
+    see split_terms()); bm25, regex and the legacy text_filter never do. The flags
+    of the response follow the request as typed: a filter that splits into no terms
+    (",,") is still reported active with its mode, but nothing is searched for that
+    source (every video comes back with no match for it), exactly like an invalid
+    regex."""
     asr_active = bool((asr_filter or "").strip())
     ocr_active = bool((ocr_filter or "").strip())
     legacy_active = bool((legacy_filter or "").strip())
@@ -1313,8 +1387,11 @@ def annotate_request(
         asr_requested = asr_filter_mode if asr_active else None
         ocr_requested = ocr_filter_mode if ocr_active else None
         label = _mode_label(asr_requested, ocr_requested)
+        # Previous: annotate_videos_split(video_ids, frame_names, asr_filter, asr_requested,
+        #                                 ocr_filter, ocr_requested, mode_label=label)
+        # multi_term=True is what turns "lửa, nước" into two terms in substring mode.
         annotations = annotate_videos_split(video_ids, frame_names, asr_filter, asr_requested,
-                                            ocr_filter, ocr_requested, mode_label=label)
+                                            ocr_filter, ocr_requested, mode_label=label, multi_term=True)
         return RequestAnnotation(
             video_annotations={vid : asdict(annotation) for vid, annotation in annotations.items()},
             text_filter_active=True, text_filter_mode=label, asr_filter_active=asr_active,

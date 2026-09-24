@@ -906,6 +906,9 @@ _MIXED_VIDEOS = ["E1", "N1", "X1", "O1", "NF", "GHOST"]
 @pytest.mark.parametrize("mode, query", [
     (TextMatchMode.substring, "ngo"), (TextMatchMode.substring, "2018"), (TextMatchMode.substring, "nghêu"),
     (TextMatchMode.substring, "ngo hap"), (TextMatchMode.substring, "  "),
+    # comma lists: the legacy path never splits them (only the split ASR / OCR filters do)
+    (TextMatchMode.substring, "ngo, 2018"), (TextMatchMode.substring, "ngo,2018"), (TextMatchMode.substring, "ngo; hap"),
+    (TextMatchMode.substring, "1,5"), (TextMatchMode.substring, "ngo,"), (TextMatchMode.regex, "ngo, 2018"),
     (TextMatchMode.regex, r"ngo\s+hap"), (TextMatchMode.regex, r"\d{4}"), (TextMatchMode.regex, r"ngh[eê]u"),
     (TextMatchMode.regex, "(unclosed"), (TextMatchMode.regex, "   "),
 ])
@@ -925,7 +928,7 @@ def test_the_oracle_really_exercises_matches_and_details(monkeypatch) :
     assert result["NF"].matched is False and result["GHOST"].matched is False
 
 
-@pytest.mark.parametrize("query", ["meo", "cho", "meo cho", "", "  "])
+@pytest.mark.parametrize("query", ["meo", "cho", "meo cho", "", "  ", "meo, cho", "meo,cho", "meo; cho"])
 def test_legacy_bm25_annotate_videos_is_identical_to_the_previous_implementation(monkeypatch, tmp_path, query) :
     monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
     _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
@@ -1461,3 +1464,181 @@ def test_describe_match_ignores_terms_without_term_hits_and_in_other_modes(monke
     multi = text_signal._asr_multi_hits("V1", ["ngo", "x"], text_signal.asr_text.get_text)[0]
     regex = text_signal.describe_match(multi, "asr", TextMatchMode.regex, "ng.", re.compile("ng.", re.IGNORECASE), terms = ["ngo", "x"])
     assert (regex.matched_terms, regex.terms_total) == ([], 0)
+
+
+# ── multi-term wiring: annotate_videos_split(multi_term=...) and annotate_request ──
+
+SUB, OSUB = TextMatchMode.substring, text_signal.OcrFilterMode.substring
+
+
+def test_multi_term_split_path_matches_either_term_on_both_sources(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = True)
+    e1, n1, x1, o1 = (result[video] for video in ("E1", "N1", "X1", "O1"))
+    assert (e1.asr.match_type, e1.asr.location, e1.asr.detail.matched_terms, e1.asr.detail.terms_total) == ("exact", "here", ["ngo", "2018"], 2)
+    assert _hit_texts(e1.asr.detail.snippet)[:2] == ["ngo", "2018"] and e1.mode == "mixed"
+    assert (e1.ocr.match_frame, e1.ocr.detail.matched_terms) == ("E1-0000-200.jpg", ["ngo", "2018"])
+    # N1: only "ngo" is there, and only after folding: a partial match, "1 of 2"
+    assert (n1.asr.match_type, n1.asr.detail.matched_terms, n1.asr.detail.terms_total) == ("normalized", ["ngo"], 2)
+    assert (n1.ocr.match_type, n1.ocr.detail.matched_terms, n1.ocr.detail.terms_total) == ("normalized", ["ngo"], 2)
+    assert x1.matched is False and result["NF"].matched is False and result["GHOST"].matched is False
+    assert (o1.asr.location, o1.asr.match_frame, o1.asr.detail.matched_terms) == ("elsewhere", "O1-0000-200.jpg", ["ngo", "2018"])
+    # OCR ranks videos by their best frame, videos with more terms first: O1 (shorter text), E1, then N1 with one term
+    assert [(v, result[v].ocr.detail.rank, result[v].ocr.detail.total_matched) for v in ("O1", "E1", "N1")] == [("O1", 1, 3), ("E1", 2, 3), ("N1", 3, 3)]
+    assert e1.ocr.detail.exact_phrase is True and e1.asr.detail.exact_phrase is None and e1.asr.detail.rank is None
+
+
+def test_multi_term_flag_off_reads_the_comma_as_part_of_the_phrase(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    off = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB)
+    assert off["E1"].asr.location == "none"                    # the literal phrase "ngo, 2018" is nowhere in the ASR text
+    assert off["E1"].ocr.detail.matched_terms == [] and off["E1"].ocr.detail.terms_total == 0
+    explicit = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = False)
+    assert _as_dicts(off) == _as_dicts(explicit)
+
+
+@pytest.mark.parametrize("query", ["ngo", "2018", "nghêu", "ngo hap", "1,5", "  ngo  ", "nghêu nuong", "co ngo va", "khong co"])
+def test_a_query_without_separator_is_byte_identical_with_the_flag_on(monkeypatch, query) :
+    frames = _mixed_corpus(monkeypatch)
+    on = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = True)
+    off = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = False)
+    assert _as_dicts(on) == _as_dicts(off) and list(on) == list(off)
+
+
+@pytest.mark.parametrize("query", ["ngo,", ",ngo", " , ngo ;", "ngo, NGO", "ngo, ngò", "ngo;;ngo"])
+def test_one_term_after_splitting_acts_as_that_term(monkeypatch, query) :
+    frames = _mixed_corpus(monkeypatch)
+    on = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = True)
+    single = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo", SUB, "ngo", OSUB, multi_term = False)
+    assert _as_dicts(on) == _as_dicts(single)
+
+
+def test_zero_terms_make_the_source_inactive_and_the_other_source_still_runs(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, ",,", SUB, "ngo", OSUB, multi_term = True)
+    assert all(annotation.asr.location == "none" and annotation.asr.detail is None for annotation in result.values())
+    assert result["E1"].ocr.location != "none" and result["E1"].mode == "mixed"
+    both = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, ",,", SUB, " ; ", OSUB, multi_term = True)
+    assert all(annotation.matched is False for annotation in both.values()) and {a.mode for a in both.values()} == {"mixed"}
+    assert set(both) == set(_MIXED_VIDEOS)
+
+
+def test_at_most_five_terms_are_searched(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    five_first = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "zz1, zz2, zz3, zz4, zz5, ngo", SUB, "", None, multi_term = True)
+    assert five_first["E1"].asr.location == "none"                    # "ngo" is the sixth term: dropped
+    detail = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, zz2, zz3, zz4, zz5, 2018", SUB, "", None,
+                                               multi_term = True)["E1"].asr.detail
+    assert detail.terms_total == 5 and detail.matched_terms == ["ngo"]   # "2018" is the sixth: dropped
+
+
+def test_multi_term_only_touches_substring_sources(monkeypatch, tmp_path) :
+    """bm25 already ORs its words and regex owns its commas: the flag changes neither."""
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
+    _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
+                              "V_B" : [_meta("V_B-0000-0.jpg", "V_B", 0)]})
+    _set_ocr_text("V_A-0000-100.jpg", "quan an cho lon")
+    videos = ["V_A", "V_B", "V_NONE"]
+    for query in ("meo, cho", "meo;cho", "meo"):
+        on = text_signal.annotate_videos_split(videos, {}, query, TextMatchMode.bm25, r"cho\s+lon, x", text_signal.OcrFilterMode.regex,
+                                               multi_term = True)
+        off = text_signal.annotate_videos_split(videos, {}, query, TextMatchMode.bm25, r"cho\s+lon, x", text_signal.OcrFilterMode.regex)
+        assert _as_dicts(on) == _as_dicts(off)
+    regex_on = text_signal.annotate_videos_split(videos, {}, "", None, "cho lon", text_signal.OcrFilterMode.regex, multi_term = True)
+    assert regex_on["V_A"].ocr.location != "none"
+    comma_regex = text_signal.annotate_videos_split(videos, {}, "", None, "an, cho", text_signal.OcrFilterMode.regex, multi_term = True)
+    assert comma_regex["V_A"].ocr.location == "none"                  # the comma stayed part of the pattern
+
+
+def test_request_routing_split_substring_with_commas_uses_multi_term(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "X1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("ngo, 2018", SUB, "nghêu; nuong", OSUB, "", SUB, rows)
+    assert (outcome.asr_filter_active, outcome.ocr_filter_active, outcome.text_filter_mode) == (True, True, "mixed")
+    e1 = outcome.video_annotations["E1"]
+    assert e1["asr"]["detail"]["matched_terms"] == ["ngo", "2018"] and e1["asr"]["detail"]["terms_total"] == 2
+    assert (e1["ocr"]["detail"]["matched_terms"], e1["ocr"]["detail"]["terms_total"]) == (["nghêu"], 2)   # ";" splits too; only one term is on that frame
+    json.dumps(outcome.video_annotations, ensure_ascii = False)
+
+
+def test_request_routing_legacy_comma_filter_is_never_split(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "X1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("", SUB, "  ", OSUB, "ngo, 2018", SUB, rows)
+    legacy = _as_dicts(annotate_videos(["E1", "N1", "X1", "O1"], "ngo, 2018", SUB, frames))
+    assert outcome.video_annotations == legacy and outcome.asr_filter_active is False
+    assert all(annotation[source]["detail"] is None or annotation[source]["detail"]["terms_total"] == 0
+               for annotation in outcome.video_annotations.values() for source in ("asr", "ocr"))
+
+
+def test_request_routing_a_filter_of_separators_only_is_active_but_searches_nothing(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg")
+    alone = text_signal.annotate_request(",,", SUB, "", OSUB, "", SUB, rows)
+    assert (alone.asr_filter_active, alone.ocr_filter_active, alone.text_filter_active) == (True, False, True)
+    assert (alone.asr_filter_mode, alone.text_filter_mode) == ("substring", "substring")
+    assert all(annotation["matched"] is False and annotation["asr"]["location"] == "none" for annotation in alone.video_annotations.values())
+    mixed = text_signal.annotate_request(",,", SUB, "ngo", OSUB, "", SUB, rows)
+    assert mixed.text_filter_mode == "mixed" and mixed.video_annotations["E1"]["ocr"]["location"] != "none"
+    assert mixed.video_annotations["E1"]["asr"]["location"] == "none"
+
+
+def test_a_token_less_ocr_term_in_a_list_is_a_literal_phrase(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    listed = text_signal.annotate_videos_split(["S1", "S2"], frames, "", None, "(, nuoc", OSUB, multi_term = True)
+    assert listed["S1"].ocr.location == "none" and listed["S2"].ocr.detail.matched_terms == ["nuoc"]   # "(" is nowhere
+    alone = text_signal.annotate_videos_split(["S1", "S2"], frames, "", None, "(", OSUB, multi_term = True)
+    assert alone["S1"].ocr.location != "none" and alone["S2"].ocr.location != "none"                    # today's quirk, one term
+
+
+def test_a_failing_multi_term_ocr_lookup_costs_only_the_ocr_source_and_is_logged_once(monkeypatch, caplog) :
+    frames = _mixed_corpus(monkeypatch)
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(text_lookup, "lookup_text_batch_multi", boom)
+    with caplog.at_level("ERROR", logger = text_signal.logger.name) :
+        result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = True)
+    assert all(annotation.ocr.location == "none" for annotation in result.values())
+    assert result["E1"].asr.detail.matched_terms == ["ngo", "2018"]
+    assert sum("multi-term OCR lookup failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_a_failing_multi_term_asr_scan_blanks_the_videos_and_is_logged_once(monkeypatch, caplog) :
+    frames = _mixed_corpus(monkeypatch)
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(text_signal, "_substring_matches_multi", boom)
+    with caplog.at_level("ERROR", logger = text_signal.logger.name) :
+        result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "", None, multi_term = True)
+    assert all(annotation.matched is False for annotation in result.values()) and set(result) == set(_MIXED_VIDEOS)
+    assert sum("video annotation failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_only_the_split_branch_of_annotate_request_asks_for_multi_term(monkeypatch) :
+    calls = []
+
+    def spy(*args, **kwargs) :
+        calls.append(kwargs.get("multi_term"))
+        return {}
+
+    monkeypatch.setattr(text_signal, "annotate_videos_split", spy)
+    rows = _rows("E1-0000-100.jpg")
+    text_signal.annotate_request("a, b", SUB, "", OSUB, "", SUB, rows)      # split branch
+    text_signal.annotate_request("", SUB, "", OSUB, "a, b", SUB, rows)      # legacy branch: goes through annotate_videos()
+    text_signal.annotate_videos(["E1"], "a, b", SUB, {})
+    assert calls == [True, False, False]
+
+
+def test_multi_term_annotations_are_json_serializable_and_keep_the_response_shape(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("ngo, 2018", SUB, "ngo, 2018", OSUB, "", SUB, rows)
+    payload = json.loads(json.dumps(outcome.video_annotations, ensure_ascii = False))
+    assert set(payload["E1"]) == {"matched", "score", "mode", "asr", "ocr"}
+    assert set(payload["E1"]["asr"]) == {"match_frame", "match_type", "location", "detail"}
+    assert set(payload["E1"]["asr"]["detail"]) == {"snippet", "matched_terms", "terms_total", "at_s", "start_s", "end_s",
+                                                   "time_approx", "rank", "total_matched", "exact_phrase"}
