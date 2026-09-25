@@ -489,7 +489,17 @@ def _load_siglip2():
     except TypeError:
         _siglip2_model = AutoModel.from_pretrained(src, torch_dtype=dtype)
     _siglip2_model = _siglip2_model.to(DEVICE).eval()
+    # In ra CLASS và model_type thật sự nạp được. INDEX_DIR có thể chứa
+    # config.json/tokenizer* của nhiều model (CLIP cũng để file ở đó), nạp nhầm
+    # thì embedding sai lặng lẽ — thà nói to ra ngay lúc khởi động.
+    _mt = getattr(getattr(_siglip2_model, "config", None), "model_type", "?")
     print(f"[preprocess] SigLIP2 loaded on {DEVICE} (dtype={dtype}) từ {src}")
+    print(f"[preprocess] SigLIP2 class={type(_siglip2_model).__name__} "
+          f"model_type={_mt}")
+    if "siglip" not in str(_mt).lower():
+        print(f"[preprocess] ⚠ model_type={_mt!r} KHÔNG phải siglip — gần như "
+              f"chắc chắn đã nạp nhầm model từ {src}. Tách weights SigLIP2 ra "
+              f"thư mục riêng (INDEX_DIR/siglip2_giant_model/).")
 
 
 def _load_indexes():
@@ -671,6 +681,48 @@ def encode_text_clip(text: str) -> np.ndarray:
     return feats.cpu().numpy().astype("float32")
 
 
+
+def _siglip2_features(outputs, kind: str):
+    """[siglip2] Lấy tensor feature từ output của get_text_features()/
+    get_image_features(), chịu được mọi kiểu trả về của các bản transformers.
+
+    KHỚP CHÍNH XÁC extract_siglip2_features() trong cell indexing đã tạo ra
+    siglip2_giant.index — cùng THỨ TỰ ƯU TIÊN, nên text và ảnh chắc chắn nằm
+    cùng một không gian vector:
+        1. Tensor trực tiếp
+        2. .pooler_output      <- transformers 5.x trả cái này
+        3. .text_embeds / .image_embeds
+        4. tensor 2D đầu tiên trong tuple/list
+
+    Docstring gốc của cell indexing: "For current Transformers 5.x in the
+    user's environment, it returns BaseModelOutputWithPooling. We extract
+    pooler_output first." Index đã build bằng pooler_output, nên nhánh text
+    PHẢI theo đúng thứ tự này, không được đổi.
+    """
+    embeds_attr = "text_embeds" if kind == "text" else "image_embeds"
+
+    if torch.is_tensor(outputs):
+        feats = outputs
+    elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+        feats = outputs.pooler_output
+    elif hasattr(outputs, embeds_attr) and getattr(outputs, embeds_attr) is not None:
+        feats = getattr(outputs, embeds_attr)
+    elif isinstance(outputs, (tuple, list)):
+        feats = next((x for x in outputs if torch.is_tensor(x) and x.ndim == 2), None)
+        if feats is None:
+            raise RuntimeError(f"Không tìm thấy tensor 2D trong output SigLIP2 ({kind})")
+    else:
+        raise TypeError(f"Kiểu output SigLIP2 không hỗ trợ ({kind}): {type(outputs)}")
+
+    if not torch.is_tensor(feats):
+        raise TypeError(f"Feature SigLIP2 không phải tensor ({kind}): {type(feats)}")
+    if feats.ndim != 2 or feats.shape[-1] != SIGLIP2_DIM:
+        raise RuntimeError(
+            f"Feature SigLIP2 sai shape ({kind}): {tuple(feats.shape)}, "
+            f"mong đợi (batch, {SIGLIP2_DIM}). Nhiều khả năng nạp nhầm model — "
+            f"kiểm tra config.json trong INDEX_DIR có bị lẫn của model khác không.")
+    return feats
+
 @torch.no_grad()
 def encode_text_siglip2(text: str) -> np.ndarray:
     """SigLIP2-Giant -> (1, 1536) float32 L2-normalized.
@@ -685,7 +737,8 @@ def encode_text_siglip2(text: str) -> np.ndarray:
     inputs = _siglip2_proc(text=[text], padding="max_length", truncation=True,
                            return_tensors="pt")
     inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
-    feats  = _siglip2_model.get_text_features(**inputs)
+    out    = _siglip2_model.get_text_features(**inputs)
+    feats  = _siglip2_features(out, "text")
     feats  = feats.float()
     feats  = feats / feats.norm(dim=-1, keepdim=True).clamp_min(1e-12)
     return feats.cpu().numpy().astype("float32")
