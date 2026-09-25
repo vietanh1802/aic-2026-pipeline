@@ -197,3 +197,14 @@ docs/bao-cao-ky-thuat-ke-hoach.md
 docs/bao-cao-ky-thuat-mau.md
 docs/cac-huong-truy-van.md
 docs/logic-cat-frame.md
+
+# AWS IAM credentials của account mới — không bao giờ commit
+.cred
+.cred-cli.csv
+deploy/p8/PROGRESS.md
+rclone.json
+.rclone-token.json
+deploy/p8/old-bucket-policy/
+client_secret_*.json
+rclone-client.json
+rclone-auth.txt
