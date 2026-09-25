@@ -391,6 +391,7 @@ export default function FrameDisplay({
                         annotation={videoAnnotations[videoOf(result)]}
                         filterQuery={textFilter}
                         mode={textFilterMode}
+                        cardFrame={result.name}
                       />
                     </div>
                   )}

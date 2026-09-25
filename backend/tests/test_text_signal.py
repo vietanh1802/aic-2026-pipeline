@@ -906,6 +906,9 @@ _MIXED_VIDEOS = ["E1", "N1", "X1", "O1", "NF", "GHOST"]
 @pytest.mark.parametrize("mode, query", [
     (TextMatchMode.substring, "ngo"), (TextMatchMode.substring, "2018"), (TextMatchMode.substring, "nghêu"),
     (TextMatchMode.substring, "ngo hap"), (TextMatchMode.substring, "  "),
+    # comma lists: the legacy path never splits them (only the split ASR / OCR filters do)
+    (TextMatchMode.substring, "ngo, 2018"), (TextMatchMode.substring, "ngo,2018"), (TextMatchMode.substring, "ngo; hap"),
+    (TextMatchMode.substring, "1,5"), (TextMatchMode.substring, "ngo,"), (TextMatchMode.regex, "ngo, 2018"),
     (TextMatchMode.regex, r"ngo\s+hap"), (TextMatchMode.regex, r"\d{4}"), (TextMatchMode.regex, r"ngh[eê]u"),
     (TextMatchMode.regex, "(unclosed"), (TextMatchMode.regex, "   "),
 ])
@@ -925,7 +928,7 @@ def test_the_oracle_really_exercises_matches_and_details(monkeypatch) :
     assert result["NF"].matched is False and result["GHOST"].matched is False
 
 
-@pytest.mark.parametrize("query", ["meo", "cho", "meo cho", "", "  "])
+@pytest.mark.parametrize("query", ["meo", "cho", "meo cho", "", "  ", "meo, cho", "meo,cho", "meo; cho"])
 def test_legacy_bm25_annotate_videos_is_identical_to_the_previous_implementation(monkeypatch, tmp_path, query) :
     monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
     _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
@@ -1131,3 +1134,511 @@ def test_request_model_accepts_the_split_fields_and_enforces_the_caps() :
     with pytest.raises(ValidationError) :
         EnsembleSearchRequest(query = "q", text_filter = "x" * (cap + 1))
     assert SingleSearchRequest(query = "q", ocr_filter = "z").ocr_filter == "z"  # inherited, and ignored by that endpoint
+
+
+# ── multi-term filters: split_terms() ───────────────────────────────────────
+
+@pytest.mark.parametrize("text, terms", [
+    ("lửa, nước", ["lửa", "nước"]),
+    ("lửa,nước", ["lửa", "nước"]),
+    ("lửa; nước", ["lửa", "nước"]),
+    ("lửa;nước", ["lửa", "nước"]),
+    ("lửa，nước", ["lửa", "nước"]),                # full-width comma
+    ("lửa；nước", ["lửa", "nước"]),                # full-width semicolon
+    ("lửa、nước", ["lửa", "nước"]),                # ideographic comma
+    ("lửa, nước", ["lửa", "nước"]),           # a comma followed by a no-break space splits
+    (" lửa , nước ", ["lửa", "nước"]),  # NBSP is trimmed
+    ("1,5", ["1,5"]),                               # decimal comma: digit on both sides
+    ("1,5 kg", ["1,5 kg"]),
+    ("1,5,2", ["1,5,2"]),
+    ("2018,2019", ["2018,2019"]),
+    ("2018, 2019", ["2018", "2019"]),
+    ("2018;2019", ["2018", "2019"]),
+    ("a,1", ["a", "1"]),
+    ("1,a", ["1", "a"]),
+    ("1,,5", ["1", "5"]),
+    ("giá 1,5 kg, quán trọ", ["giá 1,5 kg", "quán trọ"]),
+    ("١,٥", ["١", "٥"]),                            # only ASCII digits make a decimal comma
+    (",,", []),
+    (" , ; ", []),
+    ("", []),
+    ("   ", []),
+    ("lửa,", ["lửa"]),
+    (",lửa", ["lửa"]),
+    ("  lửa  ", ["lửa"]),
+    ("lửa", ["lửa"]),
+    ("lửa nước", ["lửa nước"]),                     # a space is not a separator
+    ("lửa\tnước", ["lửa\tnước"]),
+    ("lửa, Lửa, LỬA", ["lửa"]),                     # duplicates: case-insensitive, first typed form wins
+    ("Lửa, lửa", ["Lửa"]),
+    ("nuoc, nước", ["nuoc"]),                       # accent-insensitive too: the FIRST typed form wins
+    ("nước, nuoc", ["nước"]),
+    ("đường, DUONG", ["đường"]),
+    ("a, b, c, d, e, f, g", ["a", "b", "c", "d", "e"]),
+    ("a, a, b, c, d, e, f", ["a", "b", "c", "d", "e"]),  # duplicates do not use up the cap
+])
+def test_split_terms_table(text, terms) :
+    assert text_signal.split_terms(text) == terms
+
+
+def test_substring_hits_classifies_each_distinct_text_once_per_video(monkeypatch) :
+    """Adjacent keyframes share one transcript window, so the per-video memo must
+    run the per-text rule once per DISTINCT text, with the same hits as before."""
+    names = [f"V1-0000-{index}.jpg" for index in range(5)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "rau ngò", "rau ngò", "khong co", "khong co"]))
+    calls = []
+    real = text_signal._classify_text
+    monkeypatch.setattr(text_signal, "_classify_text", lambda *args : calls.append(args[0]) or real(*args))
+    hits = text_signal._substring_hits("V1", "ngo", lambda name : texts[name])
+    assert sorted(calls) == ["khong co", "rau ngò"]
+    assert hits == _reference_substring_hits("V1", "ngo", lambda name : texts[name])
+    assert [hit.frame_name for hit in hits] == names[ : 3]
+
+
+def test_split_terms_keeps_at_most_max_filter_terms() :
+    assert text_signal.MAX_FILTER_TERMS == 5
+    assert len(text_signal.split_terms(",".join(str(index) for index in "abcdefghij"))) == 5
+
+
+def test_split_terms_handles_a_request_sized_input() :
+    cap = text_signal.TEXT_FILTER_MAX_CHARS
+    assert text_signal.split_terms("x" * cap) == ["x" * cap]
+    text = ",".join(["ab"] * (cap // 3))  # 200 characters or fewer, one distinct term
+    assert len(text) <= cap and text_signal.split_terms(text) == ["ab"]
+    distinct = ",".join(f"t{index}" for index in range(60))[ : cap]
+    assert len(text_signal.split_terms(distinct)) == text_signal.MAX_FILTER_TERMS
+
+
+def test_split_terms_without_a_separator_gives_the_stripped_text() :
+    """The wiring relies on this: no separator means today's code gets the same string."""
+    for text in ["ngò", "quán trọ", "  ngò  ", "a b c", "(", "1.5", "x" * 50] :
+        assert text_signal.split_terms(text) == [text.strip()]
+
+
+# ── multi-term ASR scanner: _substring_matches_multi() ──────────────────────
+#
+# Contract: for every term the per-frame kinds equal what a separate
+# _substring_hits() (and the old per-frame fold, _reference_substring_hits) says.
+
+def _hits_of_term(video_id : str, matches, index : int) :
+    """The hit list _substring_hits() returns for terms[index], rebuilt from the
+    per-frame kinds with plain loops, independent of the code under test."""
+    exact = [name for name, kinds in matches if kinds[index] == "exact"]
+    normalized = [name for name, kinds in matches if kinds[index] == "normalized"]
+    total = len(exact) + len(normalized)
+    hits = [text_lookup.TextHit(video_id, name, "exact", rank, total) for rank, name in enumerate(exact, 1)]
+    hits += [text_lookup.TextHit(video_id, name, "normalized", rank, total) for rank, name in enumerate(normalized, len(exact) + 1)]
+    return hits
+
+
+def _reference_combos() -> list[list[str]] :
+    """Pairs and triples drawn from REFERENCE_TERMS (accents, uppercase, đ, regex
+    specials, other scripts, astral characters, empty and blank terms), plus
+    overlapping and accent-variant terms."""
+    count = len(REFERENCE_TERMS)
+    combos = []
+    for k in range(count) :
+        combos.append([REFERENCE_TERMS[k], REFERENCE_TERMS[(k * 7 + 3) % count]])
+        combos.append([REFERENCE_TERMS[k], REFERENCE_TERMS[(k + 13) % count], REFERENCE_TERMS[(k * 5 + 2) % count]])
+    combos += [["nước", "nước sôi"], ["nuoc", "nước", "NƯỚC"], ["ngo", "ngò", "ngõ"], ["thể thao", "the thao"],
+               ["d", "đ", "Đ"], ["a", "a b", "ab"], ["sôi", "nước sôi", "nuoc soi"]]
+    return combos
+
+
+def test_multi_term_scan_equals_separate_substring_hits_for_every_term(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(len(REFERENCE_TEXTS))]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, REFERENCE_TEXTS))
+
+    def get_text(name : str) -> str :
+        return texts.get(name, "")
+
+    combos = _reference_combos()
+    assert len(combos) >= 150
+    for terms in combos :
+        matches = text_signal._substring_matches_multi("V1", terms, get_text)
+        for index, term in enumerate(terms) :
+            expected = text_signal._substring_hits("V1", term, get_text)
+            assert _hits_of_term("V1", matches, index) == expected, (terms, term)
+            assert expected == _reference_substring_hits("V1", term, get_text), (terms, term)
+
+
+def test_multi_term_scan_lists_frames_in_order_and_skips_empty_and_unmatched_frames(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(5)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "", "nước sôi", "khong co", "rau ngo nuoc"]))
+    matches = text_signal._substring_matches_multi("V1", ["ngo", "nuoc"], lambda name : texts[name])
+    assert matches == [(names[0], ("normalized", None)), (names[2], (None, "normalized")), (names[4], ("exact", "exact"))]
+    assert text_signal._substring_matches_multi("V1", [], lambda name : texts[name]) == []
+    assert text_signal._substring_matches_multi("GHOST", ["ngo"], lambda name : texts[name]) == []
+
+
+def test_multi_term_scan_classifies_each_distinct_text_once_per_term(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(6)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "rau ngò", "rau ngò", "khong co", "khong co", "khong co"]))
+    calls = []
+    real = text_signal._classify_text
+    monkeypatch.setattr(text_signal, "_classify_text", lambda *args : calls.append(args[0]) or real(*args))
+    text_signal._substring_matches_multi("V1", ["ngo", "co", "zzz"], lambda name : texts[name])
+    assert len(calls) == 2 * 3 and sorted(set(calls)) == ["khong co", "rau ngò"]
+
+
+# ── multi-term best frame: _choose_hit() and _asr_multi_hits() ──────────────
+
+def _multi_hit(name : str, tier : str, terms : tuple = (0, 1)) :
+    """A TextHit shaped like the multi-term paths build them (term_hits set)."""
+    return text_lookup.TextHit("V1", name, tier, 1, 1, term_hits = tuple((index, tier, None) for index in terms) or None)
+
+
+def test_choose_hit_prefers_most_terms_then_exact_then_here_then_list_order() :
+    two_normalized_elsewhere = _multi_hit("V1-0000-1.jpg", "normalized")
+    one_exact_here = _multi_hit("V1-0000-2.jpg", "exact", (0,))
+    assert text_signal._choose_hit([one_exact_here, two_normalized_elsewhere], ["V1-0000-2.jpg"]) is two_normalized_elsewhere
+
+    two_exact_elsewhere = _multi_hit("V1-0000-3.jpg", "exact")
+    two_normalized_here = _multi_hit("V1-0000-4.jpg", "normalized")
+    assert text_signal._choose_hit([two_normalized_here, two_exact_elsewhere], ["V1-0000-4.jpg"]) is two_exact_elsewhere
+
+    first, second = _multi_hit("V1-0000-5.jpg", "exact"), _multi_hit("V1-0000-6.jpg", "exact")
+    assert text_signal._choose_hit([first, second], ["V1-0000-6.jpg"]) is second   # here beats elsewhere
+    assert text_signal._choose_hit([first, second], []) is first                   # remaining ties: list order (earliest)
+    assert text_signal._choose_hit([second, first], []) is second
+
+
+def test_choose_hit_is_unchanged_for_single_term_hits() :
+    """A hit without term_hits counts 0 terms: the original two-key order."""
+    def plain(name : str, tier : str) :
+        return text_lookup.TextHit("V1", name, tier, 1, 1)
+
+    normalized_here, exact_elsewhere = plain("V1-0000-1.jpg", "normalized"), plain("V1-0000-2.jpg", "exact")
+    assert text_signal._choose_hit([normalized_here, exact_elsewhere], ["V1-0000-1.jpg"]) is exact_elsewhere
+    exact_here = plain("V1-0000-3.jpg", "exact")
+    assert text_signal._choose_hit([exact_elsewhere, exact_here], ["V1-0000-3.jpg"]) is exact_here
+    assert text_signal._choose_hit([exact_elsewhere, plain("V1-0000-4.jpg", "exact")], []) is exact_elsewhere
+
+
+def test_asr_multi_hits_shape(monkeypatch) :
+    names = [f"V1-0000-{index}.jpg" for index in range(4)]
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", index) for index, name in enumerate(names)]})
+    texts = dict(zip(names, ["rau ngò", "", "nước sôi", "rau ngo nuoc"]))
+    hits = text_signal._asr_multi_hits("V1", ["ngo", "nuoc"], lambda name : texts[name])
+    assert [(hit.frame_name, hit.match_type, hit.term_hits, hit.rank, hit.total_matched) for hit in hits] == [
+        (names[0], "normalized", ((0, "normalized", None),), 1, 3),
+        (names[2], "normalized", ((1, "normalized", None),), 2, 3),
+        (names[3], "exact", ((0, "exact", None), (1, "exact", None)), 3, 3)]
+    assert all((hit.exact_phrase, hit.doc_id, hit.corpus_video_rank, hit.corpus_videos_matched) == (None, None, None, None) for hit in hits)
+
+
+def test_best_frame_of_a_video_shaped_like_the_real_example(monkeypatch) :
+    """L25_V010, "lửa, nước": 206 frames hold only "nước", 108 hold "lửa"
+    (accents ignored) plus "nước", 15 hold both exactly, 2 hold only "lửa" (accents
+    ignored). The card's own frame holds only "nước"; the old rule (exact, then
+    here, then list order, over the union) picked it, the most-terms rule must pick
+    the first frame that holds both terms exactly."""
+    blocks = [(206, "nước chảy"), (108, "lua va nước"), (15, "lửa và nước"), (2, "lua chay")]
+    texts, index = {}, 0
+    for count, text in blocks :
+        for _ in range(count) :
+            texts[f"V1-0000-{index}.jpg"] = text
+            index += 1
+    names = list(texts)
+    assert len(names) == 331
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", position) for position, name in enumerate(names)]})
+    terms = ["lửa", "nước"]
+    hits = text_signal._asr_multi_hits("V1", terms, lambda name : texts[name])
+    assert len(hits) == 331
+
+    shapes = {}
+    for hit in hits :
+        shapes.setdefault(tuple((terms[i], tier) for i, tier, _phrase in hit.term_hits), []).append(hit.frame_name)
+    assert {shape : len(frames) for shape, frames in shapes.items()} == {
+        (("nước", "exact"),) : 206, (("lửa", "normalized"), ("nước", "exact")) : 108,
+        (("lửa", "exact"), ("nước", "exact")) : 15, (("lửa", "normalized"),) : 2}
+
+    here = [names[10]]  # the card's own frame: only "nước"
+    old_rule = min(hits, key=lambda h : (0 if h.match_type == "exact" else 1, 0 if h.frame_name in here else 1))
+    assert old_rule.frame_name == names[10] and len(old_rule.term_hits) == 1
+
+    best = text_signal._choose_hit(hits, here)
+    assert best.frame_name == names[206 + 108] and len(best.term_hits) == 2 and best.match_type == "exact"
+    match = text_signal._best_match(hits, here)
+    assert (match.match_frame, match.match_type, match.location) == (names[314], "exact", "elsewhere")
+    # with the both-exact frames gone, the "lửa"(normalized)+"nước" frames win over the "nước"-only card frame
+    fewer = [hit for hit in hits if hit.term_hits != ((0, "exact", None), (1, "exact", None))]
+    assert text_signal._choose_hit(fewer, here).frame_name == names[206] and text_signal._choose_hit(fewer, here).match_type == "normalized"
+
+
+# ── multi-term detail: _describe_multi() through describe_match() ───────────
+
+def _asr_detail(monkeypatch, text : str, terms : list[str], frame_idx : int = 100, fps : float = 25.0) :
+    """(hit, detail) of a one-frame video whose ASR text is `text`."""
+    name = f"V1-0000-{frame_idx}.jpg"
+    _set_corpus(monkeypatch, {"V1" : [_meta(name, "V1", frame_idx, fps = fps)]})
+    _mock_asr_text(monkeypatch, {name : text})
+    hits = text_signal._asr_multi_hits("V1", terms, text_signal.asr_text.get_text)
+    hit = text_signal._choose_hit(hits, [])
+    return hit, text_signal.describe_match(hit, "asr", TextMatchMode.substring, ", ".join(terms), None, terms = terms)
+
+
+def test_multi_detail_highlights_every_matched_term_and_lists_them_in_typed_order(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "lửa rồi nước", ["nước", "lửa"])
+    assert _hit_texts(detail.snippet) == ["lửa", "nước"] and _plain(detail.snippet) == "lửa rồi nước"
+    assert detail.matched_terms == ["nước", "lửa"] and detail.terms_total == 2      # typed order, not text order
+    assert (detail.at_s, detail.start_s, detail.end_s, detail.time_approx) == (4.0, None, None, False)
+    assert (detail.rank, detail.total_matched, detail.exact_phrase) == (None, None, None)   # ASR ranks nothing
+
+
+def test_multi_detail_partial_match_reports_found_versus_total(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "chỉ có nước thôi", ["nước", "lửa"])
+    assert detail.matched_terms == ["nước"] and detail.terms_total == 2 and _hit_texts(detail.snippet) == ["nước"]
+
+
+def test_multi_detail_overlapping_terms_merge_into_one_highlight(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "nước sôi trong nồi", ["nước", "nước sôi"])
+    assert _hit_texts(detail.snippet) == ["nước sôi"] and detail.matched_terms == ["nước", "nước sôi"]
+    _hit, adjacent = _asr_detail(monkeypatch, "cả lửanước đó", ["lửa", "nước"])   # touching spans merge as well
+    assert _plain(adjacent.snippet) == "cả lửanước đó" and _hit_texts(adjacent.snippet) == ["lửanước"]
+
+
+def test_multi_detail_uses_each_terms_own_tier_for_its_highlight(monkeypatch) :
+    hit, detail = _asr_detail(monkeypatch, "Nước soi", ["nước", "sôi"])
+    assert hit.term_hits == ((0, "exact", None), (1, "normalized", None)) and hit.match_type == "normalized"
+    assert _hit_texts(detail.snippet) == ["Nước", "soi"]   # literal for the exact term, accent-tolerant for the other
+
+
+def test_multi_detail_window_holding_both_terms_wins_over_a_denser_single_term_cluster(monkeypatch) :
+    text = "lửa " + "x " * 100 + "lửa cháy nước sôi " + "y " * 100 + "nước nước nước " + "z " * 40
+    _hit, detail = _asr_detail(monkeypatch, text, ["lửa", "nước"])
+    assert set(_hit_texts(detail.snippet)) == {"lửa", "nước"} and "cháy" in _plain(detail.snippet)
+    assert "nước nước" not in _plain(detail.snippet) and len(_plain(detail.snippet)) <= text_signal.SNIPPET_MAX_CHARS + 2 * text_signal._SNIPPET_EDGE_SLACK + 2
+
+
+def test_multi_detail_survives_astral_text_where_folded_terms_are_not_highlighted(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "🙂 nước và lua 🙂", ["nước", "lửa"])
+    assert detail.matched_terms == ["nước", "lửa"]               # "lửa" matched after folding
+    assert _hit_texts(detail.snippet) == ["nước"] and _plain(detail.snippet) == "🙂 nước và lua 🙂"   # no folded span above the BMP, no crash
+
+
+def test_multi_detail_is_json_serializable(monkeypatch) :
+    _hit, detail = _asr_detail(monkeypatch, "rau ngò 🙂 và nước", ["ngo", "nước", "zzz"])
+    payload = json.loads(json.dumps(asdict(detail), ensure_ascii = False))
+    assert set(payload) == {"snippet", "matched_terms", "terms_total", "at_s", "start_s", "end_s", "time_approx", "rank",
+                            "total_matched", "exact_phrase"}          # no field was added to MatchDetail
+    assert payload["matched_terms"] == ["ngo", "nước"] and payload["terms_total"] == 3
+
+
+def test_multi_detail_ocr_rank_and_exact_phrase_rules(monkeypatch) :
+    """OCR: rank and total come from lookup_text_batch_multi() (the dense rank of
+    the video's best frame, videos matching more terms first); exact_phrase is True
+    only when EVERY matched term matched as a whole phrase."""
+    _set_corpus(monkeypatch, {"V1" : [_meta("V1-0000-100.jpg", "V1", 100)], "V2" : [_meta("V2-0000-100.jpg", "V2", 100)]})
+    _set_ocr_text("V1-0000-100.jpg", "Quán ăn\nChợ Lớn", "quan an\ncho lon")
+    ocr_search._haystack["with_marks"]["V1-0000-100.jpg"] = "quán ăn\nchợ lớn"
+    _set_ocr_text("V2-0000-100.jpg", "chỉ có quán")
+    ocr_search._haystack["with_marks"]["V2-0000-100.jpg"] = "chỉ có quán"
+
+    terms = ["chợ lớn", "quán"]
+    hits = text_lookup.lookup_text_batch_multi(terms, "ocr", ["V1", "V2"])
+    detail = text_signal.describe_match(hits["V1"][0], "ocr", TextMatchMode.substring, "chợ lớn, quán", None, terms = terms)
+    assert _hit_texts(detail.snippet) == ["Quán", "Chợ Lớn"] and _plain(detail.snippet) == "Quán ăn Chợ Lớn"
+    assert (detail.matched_terms, detail.terms_total, detail.exact_phrase) == (["chợ lớn", "quán"], 2, True)
+    assert (detail.rank, detail.total_matched) == (1, 2)             # two terms beat V2's one
+    partial = text_signal.describe_match(hits["V2"][0], "ocr", TextMatchMode.substring, "chợ lớn, quán", None, terms = terms)
+    assert (partial.matched_terms, partial.terms_total, partial.rank, partial.total_matched) == (["quán"], 2, 2, 2)
+
+    scattered_terms = ["lớn chợ", "quán"]
+    scattered_hits = text_lookup.lookup_text_batch_multi(scattered_terms, "ocr", ["V1"])
+    scattered = text_signal.describe_match(scattered_hits["V1"][0], "ocr", TextMatchMode.substring, "lớn chợ, quán", None,
+                                           terms = scattered_terms)
+    assert scattered.exact_phrase is False                            # "lớn chợ" is only its words scattered
+    assert _hit_texts(scattered.snippet) == ["Quán", "Chợ", "Lớn"]   # each word of the scattered term is marked on its own
+
+
+def test_describe_match_ignores_terms_without_term_hits_and_in_other_modes(monkeypatch) :
+    name, frames = _detail_video(monkeypatch, asr = "rau ngò rất tươi", frame_idx = 100)
+    single = text_signal._substring_hits("V1", "ngo", text_signal.asr_text.get_text)[0]
+    detail = text_signal.describe_match(single, "asr", TextMatchMode.substring, "ngo", None, terms = ["ngo", "x"])
+    assert (detail.matched_terms, detail.terms_total) == ([], 0) and _hit_texts(detail.snippet) == ["ngò"]
+    multi = text_signal._asr_multi_hits("V1", ["ngo", "x"], text_signal.asr_text.get_text)[0]
+    regex = text_signal.describe_match(multi, "asr", TextMatchMode.regex, "ng.", re.compile("ng.", re.IGNORECASE), terms = ["ngo", "x"])
+    assert (regex.matched_terms, regex.terms_total) == ([], 0)
+
+
+# ── multi-term wiring: annotate_videos_split(multi_term=...) and annotate_request ──
+
+SUB, OSUB = TextMatchMode.substring, text_signal.OcrFilterMode.substring
+
+
+def test_multi_term_split_path_matches_either_term_on_both_sources(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = True)
+    e1, n1, x1, o1 = (result[video] for video in ("E1", "N1", "X1", "O1"))
+    assert (e1.asr.match_type, e1.asr.location, e1.asr.detail.matched_terms, e1.asr.detail.terms_total) == ("exact", "here", ["ngo", "2018"], 2)
+    assert _hit_texts(e1.asr.detail.snippet)[:2] == ["ngo", "2018"] and e1.mode == "mixed"
+    assert (e1.ocr.match_frame, e1.ocr.detail.matched_terms) == ("E1-0000-200.jpg", ["ngo", "2018"])
+    # N1: only "ngo" is there, and only after folding: a partial match, "1 of 2"
+    assert (n1.asr.match_type, n1.asr.detail.matched_terms, n1.asr.detail.terms_total) == ("normalized", ["ngo"], 2)
+    assert (n1.ocr.match_type, n1.ocr.detail.matched_terms, n1.ocr.detail.terms_total) == ("normalized", ["ngo"], 2)
+    assert x1.matched is False and result["NF"].matched is False and result["GHOST"].matched is False
+    assert (o1.asr.location, o1.asr.match_frame, o1.asr.detail.matched_terms) == ("elsewhere", "O1-0000-200.jpg", ["ngo", "2018"])
+    # OCR ranks videos by their best frame, videos with more terms first: O1 (shorter text), E1, then N1 with one term
+    assert [(v, result[v].ocr.detail.rank, result[v].ocr.detail.total_matched) for v in ("O1", "E1", "N1")] == [("O1", 1, 3), ("E1", 2, 3), ("N1", 3, 3)]
+    assert e1.ocr.detail.exact_phrase is True and e1.asr.detail.exact_phrase is None and e1.asr.detail.rank is None
+
+
+def test_multi_term_flag_off_reads_the_comma_as_part_of_the_phrase(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    off = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB)
+    assert off["E1"].asr.location == "none"                    # the literal phrase "ngo, 2018" is nowhere in the ASR text
+    assert off["E1"].ocr.detail.matched_terms == [] and off["E1"].ocr.detail.terms_total == 0
+    explicit = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = False)
+    assert _as_dicts(off) == _as_dicts(explicit)
+
+
+@pytest.mark.parametrize("query", ["ngo", "2018", "nghêu", "ngo hap", "1,5", "  ngo  ", "nghêu nuong", "co ngo va", "khong co"])
+def test_a_query_without_separator_is_byte_identical_with_the_flag_on(monkeypatch, query) :
+    frames = _mixed_corpus(monkeypatch)
+    on = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = True)
+    off = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = False)
+    assert _as_dicts(on) == _as_dicts(off) and list(on) == list(off)
+
+
+@pytest.mark.parametrize("query", ["ngo,", ",ngo", " , ngo ;", "ngo, NGO", "ngo, ngò", "ngo;;ngo"])
+def test_one_term_after_splitting_acts_as_that_term(monkeypatch, query) :
+    frames = _mixed_corpus(monkeypatch)
+    on = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, query, SUB, query, OSUB, multi_term = True)
+    single = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo", SUB, "ngo", OSUB, multi_term = False)
+    assert _as_dicts(on) == _as_dicts(single)
+
+
+def test_zero_terms_make_the_source_inactive_and_the_other_source_still_runs(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, ",,", SUB, "ngo", OSUB, multi_term = True)
+    assert all(annotation.asr.location == "none" and annotation.asr.detail is None for annotation in result.values())
+    assert result["E1"].ocr.location != "none" and result["E1"].mode == "mixed"
+    both = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, ",,", SUB, " ; ", OSUB, multi_term = True)
+    assert all(annotation.matched is False for annotation in both.values()) and {a.mode for a in both.values()} == {"mixed"}
+    assert set(both) == set(_MIXED_VIDEOS)
+
+
+def test_at_most_five_terms_are_searched(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    five_first = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "zz1, zz2, zz3, zz4, zz5, ngo", SUB, "", None, multi_term = True)
+    assert five_first["E1"].asr.location == "none"                    # "ngo" is the sixth term: dropped
+    detail = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, zz2, zz3, zz4, zz5, 2018", SUB, "", None,
+                                               multi_term = True)["E1"].asr.detail
+    assert detail.terms_total == 5 and detail.matched_terms == ["ngo"]   # "2018" is the sixth: dropped
+
+
+def test_multi_term_only_touches_substring_sources(monkeypatch, tmp_path) :
+    """bm25 already ORs its words and regex owns its commas: the flag changes neither."""
+    monkeypatch.setattr(text_signal, "ASR_RELEASE_DIR", _write_bm25_index(tmp_path))
+    _set_corpus(monkeypatch, {"V_A" : [_meta("V_A-0000-100.jpg", "V_A", 100), _meta("V_A-0000-400.jpg", "V_A", 400)],
+                              "V_B" : [_meta("V_B-0000-0.jpg", "V_B", 0)]})
+    _set_ocr_text("V_A-0000-100.jpg", "quan an cho lon")
+    videos = ["V_A", "V_B", "V_NONE"]
+    for query in ("meo, cho", "meo;cho", "meo"):
+        on = text_signal.annotate_videos_split(videos, {}, query, TextMatchMode.bm25, r"cho\s+lon, x", text_signal.OcrFilterMode.regex,
+                                               multi_term = True)
+        off = text_signal.annotate_videos_split(videos, {}, query, TextMatchMode.bm25, r"cho\s+lon, x", text_signal.OcrFilterMode.regex)
+        assert _as_dicts(on) == _as_dicts(off)
+    regex_on = text_signal.annotate_videos_split(videos, {}, "", None, "cho lon", text_signal.OcrFilterMode.regex, multi_term = True)
+    assert regex_on["V_A"].ocr.location != "none"
+    comma_regex = text_signal.annotate_videos_split(videos, {}, "", None, "an, cho", text_signal.OcrFilterMode.regex, multi_term = True)
+    assert comma_regex["V_A"].ocr.location == "none"                  # the comma stayed part of the pattern
+
+
+def test_request_routing_split_substring_with_commas_uses_multi_term(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "X1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("ngo, 2018", SUB, "nghêu; nuong", OSUB, "", SUB, rows)
+    assert (outcome.asr_filter_active, outcome.ocr_filter_active, outcome.text_filter_mode) == (True, True, "mixed")
+    e1 = outcome.video_annotations["E1"]
+    assert e1["asr"]["detail"]["matched_terms"] == ["ngo", "2018"] and e1["asr"]["detail"]["terms_total"] == 2
+    assert (e1["ocr"]["detail"]["matched_terms"], e1["ocr"]["detail"]["terms_total"]) == (["nghêu"], 2)   # ";" splits too; only one term is on that frame
+    json.dumps(outcome.video_annotations, ensure_ascii = False)
+
+
+def test_request_routing_legacy_comma_filter_is_never_split(monkeypatch) :
+    frames = _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "X1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("", SUB, "  ", OSUB, "ngo, 2018", SUB, rows)
+    legacy = _as_dicts(annotate_videos(["E1", "N1", "X1", "O1"], "ngo, 2018", SUB, frames))
+    assert outcome.video_annotations == legacy and outcome.asr_filter_active is False
+    assert all(annotation[source]["detail"] is None or annotation[source]["detail"]["terms_total"] == 0
+               for annotation in outcome.video_annotations.values() for source in ("asr", "ocr"))
+
+
+def test_request_routing_a_filter_of_separators_only_is_active_but_searches_nothing(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg")
+    alone = text_signal.annotate_request(",,", SUB, "", OSUB, "", SUB, rows)
+    assert (alone.asr_filter_active, alone.ocr_filter_active, alone.text_filter_active) == (True, False, True)
+    assert (alone.asr_filter_mode, alone.text_filter_mode) == ("substring", "substring")
+    assert all(annotation["matched"] is False and annotation["asr"]["location"] == "none" for annotation in alone.video_annotations.values())
+    mixed = text_signal.annotate_request(",,", SUB, "ngo", OSUB, "", SUB, rows)
+    assert mixed.text_filter_mode == "mixed" and mixed.video_annotations["E1"]["ocr"]["location"] != "none"
+    assert mixed.video_annotations["E1"]["asr"]["location"] == "none"
+
+
+def test_a_token_less_ocr_term_in_a_list_is_a_literal_phrase(monkeypatch) :
+    frames = _split_corpus(monkeypatch)
+    listed = text_signal.annotate_videos_split(["S1", "S2"], frames, "", None, "(, nuoc", OSUB, multi_term = True)
+    assert listed["S1"].ocr.location == "none" and listed["S2"].ocr.detail.matched_terms == ["nuoc"]   # "(" is nowhere
+    alone = text_signal.annotate_videos_split(["S1", "S2"], frames, "", None, "(", OSUB, multi_term = True)
+    assert alone["S1"].ocr.location != "none" and alone["S2"].ocr.location != "none"                    # today's quirk, one term
+
+
+def test_a_failing_multi_term_ocr_lookup_costs_only_the_ocr_source_and_is_logged_once(monkeypatch, caplog) :
+    frames = _mixed_corpus(monkeypatch)
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(text_lookup, "lookup_text_batch_multi", boom)
+    with caplog.at_level("ERROR", logger = text_signal.logger.name) :
+        result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "ngo, 2018", OSUB, multi_term = True)
+    assert all(annotation.ocr.location == "none" for annotation in result.values())
+    assert result["E1"].asr.detail.matched_terms == ["ngo", "2018"]
+    assert sum("multi-term OCR lookup failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_a_failing_multi_term_asr_scan_blanks_the_videos_and_is_logged_once(monkeypatch, caplog) :
+    frames = _mixed_corpus(monkeypatch)
+
+    def boom(*args, **kwargs) :
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(text_signal, "_substring_matches_multi", boom)
+    with caplog.at_level("ERROR", logger = text_signal.logger.name) :
+        result = text_signal.annotate_videos_split(_MIXED_VIDEOS, frames, "ngo, 2018", SUB, "", None, multi_term = True)
+    assert all(annotation.matched is False for annotation in result.values()) and set(result) == set(_MIXED_VIDEOS)
+    assert sum("video annotation failed" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_only_the_split_branch_of_annotate_request_asks_for_multi_term(monkeypatch) :
+    calls = []
+
+    def spy(*args, **kwargs) :
+        calls.append(kwargs.get("multi_term"))
+        return {}
+
+    monkeypatch.setattr(text_signal, "annotate_videos_split", spy)
+    rows = _rows("E1-0000-100.jpg")
+    text_signal.annotate_request("a, b", SUB, "", OSUB, "", SUB, rows)      # split branch
+    text_signal.annotate_request("", SUB, "", OSUB, "a, b", SUB, rows)      # legacy branch: goes through annotate_videos()
+    text_signal.annotate_videos(["E1"], "a, b", SUB, {})
+    assert calls == [True, False, False]
+
+
+def test_multi_term_annotations_are_json_serializable_and_keep_the_response_shape(monkeypatch) :
+    _mixed_corpus(monkeypatch)
+    rows = _rows("E1-0000-100.jpg", "N1-0000-100.jpg", "O1-0000-100.jpg")
+    outcome = text_signal.annotate_request("ngo, 2018", SUB, "ngo, 2018", OSUB, "", SUB, rows)
+    payload = json.loads(json.dumps(outcome.video_annotations, ensure_ascii = False))
+    assert set(payload["E1"]) == {"matched", "score", "mode", "asr", "ocr"}
+    assert set(payload["E1"]["asr"]) == {"match_frame", "match_type", "location", "detail"}
+    assert set(payload["E1"]["asr"]["detail"]) == {"snippet", "matched_terms", "terms_total", "at_s", "start_s", "end_s",
+                                                   "time_approx", "rank", "total_matched", "exact_phrase"}

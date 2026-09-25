@@ -128,6 +128,43 @@ BM25_B = 0.75
 # pin a request thread.
 TEXT_FILTER_MAX_CHARS = 200
 
+# Multi-term substring filters ("lửa, nước" = two terms, a frame matches when it
+# holds at least one). Only the split ASR / OCR filters in substring mode use
+# split_terms(); bm25, regex and the legacy text_filter never do.
+#
+#   * separators are "," and ";" plus the full-width "，" "；" "、";
+#   * an ASCII comma with an ASCII digit on BOTH sides is a decimal comma and does
+#     not split, so "1,5 kg" stays one term. The same rule keeps "2018,2019" and
+#     "1,5,2" whole: write "2018, 2019" or "2018;2019" to get two terms;
+#   * terms are trimmed (NBSP included) and empty ones dropped;
+#   * duplicates are dropped case- and accent-insensitively and the FIRST typed
+#     form wins, so "nuoc, nước" is the single term "nuoc" (and is matched with
+#     that spelling's exact / normalized tiers);
+#   * at most MAX_FILTER_TERMS terms are kept, the rest are dropped silently. The
+#     200 character request cap already bounds the summed length of the terms,
+#     hence the regex compile cost, exactly as for one long term today.
+MAX_FILTER_TERMS = 5
+_TERM_SEPARATOR_RE = re.compile(r"(?<![0-9]),|,(?![0-9])|[;，；、]")
+
+
+def split_terms(text : str) -> list[str] :
+    """Terms of a multi-term substring filter, see the block comment above. An
+    empty list (blank text, ",,") means the source is inactive. A text without any
+    separator gives [text.strip()], which is what today's single-term code gets."""
+    seen : set[str] = set()
+    terms : list[str] = []
+    for part in _TERM_SEPARATOR_RE.split(text or "") :
+        term = part.strip()
+        if not term :
+            continue
+        key = _strip_marks(term).lower()
+        if key in seen :
+            continue
+        seen.add(key)
+        terms.append(term)
+    return terms[ : MAX_FILTER_TERMS]
+
+
 # Width of the snippet shown in the Text signal popover: the window holding the
 # matched words is about this many characters, its edges move to the nearest
 # whitespace within _SNIPPET_EDGE_SLACK. _MAX_HIGHLIGHT_SPANS bounds the work for
@@ -164,18 +201,25 @@ class MatchDetail :
 
     snippet        -- [[text, is_hit], ...] segments of the matched text; never
                       ** markers or offsets (see the block comment further down)
-    matched_terms  -- bm25 only: distinct query tokens found in the chosen
-                      window, in query order; [] otherwise
-    terms_total    -- bm25 only: distinct query tokens; 0 otherwise
+    matched_terms  -- bm25: distinct query tokens found in the chosen window, in
+                      query order. Multi-term substring filter (ASR or OCR, two or
+                      more terms typed): the terms found on the chosen frame, in
+                      typed order. [] otherwise
+    terms_total    -- bm25: distinct query tokens. Multi-term substring filter: the
+                      number of terms (also when only some matched, "1 of 2").
+                      0 otherwise, a single-term search included
     at_s           -- best-estimate moment, in seconds from the video start
     start_s, end_s -- bm25 only: the transcript window's range; None otherwise
     time_approx    -- True only for the bm25 estimate (position inside a 60 s
                       window; frame-based sources report the frame's own time)
     rank, total_matched -- CORPUS-ONLY video rank and matched-video count (bm25
-                      and OCR substring); None for the per-frame ASR substring
-                      and regex scans, which rank nothing
+                      and OCR substring, one term or several: the rank of the
+                      video's best frame, videos matching more terms first); None
+                      for the per-frame ASR substring and regex scans, which
+                      rank nothing
     exact_phrase   -- OCR only: the frame holds the whole phrase, not its words
-                      scattered; None otherwise"""
+                      scattered (with several terms: True only if EVERY matched
+                      term matched as a whole phrase); None otherwise"""
     snippet       : list[list]
     matched_terms : list[str]
     terms_total   : int
@@ -215,11 +259,24 @@ class VideoAnnotation :
 
 # ── combining TextHits into a SourceMatch ───────────────────────────────
 
+# Previous _choose_hit(), kept for reference (replaced by the version below, which
+# adds a leading "most terms matched" component that is 0 for every single-term hit):
+#
+# def _choose_hit(hits : list, here : list[str]) :
+#     return min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
+#                                       0 if h.frame_name in here else 1))
+
 def _choose_hit(hits : list, here : list[str]) :
-    """The TextHit that represents a source. Preference order: an "exact"
-    match_type beats "normalized" first; within the same match_type, a frame
-    already in this query's result set ("here") beats one that is not."""
-    return min(hits, key=lambda h : (0 if h.match_type == "exact" else 1,
+    """The TextHit that represents a source. Preference order: the frame that
+    matched the MOST terms first (multi-term substring filters, TextHit.term_hits;
+    a hit without term_hits counts 0, so single-term hits all tie here and their
+    order is exactly what it always was); then an "exact" match_type beats
+    "normalized" (for several terms the tier is the worst among the frame's terms);
+    then a frame already in this query's result set ("here") beats one that is not.
+    Remaining ties keep the order of `hits`: earliest frame for ASR, the OCR
+    ranking for OCR."""
+    return min(hits, key=lambda h : (-len(h.term_hits or ()),
+                                      0 if h.match_type == "exact" else 1,
                                       0 if h.frame_name in here else 1))
 
 
@@ -357,6 +414,43 @@ def _folded_pattern(term_folded : str) -> Optional[re.Pattern] :
 #     return hits
 
 
+# Version with the prefilter but WITHOUT the per-video memo, kept for reference
+# (replaced by the memo version below; the per-text logic now lives, unchanged,
+# in _classify_text()). Same output; it re-ran the regex for every frame although
+# adjacent keyframes share one transcript window:
+#
+#     for name in preprocess.frames_for_video(video_id) :
+#         text = get_text(name)
+#         if not text :
+#             continue
+#         # A UTF-16 encoding is longer than 2 bytes per character exactly when
+#         # the text has a character above U+FFFF (which _MARK_CLASS ignores).
+#         if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
+#             if pattern.search(text) :
+#                 (exact if term_lower in text.lower() else normalized).append(name)
+#         elif term_lower in text.lower() :
+#             exact.append(name)  # fallback: term outside the audited scope, or a non-BMP frame
+#         elif term_folded in _strip_marks(text).lower() :
+#             normalized.append(name)
+
+
+def _classify_text(text : str, term_lower : str, term_folded : str, pattern : Optional[re.Pattern]) -> Optional[str] :
+    """"exact", "normalized" or None for ONE non-empty text and one term: the
+    per-frame rule of _substring_hits(), lifted out so the per-video memo (and the
+    multi-term scanner) run exactly the same logic once per distinct text."""
+    # A UTF-16 encoding is longer than 2 bytes per character exactly when the
+    # text has a character above U+FFFF (which _MARK_CLASS ignores).
+    if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
+        if pattern.search(text) :
+            return "exact" if term_lower in text.lower() else "normalized"
+        return None
+    if term_lower in text.lower() :
+        return "exact"  # fallback: term outside the audited scope, or a non-BMP frame
+    if term_folded in _strip_marks(text).lower() :
+        return "normalized"
+    return None
+
+
 def _substring_hits(video_id : str, term : str, get_text) :
     """Diacritic-folded substring match, checked frame by frame instead of
     against one concatenated blob -- this is what fixes attribution and
@@ -365,25 +459,29 @@ def _substring_hits(video_id : str, term : str, get_text) :
 
     Output is identical to folding every frame (see the block comment above):
     the compiled pattern only decides WHICH frames match, and exact versus
-    normalized is still the original `term_lower in text.lower()` check."""
+    normalized is still the original `term_lower in text.lower()` check.
+
+    Per-video memo: only about 5 percent of ASR frame texts are distinct (one
+    transcript window covers many adjacent keyframes), so each distinct text is
+    classified once per call. The memo lives inside the call: nothing is shared
+    between requests or threads, and it holds references to the existing strings."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
     term_lower = term.lower()
     term_folded = _strip_marks(term).lower()
     pattern = _folded_pattern(term_folded)
     exact, normalized = [], []
+    kinds : dict[str, Optional[str]] = {}
     for name in preprocess.frames_for_video(video_id) :
         text = get_text(name)
         if not text :
             continue
-        # A UTF-16 encoding is longer than 2 bytes per character exactly when
-        # the text has a character above U+FFFF (which _MARK_CLASS ignores).
-        if (pattern is not None) and (len(text.encode("utf-16-le", "surrogatepass")) == 2 * len(text)) :
-            if pattern.search(text) :
-                (exact if term_lower in text.lower() else normalized).append(name)
-        elif term_lower in text.lower() :
-            exact.append(name)  # fallback: term outside the audited scope, or a non-BMP frame
-        elif term_folded in _strip_marks(text).lower() :
+        if text not in kinds :
+            kinds[text] = _classify_text(text, term_lower, term_folded, pattern)
+        kind = kinds[text]
+        if kind == "exact" :
+            exact.append(name)
+        elif kind == "normalized" :
             normalized.append(name)
 
     total = len(exact) + len(normalized)
@@ -392,6 +490,40 @@ def _substring_hits(video_id : str, term : str, get_text) :
     hits += [text_lookup.TextHit(video_id, name, "normalized", rank, total)
              for rank, name in enumerate(normalized, len(exact) + 1)]
     return hits
+
+
+def _substring_matches_multi(video_id : str, terms : list[str], get_text) -> list[tuple[str, tuple[Optional[str], ...]]] :
+    """Multi-term ASR substring scan of ONE video: [(frame name, kinds), ...] for
+    every frame that holds at least one term, in frame order (earliest first).
+    kinds[i] is "exact", "normalized" or None for terms[i] on that frame, decided
+    by exactly the per-text rule of _substring_hits() (_classify_text(): the same
+    accent-tolerant prefilter and the same fallback for terms outside the audited
+    scope or texts above the BMP), so kinds[i] is what a separate
+    _substring_hits(video_id, terms[i], ...) would say for that frame.
+
+    One walk over the frames and one per-video memo of text -> kinds, so N terms
+    cost N classifications per DISTINCT text (about 5 percent of the frames), not N
+    passes over every frame. A combined alternation regex is deliberately NOT used:
+    measured slower than N passes (the regex engine tries every alternative at
+    every position) and it cannot separate overlapping terms such as "nước" and
+    "nước sôi", because finditer consumes the text a match covers."""
+    plans = []
+    for term in terms :
+        term_folded = _strip_marks(term).lower()
+        plans.append((term.lower(), term_folded, _folded_pattern(term_folded)))
+
+    matches : list[tuple[str, tuple[Optional[str], ...]]] = []
+    memo : dict[str, tuple[Optional[str], ...]] = {}
+    for name in preprocess.frames_for_video(video_id) :
+        text = get_text(name)
+        if not text :
+            continue
+        kinds = memo.get(text)
+        if kinds is None :
+            kinds = memo[text] = tuple(_classify_text(text, lower, folded, pattern) for lower, folded, pattern in plans)
+        if any(kinds) :
+            matches.append((name, kinds))
+    return matches
 
 
 def _regex_hits(video_id : str, pattern : re.Pattern, get_text) :
@@ -821,19 +953,51 @@ def _describe_bm25(hit, term : str) -> MatchDetail :
         exact_phrase=None)
 
 
+def _describe_multi(hit, source : str, terms : list[str]) -> MatchDetail :
+    """Detail of a multi-term substring match: the chosen frame's text with EVERY
+    term it holds highlighted. Spans are built per term with the existing
+    machinery and that term's OWN tier (an accent-folded span pattern is a superset
+    of the literal one, so a term matched only after folding needs the folded
+    pattern while an exact one on the same frame must stay literal), then
+    concatenated: _snippet_segments() already merges overlapping and adjacent spans
+    ("nước" inside "nước sôi") and _snippet_bounds() already picks the window with
+    the most DISTINCT matched strings, so the window holding both terms wins over
+    one holding a single term three times. matched_terms follow the typed order
+    (hit.term_hits is in term order), terms_total counts every typed term.
+    rank / total_matched / exact_phrase are the hit's own (see
+    text_lookup.lookup_text_batch_multi); ASR carries none."""
+    from app import text_lookup  # deferred: text_lookup imports this module
+
+    text = (asr_text.get_text if source == "asr" else ocr_search.get_text)(hit.frame_name)
+    spans : list[tuple[int, int]] = []
+    for index, tier, _whole_phrase in hit.term_hits :
+        spans += _substring_spans(text, terms[index], tier, scatter=(source == "ocr"))
+    at_s = text_lookup._frame_idx(hit.frame_name) / preprocess.fps_for_video(hit.video_id)
+    return MatchDetail(
+        snippet=_snippet_segments(text, spans), matched_terms=[terms[index] for index, _tier, _phrase in hit.term_hits],
+        terms_total=len(terms), at_s=round(at_s, 3), start_s=None, end_s=None, time_approx=False,
+        rank=hit.corpus_video_rank, total_matched=hit.corpus_videos_matched, exact_phrase=hit.exact_phrase)
+
+
 def describe_match(hit, source : str, mode : TextMatchMode, term : str,
-                   pattern : Optional[re.Pattern] = None) -> MatchDetail :
+                   pattern : Optional[re.Pattern] = None, terms : Optional[list[str]] = None) -> MatchDetail :
     """MatchDetail for the TextHit chosen to represent `source` ("asr" or
     "ocr") of one video. Frame-based sources (substring, regex, OCR) report the
     frame's own time; bm25 reports the estimate described in _describe_bm25().
     rank / total_matched are the corpus-only video rank the hit carries (bm25
     and OCR substring), None for the per-frame substring/regex ASR scans, which
     rank nothing. May raise on inconsistent input: annotate_videos() isolates
-    that per source."""
+    that per source.
+
+    terms: the typed terms of a multi-term substring filter. A substring hit that
+    carries term_hits AND comes with its terms is described by _describe_multi();
+    every other call is exactly what it always was."""
     from app import text_lookup  # deferred: text_lookup imports this module
 
     if mode == TextMatchMode.bm25 :
         return _describe_bm25(hit, term)
+    if (mode == TextMatchMode.substring) and (terms is not None) and (hit.term_hits is not None) :
+        return _describe_multi(hit, source, terms)
 
     text = (asr_text.get_text if source == "asr" else ocr_search.get_text)(hit.frame_name)
     if mode == TextMatchMode.regex :
@@ -866,14 +1030,37 @@ def _mode_label(asr_mode : Optional[Enum], ocr_mode : Optional[Enum]) -> str :
     return active.value if active is not None else ""
 
 
+def _asr_multi_hits(video_id : str, terms : list[str], get_text) -> list :
+    """TextHits of one video for the multi-term ASR substring filter: one hit per
+    frame that holds at least one term, in frame order, so _choose_hit()'s
+    remaining ties go to the EARLIEST frame. match_type is the worst tier among the
+    frame's terms and term_hits lists (term index, tier, None) for each term found
+    (ASR has no whole-phrase flag). rank / total_matched are the position among and
+    the number of the video's matching frames; nothing ranks ASR substring videos,
+    so the corpus ranks stay None."""
+    from app import text_lookup  # deferred: text_lookup imports this module
+
+    matches = _substring_matches_multi(video_id, terms, get_text)
+    hits = []
+    for rank, (name, kinds) in enumerate(matches, 1) :
+        term_hits = tuple((index, kind, None) for index, kind in enumerate(kinds) if kind)
+        tier = "normalized" if any(kind == "normalized" for _index, kind, _phrase in term_hits) else "exact"
+        hits.append(text_lookup.TextHit(video_id, name, tier, rank, len(matches), term_hits=term_hits))
+    return hits
+
+
 def _asr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optional[re.Pattern],
-              batch : dict[str, list]) -> list :
+              batch : dict[str, list], terms : Optional[list[str]] = None) -> list :
     """TextHits of one video for the ASR source. bm25 comes from the
     corpus-wide batch (one postings walk for all candidates), substring and
-    regex scan the video's own frames."""
+    regex scan the video's own frames. terms (substring only): the two or more
+    terms of a multi-term filter, scanned by _asr_multi_hits(); None is today's
+    single-phrase scan of `query`."""
     if mode == TextMatchMode.bm25 :
         return batch.get(video_id, [])
     if mode == TextMatchMode.substring :
+        if terms is not None :
+            return _asr_multi_hits(video_id, terms, asr_text.get_text)
         return _substring_hits(video_id, query, asr_text.get_text)
     if mode == TextMatchMode.regex :
         return _regex_hits(video_id, pattern, asr_text.get_text)
@@ -892,6 +1079,38 @@ def _ocr_hits(video_id : str, query : str, mode : TextMatchMode, pattern : Optio
     raise ValueError(f"unknown OCR mode: {mode}")
 
 
+# ── multi-term substring filters: where each rule lives ─────────────────────
+#
+# "lửa, nước" in the split ASR / OCR filters, substring mode only (multi_term=True):
+#
+#   terms          split_terms()       separators, decimal comma, duplicates, cap of five
+#   plan / source  _plan_terms()       no terms = inactive, one = today's single-term code, two or more = below
+#   ASR scan       _asr_multi_hits()   one hit per frame, from _substring_matches_multi() (per-text memo,
+#                                      the per-text rule of _substring_hits(), see _classify_text())
+#   OCR scan       text_lookup.lookup_text_batch_multi()   on ocr_search.search_terms(), no OCR_LIMIT row cap
+#   best frame     _choose_hit()       most terms, then exact, then "here", then list order (ASR: earliest
+#                                      frame; OCR: whole-phrase terms, then shorter text)
+#   detail         describe_match(terms=) -> _describe_multi()   matched_terms in typed order, terms_total
+#
+# bm25, regex and the legacy text_filter never split; one term after splitting is today's code, byte for byte.
+
+def _plan_terms(query : str) -> tuple[Optional[str], Optional[list[str]]] :
+    """How ONE substring source is searched when multi_term is on, from its
+    stripped, non-empty query: (query, terms).
+
+      no terms at all (",,")   -> (None, None): the source is inactive
+      exactly one term         -> (that term, None): today's single-term code runs
+                                  with it. A query without a separator gives the
+                                  very same string back; "lửa," gives "lửa"
+      two or more terms        -> (query, terms): the multi-term scanners run"""
+    terms = split_terms(query)
+    if not terms :
+        return None, None
+    if len(terms) == 1 :
+        return terms[0], None
+    return query, terms
+
+
 def annotate_videos_split(
         video_ids : list[str],
         frame_names : dict[str, list[str]],
@@ -900,6 +1119,7 @@ def annotate_videos_split(
         ocr_query : Optional[str],
         ocr_mode : Optional[Enum],
         mode_label : Optional[str] = None,
+        multi_term : bool = False,
 ) -> dict[str, VideoAnnotation] :
     """Annotate videos with an ASR filter and an OCR filter that are
     independent: each has its own query and mode (asr: substring | regex |
@@ -912,6 +1132,15 @@ def annotate_videos_split(
     mode_label becomes VideoAnnotation.mode (default: _mode_label() of the
     requested sources). Each source builds its match detail with ITS OWN mode,
     term and pattern.
+
+    multi_term (default False, which is exactly the behaviour before it existed;
+    the legacy annotate_videos() always passes False): a source in SUBSTRING mode
+    reads its query as a list of terms, see split_terms() and _plan_terms(). A
+    frame matches when it holds at least one term, the video's frame is the one
+    with the most terms, and the detail lists which terms it found (MatchDetail).
+    bm25 and regex sources ignore the flag. A query that splits into no terms
+    (",,") makes that source inactive, like an invalid regex: the label still
+    comes from the requested modes.
 
     Never raises, and each video is handled in its own try/except: one video's
     failure must not blank out every other video's real annotation. A detail
@@ -942,6 +1171,20 @@ def annotate_videos_split(
         except re.error :
             ocr_active = None
 
+    # Multi-term substring: only when the caller asked (annotate_request's split
+    # branch), only for a source in substring mode. asr_terms / ocr_terms stay None
+    # for a single term, which then runs today's code below with that one term.
+    asr_terms : Optional[list[str]] = None
+    ocr_terms : Optional[list[str]] = None
+    if multi_term and (asr_active == TextMatchMode.substring) :
+        asr_query, asr_terms = _plan_terms(asr_query)
+        if asr_query is None :
+            asr_active = None
+    if multi_term and (ocr_active == TextMatchMode.substring) :
+        ocr_query, ocr_terms = _plan_terms(ocr_query)
+        if ocr_query is None :
+            ocr_active = None
+
     if (asr_active is None) and (ocr_active is None) :
         return {video_id : VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH) for video_id in video_ids}
 
@@ -955,15 +1198,27 @@ def annotate_videos_split(
     ocr_batch : dict[str, list] = {}
     if asr_active == TextMatchMode.bm25 :
         asr_batch = text_lookup.lookup_text_batch(asr_query, source="asr", video_ids=video_ids)
-    if ocr_active == TextMatchMode.substring :
+    if (ocr_active == TextMatchMode.substring) and (ocr_terms is None) :
         ocr_batch = text_lookup.lookup_text_batch(ocr_query, source="ocr", video_ids=video_ids)
+    elif ocr_active == TextMatchMode.substring :
+        # Multi-term OCR. lookup_text_batch_multi() already logs and returns "no
+        # hits" when its own scan fails; this second guard is for anything else it
+        # could raise, so a broken OCR side yields "no OCR match" for every video
+        # (logged once for the request) instead of failing the whole annotation.
+        try :
+            ocr_batch = text_lookup.lookup_text_batch_multi(ocr_terms, source="ocr", video_ids=video_ids)
+        except Exception :
+            logger.exception("[text_signal] multi-term OCR lookup failed (OCR reported as no match)")
+            ocr_batch = {}
 
     out : dict[str, VideoAnnotation] = {}
     detail_failure_logged = False
+    video_failure_logged = False
     for video_id in video_ids :
         here = frame_names.get(video_id, [])
         try :
-            asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch) if asr_active is not None else []
+            # Previous: asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch) if ... (same call, no terms)
+            asr_hits = _asr_hits(video_id, asr_query, asr_active, asr_pattern, asr_batch, asr_terms) if asr_active is not None else []
             ocr_hits = _ocr_hits(video_id, ocr_query, ocr_active, ocr_pattern, ocr_batch) if ocr_active is not None else []
             asr_match = _best_match(asr_hits, here)
             ocr_match = _best_match(ocr_hits, here)
@@ -974,13 +1229,17 @@ def annotate_videos_split(
             # video. Built only for matched sources and only for the ONE chosen
             # hit, so it adds nothing for non-matching videos or extra frames.
             # Each source describes its match with its own mode, term, pattern.
-            for source, match, hits, source_mode, source_query, source_pattern in (
-                    ("asr", asr_match, asr_hits, asr_active, asr_query, asr_pattern),
-                    ("ocr", ocr_match, ocr_hits, ocr_active, ocr_query, ocr_pattern)) :
+            for source, match, hits, source_mode, source_query, source_pattern, source_terms in (
+                    ("asr", asr_match, asr_hits, asr_active, asr_query, asr_pattern, asr_terms),
+                    ("ocr", ocr_match, ocr_hits, ocr_active, ocr_query, ocr_pattern, ocr_terms)) :
                 if match.location == "none" :
                     continue
                 try :
-                    match.detail = describe_match(_choose_hit(hits, here), source, source_mode, source_query, source_pattern)
+                    chosen = _choose_hit(hits, here)
+                    if source_terms is None :
+                        match.detail = describe_match(chosen, source, source_mode, source_query, source_pattern)
+                    else :
+                        match.detail = describe_match(chosen, source, source_mode, source_query, source_pattern, terms=source_terms)
                 except Exception :
                     if not detail_failure_logged :  # once per call, not once per video
                         logger.exception("[text_signal] match detail failed (annotation kept without it)")
@@ -989,6 +1248,12 @@ def annotate_videos_split(
             matched = (asr_match.location != "none") or (ocr_match.location != "none")
             out[video_id] = VideoAnnotation(matched, 1.0 if matched else 0.0, label, asr_match, ocr_match)
         except Exception :
+            # One video's failure blanks that video only. Logged once per call
+            # (it used to be silent): with the multi-term scanners a bug here would
+            # otherwise turn every ASR match into "no match" without a trace.
+            if not video_failure_logged :
+                logger.exception("[text_signal] video annotation failed (reported as no match)")
+                video_failure_logged = True
             out[video_id] = VideoAnnotation(False, 0.0, label, _NO_MATCH, _NO_MATCH)
     return out
 
@@ -1014,7 +1279,7 @@ def annotate_videos(
     else :
         asr_mode, ocr_mode = mode, mode
     return annotate_videos_split(video_ids, frame_names, filter_query, asr_mode, filter_query, ocr_mode,
-                                 mode_label=mode.value)
+                                 mode_label=mode.value, multi_term=False)  # the legacy path never splits on commas
 
 
 # Previous body of annotate_videos(), kept for reference (replaced by the mapping
@@ -1114,7 +1379,14 @@ def annotate_request(
     and the legacy fields are ignored. Otherwise the legacy text_filter runs
     EXACTLY as before (this protects old callers, and the deploy window in which
     an old frontend talks to the new backend). `results` are the visual result
-    rows ("video" and "name" keys); nothing is removed or reordered."""
+    rows ("video" and "name" keys); nothing is removed or reordered.
+
+    Only the split path reads a substring filter as a list of terms ("lửa, nước",
+    see split_terms()); bm25, regex and the legacy text_filter never do. The flags
+    of the response follow the request as typed: a filter that splits into no terms
+    (",,") is still reported active with its mode, but nothing is searched for that
+    source (every video comes back with no match for it), exactly like an invalid
+    regex."""
     asr_active = bool((asr_filter or "").strip())
     ocr_active = bool((ocr_filter or "").strip())
     legacy_active = bool((legacy_filter or "").strip())
@@ -1130,8 +1402,11 @@ def annotate_request(
         asr_requested = asr_filter_mode if asr_active else None
         ocr_requested = ocr_filter_mode if ocr_active else None
         label = _mode_label(asr_requested, ocr_requested)
+        # Previous: annotate_videos_split(video_ids, frame_names, asr_filter, asr_requested,
+        #                                 ocr_filter, ocr_requested, mode_label=label)
+        # multi_term=True is what turns "lửa, nước" into two terms in substring mode.
         annotations = annotate_videos_split(video_ids, frame_names, asr_filter, asr_requested,
-                                            ocr_filter, ocr_requested, mode_label=label)
+                                            ocr_filter, ocr_requested, mode_label=label, multi_term=True)
         return RequestAnnotation(
             video_annotations={vid : asdict(annotation) for vid, annotation in annotations.items()},
             text_filter_active=True, text_filter_mode=label, asr_filter_active=asr_active,

@@ -147,6 +147,70 @@ describe("CandidateStrip with candidates", () => {
   });
 });
 
+describe("CandidateStrip with showTrack false (the blocks are on the lower bar)", () => {
+  const chipButtons = (markup: string) => markup.match(/<button[^>]*>[\s\S]*?<\/button>/g) ?? [];
+
+  it("is the same as the default when showTrack is left out or true", () => {
+    expect(render({ showTrack: true })).toBe(render());
+    expect(render({ showTrack: undefined })).toBe(render());
+  });
+
+  it("keeps the header line", () => {
+    expect(text(render({ showTrack: false }))).toContain(
+      "Candidates in this video 9 frames in 5 blocks"
+    );
+  });
+
+  it("keeps every chip, in time order, with the same labels as with the track", () => {
+    const markup = render({ showTrack: false });
+    const labels = [...markup.matchAll(/aria-label="([^"]+)"/g)].map((m) => m[1]);
+    expect(labels).toEqual([
+      "Jump to 01:38, 3 frames, best 92.0%",
+      "Jump to 01:53, 2 frames, best 70.0%",
+      "Jump to 02:11, 1 frame, best 88.0%",
+      "Jump to 02:30, 2 frames, best 99.0%",
+      "Jump to 03:07, 1 frame, best 75.0%",
+    ]);
+    expect(chipButtons(markup)).toEqual(chipButtons(render({ showTrack: true })));
+    expect(chipButtons(markup)).toHaveLength(5);
+  });
+
+  it("draws no track, no playhead and no note about clusters", () => {
+    const markup = render({ showTrack: false });
+    expect(markup).not.toContain("isolate");
+    expect(markup).not.toContain("h-9");
+    expect(markup).not.toContain("bg-proto-dark");
+    expect(markup).not.toContain("share one button on the bar");
+    // The track is exactly what the default adds on top of the header and chips.
+    expect(render({ showTrack: true })).toContain("isolate");
+  });
+
+  it("still marks the chip the playhead is in", () => {
+    const markup = render({ showTrack: false, currentTimeS: 131.9 });
+    expect(markup.match(/aria-current="true"/g)).toHaveLength(1);
+    expect(markup).toMatch(/aria-current="true"[^>]*title="Jump to 02:11/);
+  });
+
+  it("shows the chips before the duration is known, like the default", () => {
+    expect(chipButtons(render({ showTrack: false, durationS: 0 }))).toHaveLength(5);
+  });
+
+  it("still renders nothing under every condition that hides the strip", () => {
+    mocks.results = [];
+    expect(render({ showTrack: false })).toBe("");
+    mocks.results = [resultAt(0, 97, "L25_V008")];
+    expect(render({ showTrack: false })).toBe("");
+    expect(render({ showTrack: false, hidden: true })).toBe("");
+    mocks.results = [{ ...resultAt(0, 1005), total_words: 5 } as SearchResult];
+    expect(render({ showTrack: false })).toBe("");
+    for (const type of ["trake", "temporal"]) {
+      mocks.results = [resultAt(0, 80)];
+      mocks.searchType = type;
+      expect(render({ showTrack: false })).toBe("");
+    }
+  });
+});
+
 describe("BlockLayer", () => {
   const candidates: Candidate[] = TOP_9.map(([position, score]) => ({
     name: `L25_V014-0046-${SCENE_46[position]}.jpg`,

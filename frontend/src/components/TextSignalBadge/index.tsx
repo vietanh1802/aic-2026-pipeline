@@ -5,13 +5,22 @@ import ReactDOM from "react-dom";
 import type { SourceMatch, VideoAnnotation } from "../../types/api";
 import { parseFrameRef } from "../../helpers/frameRef";
 import { fpsOf } from "../../helpers/frameIdentity";
+import { ALL_SEARCHED, popoverRight } from "../../helpers/textSignalView";
 import { usePopupStore } from "../../store/popupStore";
+import { useSearchStore } from "../../store/useSearchStore";
+import TextSignalPopoverBody from "./TextSignalPopoverBody";
 
 interface TextSignalBadgeProps {
   videoId: string;
   annotation: VideoAnnotation | undefined;
   filterQuery: string;
   mode: string;
+  /**
+   * Name of the frame the card shows. A source whose match is on that very frame
+   * reads "this frame" in the popover, with no Go button. Optional: a caller that
+   * does not pass it just never gets that wording.
+   */
+  cardFrame?: string;
 }
 
 export type Tone = "green" | "amber" | "gray";
@@ -41,16 +50,21 @@ export function toneOfSource(source: SourceMatch): Tone {
   return "amber";
 }
 
-function statusText(source: SourceMatch): string {
-  if (source.location === "none") return "no match";
-  if (source.match_type === "exact" && source.location === "here") {
-    return "exact match, visible here";
-  }
-  if (source.location === "elsewhere") return "matched on another frame of this video";
-  return "matched after stripping diacritics";
-}
-
-const SOURCE_LABEL: Record<"asr" | "ocr", string> = { asr: "ASR", ocr: "OCR" };
+// Old status wording, kept for the record. It named the state but never showed
+// the match itself, and the sentence "matched on another frame of this video"
+// told the reader nothing they could act on. Replaced by TextSignalPopoverBody
+// (snippet, time, rank) and the short fallback in helpers/textSignalView.ts.
+//
+// function statusText(source: SourceMatch): string {
+//   if (source.location === "none") return "no match";
+//   if (source.match_type === "exact" && source.location === "here") {
+//     return "exact match, visible here";
+//   }
+//   if (source.location === "elsewhere") return "matched on another frame of this video";
+//   return "matched after stripping diacritics";
+// }
+//
+// const SOURCE_LABEL: Record<"asr" | "ocr", string> = { asr: "ASR", ocr: "OCR" };
 const HIDE_DELAY_MS = 150;
 
 /**
@@ -70,46 +84,55 @@ function goToMatchFrame(matchFrame: string) {
   usePopupStore.getState().open(ref.videoId, ref.frameIdx);
 }
 
-function SourceRow({
-  source,
-  match,
-}: {
-  source: "asr" | "ocr";
-  match: SourceMatch;
-}) {
-  const tone = toneOfSource(match);
-  return (
-    <div className="mb-1.5 last:mb-0">
-      <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-proto-ink">
-        <i className={`w-2 h-2 rounded-full shrink-0 ${DOT_CLASS[tone]}`} />
-        <span>{SOURCE_LABEL[source]}</span>
-        <span className="text-proto-muted font-normal">· {statusText(match)}</span>
-      </div>
-      {match.match_frame && (
-        <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-proto-muted">
-          <span className="truncate">{match.match_frame}</span>
-          <button
-            type="button"
-            className="shrink-0 rounded-[4px] border border-proto-line bg-proto-soft px-1.5 py-0.5 text-[11px] font-bold text-proto-ink"
-            onClick={(event) => {
-              event.stopPropagation();
-              goToMatchFrame(match.match_frame as string);
-            }}
-          >
-            Go to frame
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
+// Old per-source row, kept for the record; moved into TextSignalPopoverBody so
+// the popover content can be rendered to markup without the portal or the stores.
+//
+// function SourceRow({
+//   source,
+//   match,
+// }: {
+//   source: "asr" | "ocr";
+//   match: SourceMatch;
+// }) {
+//   const tone = toneOfSource(match);
+//   return (
+//     <div className="mb-1.5 last:mb-0">
+//       <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-proto-ink">
+//         <i className={`w-2 h-2 rounded-full shrink-0 ${DOT_CLASS[tone]}`} />
+//         <span>{SOURCE_LABEL[source]}</span>
+//         <span className="text-proto-muted font-normal">· {statusText(match)}</span>
+//       </div>
+//       {match.match_frame && (
+//         <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-proto-muted">
+//           <span className="truncate">{match.match_frame}</span>
+//           <button
+//             type="button"
+//             className="shrink-0 rounded-[4px] border border-proto-line bg-proto-soft px-1.5 py-0.5 text-[11px] font-bold text-proto-ink"
+//             onClick={(event) => {
+//               event.stopPropagation();
+//               goToMatchFrame(match.match_frame as string);
+//             }}
+//           >
+//             Go to frame
+//           </button>
+//         </div>
+//       )}
+//     </div>
+//   );
+// }
 
 export default function TextSignalBadge({
   videoId,
   annotation,
   filterQuery,
   mode,
+  cardFrame,
 }: TextSignalBadgeProps) {
+  // Which sources ran in the search on screen, stored with the annotations (see
+  // useSearchStore.searchedSources). ALL_SEARCHED when absent, which keeps the old
+  // "no match" wording instead of guessing "not searched". Read above the early
+  // return below so the hook order never depends on the annotation.
+  const searched = useSearchStore((state) => state.searchedSources) ?? ALL_SEARCHED;
   const [open, setOpen] = useState(false);
   const [popoverAbove, setPopoverAbove] = useState(true);
   // Card's own rect at the moment the popover opens. Positioning the portal
@@ -168,28 +191,35 @@ export default function TextSignalBadge({
             // DOM subtree, and a portal isn't one.
             style={{
               position: "fixed",
-              right: window.innerWidth - anchorRect.right,
+              // Old offset, kept for the record: lined the popover's right edge up
+              // with the badge's. At 340 px wide that pushes a first-column card's
+              // popover off the left of the screen, so popoverRight clamps it.
+              //   right: window.innerWidth - anchorRect.right,
+              right: popoverRight(window.innerWidth, anchorRect.right),
               ...(popoverAbove
                 ? { bottom: window.innerHeight - anchorRect.top + 6 }
                 : { top: anchorRect.bottom + 6 }),
             }}
-            className="z-30 w-[260px] rounded-[8px] border border-proto-line bg-white p-2.5 shadow-lg font-baloo"
+            // Width was w-[260px]. 340 px fits a two-line snippet; the max width
+            // keeps it inside a narrow window (popoverRight assumes the same
+            // numbers: helpers/textSignalView POPOVER_WIDTH_PX / POPOVER_MARGIN_PX).
+            className="z-30 w-[340px] max-w-[calc(100vw-16px)] rounded-[8px] border border-proto-line bg-white p-2.5 shadow-lg font-baloo"
             onMouseEnter={handleEnter}
             onMouseLeave={handleLeave}
           >
-            <div className="text-[13px] font-bold text-proto-muted truncate">
-              Text signal · {videoId}
-            </div>
-            <div className="my-1.5 border-t border-proto-line" />
-
-            <SourceRow source="asr" match={annotation.asr} />
-            <SourceRow source="ocr" match={annotation.ocr} />
-
-            <div className="my-1.5 border-t border-proto-line" />
-            <div className="text-[11px] text-proto-muted truncate">
-              Mode: {mode} · &quot;{filterQuery.slice(0, 30)}
-              {filterQuery.length > 30 ? "…" : ""}&quot;
-            </div>
+            <TextSignalPopoverBody
+              videoId={videoId}
+              annotation={annotation}
+              cardFrame={cardFrame}
+              searched={searched}
+              mode={mode}
+              filterQuery={filterQuery}
+              dotClass={{
+                asr: DOT_CLASS[toneOfSource(annotation.asr)],
+                ocr: DOT_CLASS[toneOfSource(annotation.ocr)],
+              }}
+              onGoToFrame={goToMatchFrame}
+            />
           </div>,
           document.body
         )}

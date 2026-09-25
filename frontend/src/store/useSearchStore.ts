@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type { VideoAnnotation } from "../types/api";
+import type { SearchedSources } from "../helpers/textSignalView";
 
 interface SearchResult {
   frame: string;
@@ -77,7 +78,22 @@ interface SearchState {
    * missing entry and renders nothing.
    */
   videoAnnotations: Record<string, VideoAnnotation> | null;
-  setVideoAnnotations: (annotations: Record<string, VideoAnnotation> | null) => void;
+  /**
+   * Which sources (ASR, OCR) ran in the search that produced videoAnnotations,
+   * stored WITH them and cleared with them. The popover needs it to tell "this
+   * source was not searched" (its box was empty) from "searched, no match": the
+   * backend answers both with the same empty SourceMatch.
+   *
+   * Not derived from the live asrFilter / ocrFilter: those can be edited while a
+   * search is still running, and the response would then be stored under the new
+   * text (the setters' clear happens before the response arrives). null when there
+   * are no annotations.
+   */
+  searchedSources: SearchedSources | null;
+  setVideoAnnotations: (
+    annotations: Record<string, VideoAnnotation> | null,
+    searched?: SearchedSources | null
+  ) => void;
 }
 
 export const useSearchStore = create<SearchState>((set) => ({
@@ -106,7 +122,18 @@ export const useSearchStore = create<SearchState>((set) => ({
   toggleOnePerVideo: () => set((state) => ({ onePerVideo: !state.onePerVideo })),
 
   videoAnnotations: null,
-  setVideoAnnotations: (annotations) => set({ videoAnnotations: annotations }),
+  searchedSources: null,
+  // Old setter, kept for the record: it wrote only the annotations, so every
+  // existing setVideoAnnotations(null) call (the queryStore filter setters, the
+  // start of doSearch) would have left a stale searchedSources behind.
+  //   setVideoAnnotations: (annotations) => set({ videoAnnotations: annotations }),
+  // The second argument is optional so those calls stay as they are: omitting it
+  // (or clearing the annotations) clears the snapshot in the same update.
+  setVideoAnnotations: (annotations, searched = null) =>
+    set({
+      videoAnnotations: annotations,
+      searchedSources: annotations === null ? null : searched,
+    }),
 }));
 
 type isQueryStore = {

@@ -39,6 +39,12 @@ import { useSearchStore } from "../../store/useSearchStore";
  * rescales itself for TRAKE), and mixing a second job into it would make both
  * harder to read. This one only shows where the search found things.
  *
+ * Update: the popup now draws the same blocks ON FrameMarkStrip's bar, read-only
+ * (CandidateMarkers), so one bar carries blocks, scores, playhead and marks, and
+ * mounts this strip with showTrack={false}: just the header and the chips, which
+ * still jump to a block's best frame. The track below stays for any caller that
+ * leaves showTrack at its default.
+ *
  * Renders nothing when there is nothing to show: no results for this video
  * (Go to frame, the basket and the text-signal badge open the popup with no
  * result context), the OCR route, a TRAKE popup, or temporal/TRAKE search. Gone
@@ -199,6 +205,7 @@ export default function CandidateStrip({
   durationS,
   currentTimeS,
   hidden = false,
+  showTrack = true,
   onJump,
 }: {
   videoId: string;
@@ -208,6 +215,14 @@ export default function CandidateStrip({
   currentTimeS: number;
   /** True on a TRAKE popup. */
   hidden?: boolean;
+  /**
+   * False leaves only the header line and the chips: no track, no playhead, and
+   * no note about clusters of blocks (which describes that track). The popup
+   * passes false because the same blocks are drawn on the lower frame bar
+   * (CandidateMarkers), so one bar shows them together with the playhead and the
+   * marks. Default true, so every other caller looks exactly as before.
+   */
+  showTrack?: boolean;
   /**
    * The block's best frame: name, time and frame number. The popup turns it
    * into a seek exactly as if it had been opened on that keyframe.
@@ -274,14 +289,14 @@ export default function CandidateStrip({
           <b className="font-mono text-proto-ink">{blocks.length}</b> block
           {blocks.length === 1 ? "" : "s"}
         </span>
-        {anyCluster && (
+        {showTrack && anyCluster && (
           <span className="text-[11px]">
             Blocks too close to tell apart share one button on the bar - the list below has each one.
           </span>
         )}
       </div>
 
-      {hasDuration && (
+      {showTrack && hasDuration && (
         // `isolate`: the z-indexes below stack the blocks against each other
         // and must not leak above the popup's own controls.
         <div ref={setTrackElement} className="relative isolate h-9">

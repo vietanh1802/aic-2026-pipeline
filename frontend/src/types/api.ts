@@ -39,6 +39,36 @@ export interface SearchResult {
 }
 
 /**
+ * HOW and WHERE one source matched a video - matches backend's MatchDetail
+ * dataclass (backend/app/text_signal.py), which feeds the Text signal popover.
+ * Every field is a plain JSON type, so it arrives exactly as declared here.
+ */
+export interface MatchDetail {
+  // [text, is_hit] segments of the matched text; truncation ellipses are part
+  // of the text, never separate markers and never offsets.
+  snippet: [string, boolean][];
+  // bm25 only: the distinct query words found in the chosen window; [] otherwise.
+  matched_terms: string[];
+  // bm25 only: how many distinct query words there were; 0 otherwise.
+  terms_total: number;
+  // Best-estimate moment in seconds from the video start.
+  at_s: number;
+  // bm25 only: the transcript window's range; null otherwise.
+  start_s: number | null;
+  end_s: number | null;
+  // True only for the bm25 estimate. ASR substring/regex also read as
+  // approximate, but for another reason (the frame's transcript spans about
+  // 60 s); the popover decides that from the source, see helpers/textSignalView.
+  time_approx: boolean;
+  // Corpus-only video rank (bm25 and OCR substring); null for the per-frame
+  // ASR substring and regex scans, which rank nothing.
+  rank: number | null;
+  total_matched: number | null;
+  // OCR only: the frame holds the whole phrase, not its words scattered.
+  exact_phrase: boolean | null;
+}
+
+/**
  * One source's (asr or ocr) best result for a video — matches backend's
  * SourceMatch dataclass (backend/app/text_signal.py). match_frame/match_type
  * are null when location is "none".
@@ -47,6 +77,9 @@ export interface SourceMatch {
   match_frame: string | null;
   match_type: "exact" | "normalized" | null;
   location: "here" | "elsewhere" | "none";
+  // Optional: absent from an older backend, and null on a source with location
+  // "none" or one whose detail failed to build. The popover works without it.
+  detail?: MatchDetail | null;
 }
 
 /**
