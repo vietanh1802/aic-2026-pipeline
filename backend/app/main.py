@@ -46,6 +46,7 @@ from app.db.connection import get_conn
 from app.db.migrate import migrate
 from app.routers import (
     answers as answers_router,
+    dres as dres_router,
     auth as auth_router,
     board as board_router,
     evaluation as evaluation_router,
@@ -496,6 +497,7 @@ app.include_router(rounds_router.router)
 app.include_router(search_state_router.router)
 app.include_router(evaluation_router.router)
 app.include_router(expansion_router.router)
+app.include_router(dres_router.router)
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is

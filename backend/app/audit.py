@@ -53,6 +53,9 @@ SEARCH_HISTORY_CLEAR = "search_history.clear"
 EVALUATION_RUN_START = "evaluation.run_start"
 EVALUATION_RUN_CANCEL = "evaluation.run_cancel"
 EVALUATION_RUN_RESUME = "evaluation.run_resume"
+# Đổi ai được gửi bài lên DRES. Bật 'everyone' là mở quyền làm mất 10 điểm cho
+# cả đội, nên phải biết ai bật và lúc nào.
+DRES_SUBMIT_MODE = "dres.submit_mode"
 
 # Which actions put answer rows in `detail`, and so can be undone.
 RESTORABLE = (ANSWER_DELETE, ANSWERS_CLEAR, ANSWERS_AUTOFILL_CLEAR)

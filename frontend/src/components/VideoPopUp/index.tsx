@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SubmitForm } from "../SubmitForm";
+import DresPropose from "../DresPropose";
 import VideoDrive from "./VideoDisplay";
 import { getFileIdByVideoId } from "../../helpers/getFileIdByVideoId.helper";
 import { useSubmitStore, useSubmitTasks } from "../../store/submitStore";
@@ -408,6 +409,14 @@ export default function VideoPopup({
               />
             </div>
           )}
+
+          {/* Vòng chung kết: đề xuất nộp DRES tại thời điểm đang phát. Tách
+              khỏi SubmitForm ở trên — đó là giỏ xếp hạng của sơ tuyển. */}
+          <DresPropose
+            videoId={videoId}
+            getPlayhead={livePosition}
+            defaultType={activeTask?.type}
+          />
         </div>
 
         <div className="w-[340px] shrink-0 border-l border-proto-line flex flex-col overflow-hidden">
