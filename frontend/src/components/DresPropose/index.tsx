@@ -14,6 +14,8 @@ import {
 import { approveWithConfirm } from "../../helpers/dresApprove";
 import { useAuthStore } from "../../store/authStore";
 import Button from "../Button";
+import DresTaskClock from "../DresTaskClock";
+import { useDresCurrentTask } from "../DresTaskClock/useDresCurrentTask";
 
 const TYPES: { id: DresTaskType; label: string }[] = [
   { id: "kis", label: "KIS" },
@@ -70,6 +72,10 @@ export default function DresPropose({
     }
   }, [open]);
 
+  // Chỉ hỏi khi khung đang mở: popup video mở suốt buổi sơ tuyển cũng không
+  // được bắn request DRES mỗi 3 giây.
+  const currentTask = useDresCurrentTask(open);
+
   const canSubmit = canSubmitDres(role, status);
   const nowMs = () => Math.round(getPlayhead() * 1000);
 
@@ -109,6 +115,7 @@ export default function DresPropose({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      void currentTask.refresh();
     }
   };
 
@@ -128,6 +135,7 @@ export default function DresPropose({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      void currentTask.refresh();
     }
   };
 
@@ -151,6 +159,9 @@ export default function DresPropose({
 
       {open && (
         <div className="flex flex-col gap-2 mt-2">
+          <div className="p-2 rounded-[8px] bg-white border border-proto-line">
+            <DresTaskClock {...currentTask} />
+          </div>
           <div className="flex flex-wrap items-center gap-1">
             {TYPES.map((t) => (
               <button

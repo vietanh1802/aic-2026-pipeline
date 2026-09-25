@@ -9,7 +9,8 @@ Ba lời gọi, đúng như tài liệu:
     GET  /api/v2/client/evaluation/list         -> evaluationId đang ACTIVE
     POST /api/v2/submit/{evaluationId}          -> CORRECT | WRONG | INDETERMINATE | UNDECIDABLE
 cộng thêm GET /api/v2/client/evaluation/currentTask/{id} để biết câu nào đang
-chạy (ghi vào mỗi lần nộp, và dùng để chặn nộp trùng trong cùng một câu).
+chạy (ghi vào mỗi lần nộp, và dùng để chặn nộp trùng trong cùng một câu), và
+GET /api/v2/evaluation/{id}/state để biết câu đó còn bao nhiêu giây.
 
 Server của mình đứng giữa trình duyệt và DRES, không để trình duyệt gọi thẳng:
 khỏi đụng CORS, mật khẩu đội không nằm trên máy từng người, và mọi lần nộp của
@@ -21,6 +22,7 @@ nào, và ba lời gọi JSON không đáng thêm một dependency lên image.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -105,7 +107,25 @@ def current_task(base_url: str, session_id: str, evaluation_id: str) -> dict[str
         return None
     if code != 200 or not isinstance(payload, dict):
         raise DresError(_description(payload, f"Không lấy được câu hiện tại (HTTP {code})"), code)
-    return {k: payload.get(k) for k in ("name", "taskGroup", "taskType", "duration")}
+    return {k: payload.get(k) for k in ("templateId", "name", "taskGroup", "taskType", "duration")}
+
+
+def evaluation_state(base_url: str, session_id: str, evaluation_id: str) -> dict[str, Any] | None:
+    """Đồng hồ của câu đang chạy: {taskStatus, timeLeft, timeElapsed} — đơn vị GIÂY.
+
+    currentTask chỉ cho tổng thời gian (duration), không cho thời gian còn lại.
+    Endpoint này có trong oas-client.json, nhưng DRES trả 403 cho thí sinh nếu
+    BTC tắt `participantCanView` (GetEvaluationStateHandler.kt), và 404 khi
+    evaluation đã kết thúc. Hai trường hợp đó trả None để người gọi tự ước lượng.
+    Mã nguồn DRES chia sẵn cho 1000 (ApiEvaluationState.kt) nên đã là giây.
+    """
+    code, payload = _http("GET", f"{base_url}/api/v2/evaluation/{evaluation_id}/state",
+                          params={"session": session_id})
+    if code in (403, 404):
+        return None
+    if code != 200 or not isinstance(payload, dict):
+        raise DresError(_description(payload, f"Không lấy được trạng thái evaluation (HTTP {code})"), code)
+    return {k: payload.get(k) for k in ("taskTemplateId", "taskStatus", "timeLeft", "timeElapsed")}
 
 
 def submit(base_url: str, session_id: str, evaluation_id: str,
@@ -118,6 +138,33 @@ def submit(base_url: str, session_id: str, evaluation_id: str,
     code, body = _http("POST", f"{base_url}/api/v2/submit/{evaluation_id}",
                        params={"session": session_id}, body=payload)
     return code, body if isinstance(body, dict) else {}
+
+
+# Nghĩa của từng mã theo tài liệu BTC (HUONG-DAN-NOP-BAI.pdf, bước 4). Câu gốc
+# của DRES ("Duplicate submission"…) vẫn được nối vào sau: nó cụ thể hơn, nhưng
+# giữa câu thi 5 phút không ai kịp dịch nó ra việc phải làm.
+_HTTP_MEANING = {
+    400: "DRES không đọc được bài nộp (sai định dạng)",
+    401: "Phiên DRES hết hạn và đăng nhập lại vẫn không được — admin nhập lại tài khoản ở tab DRES",
+    404: "Sai evaluation ID hoặc evaluation đã kết thúc — admin chọn lại evaluation ở tab DRES",
+    412: "Trùng với một lần nộp trước, hoặc câu đã hết giờ",
+}
+
+
+def explain_http(code: int | None, description: str | None) -> str:
+    """Câu báo lỗi cho admin: mã HTTP, nghĩa tiếng Việt, rồi nguyên văn DRES."""
+    meaning = _HTTP_MEANING.get(code) if code is not None else None
+    head = f"HTTP {code}: {meaning}" if meaning else f"DRES trả HTTP {code}"
+    return f"{head} — DRES: “{description}”" if description else head
+
+
+_VIDEO_EXTENSION_RE = re.compile(r"\.(mp4|mkv|avi|mov|webm)$", re.IGNORECASE)
+
+
+def strip_video_extension(video_id: str) -> str:
+    """BTC: "Item là tên file video KHÔNG có phần đuôi". Dán nhầm L21_V001.mp4
+    thì bỏ đuôi thay vì báo lỗi — tên nào mình cũng biết đúng là gì."""
+    return _VIDEO_EXTENSION_RE.sub("", video_id)
 
 
 # ── Định dạng bài nộp ─────────────────────────────────────────────────────────

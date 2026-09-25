@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -292,6 +293,55 @@ def _current_task(conn: sqlite3.Connection, cfg: sqlite3.Row, evaluation_id: str
                          lambda s: dres.current_task(cfg["base_url"], s, evaluation_id))
 
 
+# Lúc server này thấy mỗi câu lần đầu, theo (evaluation, tên câu). Chỉ dùng khi
+# DRES không cho xem đồng hồ (403): đếm từ đây là ước lượng — trễ tối đa một
+# nhịp hỏi (3 giây), và sai hẳn nếu server khởi động lại giữa câu. Để trong RAM
+# là đủ: mất đi thì chỉ mất ước lượng, không mất bài nộp nào.
+_task_first_seen: dict[tuple[str, str], float] = {}
+
+
+def _clock(conn: sqlite3.Connection, evaluation_id: str,
+           task: dict[str, Any]) -> dict[str, Any]:
+    """{time_left, time_elapsed, source}, đơn vị giây.
+
+    source = 'dres' khi lấy được từ DRES, 'estimate' khi phải tự đếm. Giao
+    diện phải nói rõ là ước lượng: điểm "nộp ngay" tính từ con số này.
+    """
+    first_seen = _task_first_seen.setdefault((evaluation_id, task["name"]), time.time())
+    try:
+        state = _with_session(conn, _config(conn),
+                              lambda s: dres.evaluation_state(_config(conn)["base_url"], s, evaluation_id))
+    except dres.DresError:
+        state = None  # đồng hồ là phụ — lỗi thì ước lượng, không làm hỏng cả khung câu
+    # taskTemplateId khác = DRES vừa chuyển câu giữa hai lời gọi; đồng hồ đó
+    # của câu kia, thà ước lượng một nhịp còn hơn.
+    if state and state.get("timeElapsed") is not None \
+            and state.get("taskTemplateId") in (None, task.get("templateId")):
+        return {"time_left": state.get("timeLeft"), "time_elapsed": state["timeElapsed"],
+                "source": "dres"}
+    elapsed = max(0, round(time.time() - first_seen))
+    duration = task.get("duration")
+    return {"time_left": max(0, duration - elapsed) if duration else None,
+            "time_elapsed": elapsed, "source": "estimate"}
+
+
+def _tally(conn: sqlite3.Connection, evaluation_id: str, task_name: str) -> dict[str, Any]:
+    """Kết quả các lần đã nộp cho câu này: k trong công thức điểm là `wrong`.
+
+    Chỉ tính bài ghi được tên câu lúc đề xuất — bài không rõ câu nào thì không
+    đoán. INDETERMINATE đếm riêng: BTC đang chấm tay, có thể thành sai.
+    """
+    rows = conn.execute(
+        "SELECT verdict, COUNT(*) AS n FROM dres_submissions "
+        "WHERE evaluation_id = ? AND dres_task_name = ? AND status = 'sent' GROUP BY verdict",
+        (evaluation_id, task_name),
+    ).fetchall()
+    counts = {r["verdict"]: r["n"] for r in rows}
+    return {"wrong": counts.get("WRONG", 0),
+            "indeterminate": counts.get("INDETERMINATE", 0),
+            "correct": counts.get("CORRECT", 0) > 0}
+
+
 @router.get("/current-task")
 def get_current_task(
     _: Annotated[sqlite3.Row, Depends(active_user)],
@@ -303,7 +353,14 @@ def get_current_task(
         task = _current_task(conn, _config(conn), evaluation_id)
     except dres.DresError as e:
         raise _bad_gateway(e) from e
-    return {"evaluation_id": evaluation_id, "task": task}
+    # return {"evaluation_id": evaluation_id, "task": task}
+    # Thêm đồng hồ và số lần sai (HUONG-DAN-NOP-BAI.pdf, bước 2): mỗi 6 giây
+    # chờ mất 1 điểm, mỗi lần sai mất 10 — người bấm nộp cần thấy cả hai.
+    if task is None:
+        return {"evaluation_id": evaluation_id, "task": None, "clock": None, "tally": None}
+    return {"evaluation_id": evaluation_id, "task": task,
+            "clock": _clock(conn, evaluation_id, task),
+            "tally": _tally(conn, evaluation_id, task["name"])}
 
 
 # ── đề xuất và duyệt ──────────────────────────────────────────────────────────
@@ -392,7 +449,8 @@ def propose(
     user: Annotated[sqlite3.Row, Depends(active_user)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
-    video_id = payload.video_id.strip()
+    # video_id = payload.video_id.strip()
+    video_id = dres.strip_video_extension(payload.video_id.strip())
     if not _VIDEO_RE.match(video_id):
         raise HTTPException(status_code=400, detail="Tên video không hợp lệ")
     answer = (payload.answer or "").strip() or None
@@ -495,8 +553,12 @@ def approve(
     except dres.DresError as e:
         # Lỗi mạng: KHÔNG biết bài đã tới DRES hay chưa. Để 'failed' cho admin
         # tự quyết bấm lại — tự thử lại có thể thành nộp hai lần.
+        # (e.http_status, str(e), submission_id)
+        # Có mã HTTP (401 sau lần đăng nhập lại) thì nói việc phải làm; lỗi
+        # mạng không có mã thì giữ nguyên câu của urllib.
+        message = str(e) if e.http_status is None else dres.explain_http(e.http_status, str(e))
         conn.execute("UPDATE dres_submissions SET status = 'failed', http_status = ?, error = ? "
-                     "WHERE id = ?", (e.http_status, str(e), submission_id))
+                     "WHERE id = ?", (e.http_status, message, submission_id))
         return _row_out(_load_row(conn, submission_id))
 
     accepted = code in (200, 202)
@@ -506,7 +568,10 @@ def approve(
         ("sent" if accepted else "failed", code,
          result.get("submission") if accepted else None,
          result.get("description"),
-         None if accepted else (result.get("description") or f"DRES trả HTTP {code}"),
+         # None if accepted else (result.get("description") or f"DRES trả HTTP {code}"),
+         # Câu gốc của DRES ("Duplicate submission") không nói phải làm gì
+         # tiếp; explain_http thêm nghĩa theo tài liệu BTC, vẫn giữ câu gốc.
+         None if accepted else dres.explain_http(code, result.get("description")),
          submission_id),
     )
     return _row_out(_load_row(conn, submission_id))

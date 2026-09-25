@@ -4,7 +4,6 @@ import {
   canSubmitDres,
   describePayload,
   formatMs,
-  getDresCurrentTask,
   getDresEvaluations,
   getDresStatus,
   listDresSubmissions,
@@ -16,9 +15,10 @@ import {
   type DresEvaluation,
   type DresStatus,
   type DresSubmission,
-  type DresTask,
 } from "../api/dres";
 import Button from "../components/Button";
+import DresTaskClock from "../components/DresTaskClock";
+import { useDresCurrentTask } from "../components/DresTaskClock/useDresCurrentTask";
 import { approveWithConfirm } from "../helpers/dresApprove";
 import { useAuthStore } from "../store/authStore";
 
@@ -62,8 +62,12 @@ export default function DresPage({
   const role = useAuthStore((state) => state.user?.role);
   const isAdmin = role === "admin";
   const [status, setStatus] = useState<DresStatus | null>(null);
-  const [task, setTask] = useState<DresTask | null>(null);
-  const [taskError, setTaskError] = useState<string | null>(null);
+  // const [task, setTask] = useState<DresTask | null>(null);
+  // const [taskError, setTaskError] = useState<string | null>(null);
+  // Câu đang chạy chuyển sang hook dùng chung với popup "Nộp DRES": nó mang
+  // thêm đồng hồ và số lần sai, và hai nơi phải thấy cùng một con số.
+  const currentTask = useDresCurrentTask(status?.configured === true);
+  const task = currentTask.current?.task ?? null;
   const [submissions, setSubmissions] = useState<DresSubmission[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -76,15 +80,15 @@ export default function DresPage({
       ]);
       setStatus(nextStatus);
       setSubmissions(list.submissions);
-      if (nextStatus.configured) {
-        try {
-          setTask((await getDresCurrentTask()).task);
-          setTaskError(null);
-        } catch (error) {
-          setTask(null);
-          setTaskError(error instanceof Error ? error.message : String(error));
-        }
-      }
+      // if (nextStatus.configured) {
+      //   try {
+      //     setTask((await getDresCurrentTask()).task);
+      //     setTaskError(null);
+      //   } catch (error) {
+      //     setTask(null);
+      //     setTaskError(error instanceof Error ? error.message : String(error));
+      //   }
+      // }
     } catch {
       // Lần sau cách 3 giây; một lần hỏng không đáng một thông báo.
     }
@@ -106,6 +110,8 @@ export default function DresPage({
     } finally {
       setBusyId(null);
       void refresh();
+      // Vừa gửi xong thì số lần sai / "đã đúng" phải đổi ngay, không chờ nhịp sau.
+      void currentTask.refresh();
     }
   };
 
@@ -140,7 +146,7 @@ export default function DresPage({
                 {status.submit_mode === "everyone" ? "mọi người nộp được" : "chỉ admin nộp"}
               </b>
             </span>
-            <span className="text-sm">
+            {/* <span className="text-sm">
               Câu đang chạy:{" "}
               {task ? (
                 <b className="text-proto-primary-active">
@@ -150,7 +156,12 @@ export default function DresPage({
               ) : (
                 <span className="text-proto-muted">{taskError ?? "không có"}</span>
               )}
-            </span>
+            </span> */}
+            {/* Thay dòng tên câu bằng khung đồng hồ: tổng thời gian không nói
+                được còn bao nhiêu giây, còn đáng nộp không. */}
+            <div className="basis-full mt-1 pt-2 border-t border-proto-line">
+              <DresTaskClock {...currentTask} />
+            </div>
           </>
         )}
       </section>
@@ -298,7 +309,10 @@ function SubmissionRow({
       ))}
       {(s.error || s.dres_description) && (
         <span className={`text-[12px] ${s.error ? "text-[#c64545]" : "text-proto-muted"}`}>
-          DRES: {s.error ?? s.dres_description}
+          {/* DRES: {s.error ?? s.dres_description} */}
+          {/* error đã tự có "HTTP 412: … — DRES: “…”" (explain_http); thêm
+              "DRES:" phía trước nữa là lặp. */}
+          {s.error ?? `DRES: ${s.dres_description}`}
         </span>
       )}
       {children}

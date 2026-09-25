@@ -31,6 +31,8 @@ class FakeDres:
         self.verdict = "CORRECT"
         self.submissions: list[dict] = []
         self.network_down = False
+        # Đồng hồ của /evaluation/{id}/state. None = BTC tắt participantCanView → 403.
+        self.clock: dict | None = {"timeLeft": 200, "timeElapsed": 100}
 
     def expire_sessions(self):
         self.sessions.clear()
@@ -54,7 +56,13 @@ class FakeDres:
         if path.startswith("api/v2/client/evaluation/currentTask/"):
             if self.task is None:
                 return 404, {"status": False, "description": "No active task"}
-            return 200, {"name": self.task, "taskGroup": "KIS", "taskType": "KIS", "duration": 300}
+            return 200, {"templateId": f"tpl-{self.task}", "name": self.task,
+                         "taskGroup": "KIS", "taskType": "KIS", "duration": 300}
+        if path.startswith("api/v2/evaluation/") and path.endswith("/state"):
+            if self.clock is None:
+                return 403, {"status": False, "description": "Access Denied"}
+            return 200, {"evaluationId": "ev-1", "evaluationStatus": "ACTIVE",
+                         "taskTemplateId": f"tpl-{self.task}", "taskStatus": "RUNNING", **self.clock}
         if path.startswith("api/v2/submit/"):
             if body in [s["body"] for s in self.submissions]:
                 return 412, {"status": False, "description": "Duplicate submission"}
@@ -69,6 +77,8 @@ def fake(monkeypatch):
     monkeypatch.setattr(dres, "_http", server)
     # Không để _load_meta() nạp keyframe_metadata.json thật đè lên bảng giả.
     monkeypatch.setattr(preprocess, "_meta_loaded", True)
+    # Mốc "lần đầu thấy câu" là trạng thái cấp module — không để lọt giữa các test.
+    monkeypatch.setattr(router, "_task_first_seen", {})
     monkeypatch.setattr(preprocess, "_video_frames", {
         "L21_V001": [{"name": "L21_V001-0001-3000.jpg", "fps": FPS, "frame_idx": 3000}],
         "N001-V001": [{"name": "N001-V001-0001-10.jpg", "fps": 25.0, "frame_idx": 10}],
@@ -254,7 +264,10 @@ def test_dres_refusal_keeps_its_description(conn, fake, configured):
     fake.submissions.append({"evaluation": "ev-1", "body": row["payload"]})  # DRES đã có bài này
     refused = router.approve(row["id"], admin, conn, force=False)
     assert refused["status"] == "failed" and refused["http_status"] == 412
-    assert refused["error"] == "Duplicate submission"
+    # assert refused["error"] == "Duplicate submission"
+    # Câu gốc của DRES vẫn còn, nhưng đứng sau nghĩa tiếng Việt của mã 412.
+    assert refused["error"].startswith("HTTP 412: Trùng với một lần nộp trước")
+    assert "Duplicate submission" in refused["error"]
 
 
 def test_wrong_verdict_is_stored(conn, fake, configured):
@@ -328,3 +341,61 @@ def test_mode_changes_are_audited_once(conn, fake, configured):
 
 def test_mode_needs_an_account_first(conn, fake, people):
     assert _status_code(_mode, conn, people[0], "everyone") == 409
+
+
+# ── đồng hồ, số lần sai, tên video, câu báo lỗi ──────────────────────────────
+
+
+def test_current_task_carries_the_dres_clock(conn, fake, configured):
+    out = router.get_current_task(configured[1], conn)
+    assert out["task"]["name"] == "q01"
+    assert out["clock"] == {"time_left": 200, "time_elapsed": 100, "source": "dres"}
+    assert out["tally"] == {"wrong": 0, "indeterminate": 0, "correct": False}
+
+
+def test_forbidden_clock_falls_back_to_an_estimate(conn, fake, configured, monkeypatch):
+    fake.clock = None
+    now = [1000.0]
+    monkeypatch.setattr(router.time, "time", lambda: now[0])
+    assert router.get_current_task(configured[1], conn)["clock"] ==         {"time_left": 300, "time_elapsed": 0, "source": "estimate"}
+    now[0] += 42
+    assert router.get_current_task(configured[1], conn)["clock"] ==         {"time_left": 258, "time_elapsed": 42, "source": "estimate"}
+    now[0] += 1000                                   # quá giờ thì dừng ở 0, không âm
+    assert router.get_current_task(configured[1], conn)["clock"]["time_left"] == 0
+
+
+def test_no_task_means_no_clock(conn, fake, configured):
+    fake.task = None
+    out = router.get_current_task(configured[1], conn)
+    assert out["task"] is None and out["clock"] is None and out["tally"] is None
+
+
+def test_tally_counts_only_sent_verdicts_of_the_current_task(conn, fake, configured):
+    admin, member = configured
+    fake.verdict = "WRONG"
+    for frame in (3000, 3001):
+        router.approve(_propose(conn, member, frames=[frame])["id"], admin, conn, force=False)
+    _propose(conn, member, frames=[3002])            # chưa gửi thì chưa mất điểm
+    fake.verdict = "INDETERMINATE"
+    router.approve(_propose(conn, member, frames=[3003])["id"], admin, conn, force=False)
+    assert router.get_current_task(member, conn)["tally"] ==         {"wrong": 2, "indeterminate": 1, "correct": False}
+    fake.task = "q02"                                # câu mới đếm lại từ đầu
+    assert router.get_current_task(member, conn)["tally"]["wrong"] == 0
+
+
+def test_video_extension_is_dropped(conn, configured):
+    row = _propose(conn, configured[1], video_id="L21_V001.MP4", frames=[3000])
+    assert row["video_id"] == "L21_V001"
+    assert row["payload"]["answerSets"][0]["answers"][0]["mediaItemName"] == "L21_V001"
+
+
+@pytest.mark.parametrize("code, starts", [
+    (401, "HTTP 401: Phiên DRES hết hạn"),
+    (404, "HTTP 404: Sai evaluation ID"),
+    (412, "HTTP 412: Trùng với một lần nộp trước, hoặc câu đã hết giờ"),
+    (500, "DRES trả HTTP 500"),
+])
+def test_http_codes_are_explained(code, starts):
+    assert dres.explain_http(code, "raw").startswith(starts)
+    assert dres.explain_http(code, "raw").endswith("“raw”")
+    assert "DRES:" not in dres.explain_http(code, None)   # không có câu gốc thì không nối

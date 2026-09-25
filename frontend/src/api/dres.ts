@@ -44,11 +44,36 @@ export interface DresEvaluation {
 }
 
 export interface DresTask {
+  templateId?: string | null;
   name: string;
   taskGroup: string;
   taskType: string;
   /** Giây. */
   duration: number | null;
+}
+
+/**
+ * Đồng hồ câu đang chạy, giây, tại lúc server trả lời. 'estimate' = DRES không
+ * cho xem (403), server tự đếm từ lúc nó thấy câu này — có thể trễ vài giây.
+ */
+export interface DresClock {
+  time_left: number | null;
+  time_elapsed: number;
+  source: "dres" | "estimate";
+}
+
+/** Các lần ĐÃ GỬI cho câu đang chạy. `wrong` là k trong công thức điểm. */
+export interface DresTally {
+  wrong: number;
+  indeterminate: number;
+  correct: boolean;
+}
+
+export interface DresCurrentTask {
+  evaluation_id: string;
+  task: DresTask | null;
+  clock: DresClock | null;
+  tally: DresTally | null;
 }
 
 export interface DresSubmission {
@@ -128,11 +153,8 @@ export function canSubmitDres(
   return role === "admin" || status?.submit_mode === "everyone";
 }
 
-export function getDresCurrentTask(): Promise<{
-  evaluation_id: string;
-  task: DresTask | null;
-}> {
-  return apiFetch("/api/dres/current-task");
+export function getDresCurrentTask(): Promise<DresCurrentTask> {
+  return apiFetch<DresCurrentTask>("/api/dres/current-task");
 }
 
 export function listDresSubmissions(
