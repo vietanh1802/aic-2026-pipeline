@@ -269,7 +269,8 @@ export interface SystemStatus {
   image_base_url: string;
   pipeline_order: string;
   files: Record<string, boolean>;
-  vectors: { beit3: number; clip: number };
+  // [siglip2] optional: backend cũ chưa có key này -> đừng để vỡ type.
+  vectors: { beit3: number; clip: number; siglip2?: number };
   keyframes: number;
   videos: number;
   models: { fine_grained: string; coarse_grained: string };
@@ -302,7 +303,8 @@ export interface ApiError {
 //  Model dùng cho /single-search và /temporal-search
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ModelName = "beit3" | "clip";
+// [siglip2] Model thứ 3.
+export type ModelName = "beit3" | "clip" | "siglip2";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Submit (chưa có endpoint /submit ở backend — xem docs/KIEN_TRUC_PIPELINE.md
@@ -367,7 +369,10 @@ class VideoSearchApi {
     limit = 100,
     topM = 50,
     useRerank = true,
-    textFilter?: TextFilterRequestFields
+    textFilter?: TextFilterRequestFields,
+    // [siglip2] Tổ hợp model tick trên UI. Bỏ trống / undefined -> KHÔNG gửi
+    // field `models`, backend chạy mọi model active như cũ.
+    models?: ModelName[]
   ): Promise<SearchResponse> {
     // The text filter is sent as the four asr_filter / ocr_filter fields, and
     // only when at least one is set (the caller passes undefined otherwise).
@@ -381,6 +386,7 @@ class VideoSearchApi {
       top_m: topM,
       use_rerank: useRerank,
       ...(textFilter ?? {}),
+      ...(models && models.length > 0 ? { models } : {}),
     });
   }
 

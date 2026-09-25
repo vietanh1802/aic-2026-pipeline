@@ -1,12 +1,8 @@
-# Pin lỏng: các pin cũ (fastapi==0.104.1, pydantic==2.5.0) không khớp môi trường
-# đang chạy được, cài lại từ file sẽ ra env khác venv hiện tại.
 fastapi>=0.115.6
 uvicorn[standard]>=0.32.1
 pydantic>=2.10.4
 python-dotenv>=1.0.0
 
-# keyframe_metadata.json is 437MB: json.load takes ~60s, orjson ~15s. Optional —
-# preprocess.py falls back to the stdlib, startup is just slower without it.
 orjson>=3.10
 
 torch
@@ -16,19 +12,15 @@ Pillow
 
 open_clip_torch
 
-# timm giữ pin cứng: modeling_finetune.py của microsoft/unilm dùng
-# timm.models.registry, API đã bị xoá ở timm >= 0.9.
 timm==0.4.12
 torchscale==0.2.0
-transformers
+transformers>=4.49
+huggingface_hub
 sentencepiece
 
-# unilm/beit3/utils.py import hai package này ở top-level → thiếu là
-# _load_beit3() ImportError, dù pipeline retrieval không dùng train loop.
 torchmetrics
 tensorboardX
 
-# sync_and_unzip.py — tải ZIP frame từ Google Drive.
 gdown
 argon2-cffi>=23.1
 python-multipart>=0.0.9

@@ -97,6 +97,11 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const searchType = useQueryStore((state) => state.searchType);
   const setSearchType = useQueryStore((state) => state.setSearchType);
   const singleModel = useQueryStore((state) => state.singleModel);
+  // [siglip2] Tổ hợp model cho ensemble — checkbox, không phải Dropdown.
+  const ensembleModels = useQueryStore((state) => state.ensembleModels);
+  const toggleEnsembleModel = useQueryStore(
+    (state) => state.toggleEnsembleModel
+  );
   const setSingleModel = useQueryStore((state) => state.setSingleModel);
 
   const topM = useQueryStore((state) => state.topM);
@@ -240,7 +245,9 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   // (N sự kiện tuần tự) — 2 cái sau nhận query bằng cách tách 1 chuỗi theo
   // dấu "." ở backend, khung nhập KHÔNG đổi gì (vẫn 1 ô input như cũ).
   const searchOptions: DropdownOption[] = [
-    { id: 0, label: "Ensemble (BEiT3+CLIP)", value: "ensemble" as SearchType },
+    // [siglip2] Nhãn bỏ liệt kê model cố định — tổ hợp thật giờ chọn bằng
+    // checkbox bên dưới, có thể là 1, 2 hoặc cả 3 model.
+    { id: 0, label: "Ensemble (chọn model bên dưới)", value: "ensemble" as SearchType },
     { id: 1, label: "Single Model", value: "single" as SearchType },
     { id: 2, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
     { id: 3, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
@@ -255,6 +262,15 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const modelOptions: DropdownOption[] = [
     { id: 0, label: "BEiT3", value: "beit3" as ModelName },
     { id: 1, label: "CLIP", value: "clip" as ModelName },
+    // [siglip2] +1 option cho Single Model.
+    { id: 2, label: "SigLIP2", value: "siglip2" as ModelName },
+  ];
+
+  // [siglip2] Checkbox tổ hợp cho ensemble — nhãn/value khớp modelOptions.
+  const ensembleModelOptions: { label: string; value: ModelName }[] = [
+    { label: "BEiT3", value: "beit3" },
+    { label: "CLIP", value: "clip" },
+    { label: "SigLIP2", value: "siglip2" },
   ];
 
   // ASR takes all three modes; OCR has no BM25 index, so it gets the first
@@ -387,6 +403,29 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                 dropDownWidth={100}
                 dropDirection="down"
               />
+            </div>
+          )}
+
+          {/* [siglip2] Tổ hợp model cho ensemble — tick bất kỳ 1-3 cái.
+              Không cho bỏ tick hết (xem toggleEnsembleModel). */}
+          {searchType === "ensemble" && (
+            <div className="flex flex-col items-start">
+              <p className="font-bold">Models (ensemble)</p>
+              <div className="flex items-center gap-x-3 p-2">
+                {ensembleModelOptions.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="flex items-center gap-x-1 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={ensembleModels.includes(opt.value)}
+                      onChange={() => toggleEnsembleModel(opt.value)}
+                    />
+                    <span className="text-sm">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           )}
         </div>

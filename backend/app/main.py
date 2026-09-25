@@ -161,6 +161,16 @@ class EnsembleSearchRequest(BaseModel):
         default=OcrFilterMode.substring,
         description="How the OCR filter matches: substring | regex"
     )
+    # [siglip2] Tổ hợp model tham gia ensemble — checkbox nào tick trên UI thì
+    # tên model đó nằm trong list này. None/rỗng = dùng mọi model đang active
+    # trên server, đúng hành vi cũ, nên client cũ không phải đổi gì.
+    # /single-search kế thừa field này và bỏ qua nó (nó có `model` riêng), y
+    # như cách nó đang bỏ qua các field filter ở trên.
+    models: Optional[List[str]] = Field(
+        default=None,
+        description="Tập con bất kỳ của beit3/clip/siglip2 (1, 2 hoặc cả 3). "
+                    "None = dùng mọi model đang active trên server.",
+    )
 
     class Config:
         json_schema_extra = {"example": {
@@ -170,7 +180,7 @@ class EnsembleSearchRequest(BaseModel):
 
 
 class SingleSearchRequest(EnsembleSearchRequest):
-    model: str = Field("clip", description="beit3 hoặc clip")
+    model: str = Field("clip", description="beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -227,7 +237,7 @@ class TemporalSearchRequest(BaseModel):
     gap_c:       int   = Field(20, ge=1, le=300, description="Khoảng cách tối đa (giây) — paper: gap_C")
     max_frames:  int   = Field(20, ge=1, le=100, description="Số frame tối đa mỗi chiều — paper: 20")
     sim_thr:     float = Field(0.10, description="Dừng mở rộng khi điểm tụt dưới ngưỡng này")
-    model:       str   = Field("clip", description="Model dùng để tính điểm: beit3 hoặc clip")
+    model:       str   = Field("clip", description="Model dùng để tính điểm: beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -279,7 +289,7 @@ class TrakeSearchRequest(BaseModel):
     anchor_name: str       = Field(..., description="Tên file keyframe neo, lấy từ kết quả search — xác định VIDEO cần tìm")
     gap_c:       int       = Field(60, ge=1, le=600,
                                    description="Khoảng cách tối đa (giây) giữa 2 event LIÊN TIẾP")
-    model:       str       = Field("clip", description="Model dùng để tính điểm: beit3 hoặc clip")
+    model:       str       = Field("clip", description="Model dùng để tính điểm: beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -326,7 +336,7 @@ class TemporalSearchCandidatesRequest(BaseModel):
     gap_c:       int   = Field(20, ge=1, le=300)
     max_frames:  int   = Field(20, ge=1, le=100)
     sim_thr:     float = Field(0.10)
-    model:       str   = Field("clip", description="beit3 hoặc clip")
+    model:       str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TrakeSearchCandidatesRequest(BaseModel):
@@ -335,7 +345,7 @@ class TrakeSearchCandidatesRequest(BaseModel):
     top_videos: int       = Field(5,  ge=1, le=20)
     gap_c:      int       = Field(60, ge=1, le=600)
     min_score:  float     = Field(0.10, description="Ngưỡng 'đủ tốt' lúc đếm tần suất khám phá video")
-    model:      str       = Field("clip", description="beit3 hoặc clip")
+    model:      str       = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TemporalCandidateResult(TemporalSearchResponse):
@@ -368,7 +378,7 @@ class TemporalSearchTextRequest(BaseModel):
     gap_c:      int   = Field(20, ge=1, le=300)
     max_frames: int   = Field(20, ge=1, le=100)
     sim_thr:    float = Field(0.10)
-    model:      str   = Field("clip", description="beit3 hoặc clip")
+    model:      str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TrakeSearchTextRequest(BaseModel):
@@ -378,7 +388,7 @@ class TrakeSearchTextRequest(BaseModel):
     top_videos: int   = Field(5,  ge=1, le=20)
     gap_c:      int   = Field(60, ge=1, le=600)
     min_score:  float = Field(0.10)
-    model:      str   = Field("clip", description="beit3 hoặc clip")
+    model:      str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TemporalSearchTextResponse(BaseModel):
@@ -561,10 +571,31 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
     bằng chính embedding của model đó mới có nghĩa. Sau đó Alg.3 chuẩn hoá
     s/S_max nên hai thang điểm khác nhau vẫn gộp được công bằng.
     """
+    # [siglip2] Validate ngay tại request cho lỗi rõ ràng, giống cách
+    # /single-search validate `model`, thay vì rơi xuống preprocess rồi trả
+    # rỗng im lặng.
+    if req.models:
+        bad = [m for m in req.models if m not in MODEL_NAMES]
+        if bad:
+            raise HTTPException(
+                400, f"models chứa tên không hợp lệ: {bad} — "
+                     f"phải là tập con của {list(MODEL_NAMES)}")
+        # Tên hợp lệ nhưng index CHƯA có (SigLIP2 còn đang build) thì
+        # _search_one() trả [] và ensemble ra rỗng KHÔNG kèm lý do — người dùng
+        # tick mỗi SigLIP2 rồi ngồi đoán. Nói thẳng, nhưng CHỈ khi mọi model
+        # được chọn đều thiếu index; còn ít nhất 1 model chạy được thì im lặng
+        # bỏ qua model thiếu, đúng hành vi cũ.
+        vec = system_status().get("vectors", {})
+        if not any(vec.get(m, 0) > 0 for m in req.models):
+            raise HTTPException(
+                503, f"Các model được chọn {req.models} đều chưa nạp được index. "
+                     f"Số vector hiện có: { {m: vec.get(m, 0) for m in req.models} }. "
+                     f"Kiểm tra file .index trong AIC_INDEX_DIR.")
     t0 = datetime.now()
     try:
         results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
-                                  use_rerank=req.use_rerank)
+                                  use_rerank=req.use_rerank,
+                                  models=req.models or None)
 
         response = _make_response(results, "ensemble", t0)
 

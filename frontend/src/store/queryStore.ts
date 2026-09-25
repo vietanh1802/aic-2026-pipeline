@@ -41,6 +41,14 @@ export interface QueryStore {
   singleModel: ModelName;
   setSingleModel: (model: ModelName) => void;
 
+  // [siglip2] Tổ hợp model tham gia /ensemble-search (Alg.3) — checkbox bất kỳ
+  // trong beit3/clip/siglip2, tick 1-3 cái tuỳ ý. Mặc định cả 3 (bằng đúng
+  // hành vi backend khi models rỗng), nhưng hiện rõ trên UI ngay từ đầu là
+  // đang chạy tổ hợp nào thay vì im lặng.
+  ensembleModels: ModelName[];
+  setEnsembleModels: (models: ModelName[]) => void;
+  toggleEnsembleModel: (model: ModelName) => void;
+
   // ── Tham số Alg.3 / Alg.2, khớp EnsembleSearchRequest/SingleSearchRequest ──
   topM: number; // top-M mỗi model trước khi gộp (paper dùng 50)
   setTopM: (topM: number) => void;
@@ -88,6 +96,24 @@ export const useQueryStore = create<QueryStore>((set) => ({
   setSearchType: (type) => set({ searchType: type }),
   singleModel: "beit3",
   setSingleModel: (model) => set({ singleModel: model }),
+
+  // [siglip2] Mặc định tick cả 3 — khớp hành vi cũ trước khi có field này
+  // (backend chạy ACTIVE_MODELS = mọi model có index khi không nhận `models`).
+  ensembleModels: ["beit3", "clip", "siglip2"],
+  setEnsembleModels: (models) => set({ ensembleModels: models }),
+  toggleEnsembleModel: (model) =>
+    set((state) => {
+      const has = state.ensembleModels.includes(model);
+      // Không cho bỏ tick xuống 0 model: ensemble rỗng vô nghĩa, và backend
+      // coi models=[] như "không truyền" rồi chạy lại TẤT CẢ — khác hẳn cái
+      // UI đang hiển thị (0 checkbox tick). Im lặng sai lệch.
+      if (has && state.ensembleModels.length === 1) return state;
+      return {
+        ensembleModels: has
+          ? state.ensembleModels.filter((m) => m !== model)
+          : [...state.ensembleModels, model],
+      };
+    }),
 
   topM: 50,
   setTopM: (topM) => set({ topM }),

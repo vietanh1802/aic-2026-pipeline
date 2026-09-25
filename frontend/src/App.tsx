@@ -427,6 +427,9 @@ function App({
       topM,
       useRerank,
       singleModel,
+      // [siglip2] Tổ hợp model tick trên UI cho nhánh ensemble — xem
+      // queryStore.ts. Không đụng singleModel, vẫn dùng cho single như cũ.
+      ensembleModels,
       ocrStripDiacritics,
       asrFilter,
       asrFilterMode,
@@ -537,7 +540,10 @@ function App({
               useRerank,
               hasTextFilter(textFilterFields)
                 ? buildTextFilterParams(textFilterFields)
-                : undefined
+                : undefined,
+              // [siglip2] Checkbox tổ hợp model. Backend validate là tập con
+              // của beit3/clip/siglip2 rồi tự chuẩn hoá trọng số ensemble.
+              ensembleModels
             );
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);
