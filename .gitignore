@@ -208,3 +208,5 @@ deploy/p8/old-bucket-policy/
 client_secret_*.json
 rclone-client.json
 rclone-auth.txt
+# Tài liệu/script di chuyển sang AWS account mới — giữ local, không bao giờ commit
+deploy/p8/

@@ -90,13 +90,18 @@ describe("groupByVideo", () => {
   it("skips and counts frames it cannot place, without dropping the video", () => {
     const groups = groupByVideo([
       // A batch not in fps_map.json yet: no fps, so no time.
-      result("N001-V001-0012-345.jpg", 90, { frame_idx: 345 }),
-      result("N001-V001-0013-400.jpg", 89, { frame_idx: 400 }),
+      // Was N001-V001 — the N batch is in fps_map.json since the 2026-09-25
+      // dataset, so the fixture needs an id no mapping will ever carry.
+      // result("N001-V001-0012-345.jpg", 90, { frame_idx: 345 }),
+      // result("N001-V001-0013-400.jpg", 89, { frame_idx: 400 }),
+      result("Z999-V001-0012-345.jpg", 90, { frame_idx: 345 }),
+      result("Z999-V001-0013-400.jpg", 89, { frame_idx: 400 }),
       result("L25_V014-0046-2837.jpg", 88, { frame_idx: 2837 }),
       // A known video whose name and fields give no frame number.
       result("L25_V014-oops", 87, { video: "L25_V014" }),
     ]);
-    expect(groups.get("N001-V001")).toEqual({ candidates: [], skipped: 2 });
+    // expect(groups.get("N001-V001")).toEqual({ candidates: [], skipped: 2 });
+    expect(groups.get("Z999-V001")).toEqual({ candidates: [], skipped: 2 });
     expect(groups.get("L25_V014")?.candidates).toHaveLength(1);
     expect(groups.get("L25_V014")?.skipped).toBe(1);
   });
