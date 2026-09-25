@@ -63,6 +63,7 @@ from app import asr_text as _asr_text
 from app import text_signal as _text_signal
 from app import text_lookup as _text_lookup
 from app.text_signal import TEXT_FILTER_MAX_CHARS, OcrFilterMode, TextMatchMode, annotate_request
+from app import track_search as track_route
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
 # startup dict forever and every OCR result would lose video/timestamp.
@@ -218,6 +219,45 @@ class OcrSearchResponse(SearchResponse):
     phrase_matches:   int = 0
     all_word_matches: int = 0
     searched_frames:  int = 0
+
+
+class TrackSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1,
+                       description="Mô tả vật thể kèm chuyển động, vd: "
+                                   "'xe tải đỏ đang chạy sang trái'")
+    limit: int = Field(100, ge=1, le=2000, description="Số dòng trả về")
+    video: Optional[str] = Field(
+        None, description="Bó hẹp theo video, vd 'N001-V001' hoặc 'N0'")
+
+    class Config:
+        json_schema_extra = {"example": {
+            "query": "xe máy màu đỏ chạy sang trái", "limit": 100,
+        }}
+
+
+class TrackSearchResultEx(SearchResultEx):
+    """Một track khớp — cùng hình dạng visual-route để tái dùng lưới UI.
+
+    `direction`/`speed`/`color` là các trường người vận hành đọc để quyết định
+    nhanh đúng/sai không cần mở ảnh, như `ocr_text` bên route OCR.
+    """
+    entity:      Optional[str] = None
+    color:       Optional[str] = None
+    direction:   Optional[str] = None
+    speed:       Optional[str] = None
+    n_obs:       Optional[int] = None
+    frame_start: Optional[int] = None
+    frame_end:   Optional[int] = None
+    track_id:    Optional[int] = None
+
+
+class TrackSearchResponse(SearchResponse):
+    results: List[TrackSearchResultEx]
+    # Bộ lọc đã nhận ra từ câu — operator nhìn ngay là route hiểu đúng ý
+    # mình chưa, thay vì đoán mò vì sao kết quả thế.
+    parsed:          dict = {}
+    total_matches:   int = 0
+    searched_tracks: int = 0
 
 
 class TemporalSearchRequest(BaseModel):
@@ -442,6 +482,7 @@ def _run_warmup() -> None:
         # otherwise whichever production request makes the first bm25/ASR
         # lookup pays it instead. Same never-raises reasoning as the others.
         _text_lookup.preload()
+        track_route.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
@@ -837,10 +878,67 @@ def ocr_text_endpoint(name: str):
         raise HTTPException(503, str(e))
 
 
+@app.post("/track-search", response_model=TrackSearchResponse,
+          summary="Tìm keyframe theo chuyển động của vật thể (batch 2, camera giao thông)")
+def track_search_endpoint(req: TrackSearchRequest):
+    """Lọc theo object + màu + hướng + tốc độ trên track đã tính sẵn.
+
+    Deliberately NOT blended with /ensemble-search: CLIP/BEiT3 không mã hoá
+    được hướng/tốc độ, nên trộn điểm sẽ làm loãng đúng chỗ route này giỏi.
+    Mỗi track trả đúng 1 keyframe (best_frame — frame vật thể rõ nhất).
+    """
+    started = datetime.now()
+    try:
+        found = track_route.search(req.query, limit=req.limit, video=req.video)
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Track search error: {e}")
+
+    # Metadata batch 2 chưa có trong _name2meta (index batch 2 chưa deploy),
+    # nên video/frame_idx lấy thẳng từ track — không qua fallback tên file.
+    rows = []
+    for hit in found["results"]:
+        name = hit["name"]
+        rows.append(TrackSearchResultEx(
+            frame=name, name=name, url=_pp._image_url(name),
+            # distance: UI vẽ thanh điểm theo tỉ lệ với max_distance — nhân
+            # 100 cho cùng thang quen thuộc của ensemble (điểm ×100).
+            distance=hit["score"] * 100,
+            video=hit["video"],
+            frame_idx=hit["frame_start"],
+            timestamp=None,
+            has_image=_pp._has_image(name),
+            entity=hit["entity"],
+            color=hit["color"],
+            direction=hit["direction"],
+            speed=hit["speed"],
+            n_obs=hit["n_obs"],
+            frame_start=hit["frame_start"],
+            frame_end=hit["frame_end"],
+            track_id=hit["track_id"],
+        ))
+
+    return TrackSearchResponse(
+        total_results=found["total_matches"],
+        returned_results=len(rows),
+        results=rows,
+        query_type="track",
+        processing_time=(datetime.now() - started).total_seconds(),
+        max_distance=max((r.distance for r in rows), default=0.0),
+        parsed=found["parsed"],
+        total_matches=found["total_matches"],
+        searched_tracks=found["searched_tracks"],
+    )
+
+
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
     return {**system_status(), "warmup": _warm, "ocr": ocr_route.status(),
-            "asr_text": _asr_text.status(), "text_signal": _text_signal.status()}
+            "asr_text": _asr_text.status(), "text_signal": _text_signal.status(),
+            "track": track_route.status()}
 
 
 @app.get("/health")
@@ -866,6 +964,7 @@ def root():
                       "/trake-search", "/temporal-search-candidates",
                       "/trake-search-candidates", "/temporal-search-text",
                       "/trake-search-text", "/ocr-search", "/ocr-text/{name}",
+                      "/track-search",
                       "/status", "/health", "/docs"],
     }
 

@@ -250,6 +250,8 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     // điều hướng bàn phím (xem DropDown/index.tsx), nên trùng id làm chọn sai
     // mục mà không báo lỗi gì.
     { id: 5, label: "OCR — chữ trên màn hình", value: "ocr" as SearchType },
+    // id 6 cùng lý do trên: tránh đụng id 4 có thể xuất hiện từ nhánh khác.
+    { id: 6, label: "Track — chuyển động (batch 2)", value: "track" as SearchType },
   ];
 
   const modelOptions: DropdownOption[] = [

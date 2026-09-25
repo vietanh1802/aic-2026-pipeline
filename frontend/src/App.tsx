@@ -199,6 +199,13 @@ function App({
     searched: number;
   } | null>(null);
 
+  // Bộ lọc route track nhận ra từ câu (groups/colors/directions/speeds).
+  // Nằm ngoài store vì cùng lý do ocrCounts: chỉ route này có khái niệm này.
+  // Operator nhìn một cái là biết route hiểu đúng ý mình chưa.
+  const [trackParsed, setTrackParsed] = useState<
+    Record<string, string[]> | null
+  >(null);
+
   // ── TRAKE line ───────────────────────────────────────────────────────────
   // Which frame each event of each card is currently standing on, when it is
   // not the one the DP chose. Held here rather than inside TrakeCard because
@@ -513,6 +520,26 @@ function App({
           allWords: res.all_word_matches,
           searched: res.searched_frames,
         });
+        setSummary({
+          count: res.results.length,
+          unit: "frames",
+          seconds: res.processing_time,
+        });
+        return;
+      }
+
+      if (searchType === "track") {
+        // Route track batch 2 (camera giao thông): lọc theo vật thể + màu +
+        // hướng + tốc độ. Không model, không trộn với route thị giác —
+        // CLIP/BEiT3 không mã hoá được chuyển động.
+        const res = await videoSearchApi.trackSearch(
+          queryText,
+          Number(resultLimit)
+        );
+        useSearchStore.getState().setTotalTime(res.processing_time);
+        useSearchStore.getState().setResults(res.results);
+        useSearchStore.getState().setMaxDistance(res.max_distance);
+        setTrackParsed(res.parsed ?? null);
         setSummary({
           count: res.results.length,
           unit: "frames",
@@ -918,6 +945,32 @@ function App({
       {hasQueried && searchType === "ocr" && ocrCounts && (
         <div className="max-w-[98%] mx-auto mb-2">
           <OcrCountBanner counts={ocrCounts} shown={results.length} />
+        </div>
+      )}
+
+      {hasQueried && searchType === "track" && trackParsed && (
+        <div className="max-w-[98%] mx-auto mb-2">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-900 flex flex-wrap gap-x-6 gap-y-1">
+            <span className="font-semibold">Route track hiểu câu là:</span>
+            {(["groups", "colors", "directions", "speeds"] as const).map(
+              (k) =>
+                trackParsed[k] && (
+                  <span key={k}>
+                    {k === "groups"
+                      ? "đối tượng"
+                      : k === "colors"
+                        ? "màu"
+                        : k === "directions"
+                          ? "hướng"
+                          : "tốc độ"}
+                    :{" "}
+                    <span className="font-mono">
+                      {trackParsed[k].join(" | ")}
+                    </span>
+                  </span>
+                )
+            )}
+          </div>
         </div>
       )}
 

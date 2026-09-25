@@ -171,6 +171,27 @@ export interface OcrSearchResponse extends SearchResponse {
   searched_frames: number;
 }
 
+/** One track hit. Same shape as SearchResult, so the grid is reused. */
+export interface TrackSearchResult extends SearchResult {
+  /** What the operator reads to judge hit/miss without opening the image. */
+  entity?: string;
+  color?: string;
+  direction?: string;
+  speed?: string;
+  n_obs?: number;
+  frame_start?: number;
+  frame_end?: number;
+  track_id?: number;
+}
+
+export interface TrackSearchResponse extends SearchResponse {
+  results: TrackSearchResult[];
+  /** Filters recognized from the query - shows the route understood the intent. */
+  parsed?: Record<string, string[]>;
+  total_matches: number;
+  searched_tracks: number;
+}
+
 export interface TemporalCandidate {
   name: string;
   url: string;
@@ -433,6 +454,23 @@ class VideoSearchApi {
       `${API_BASE_URL}/ocr-text/${encodeURIComponent(name)}`
     );
     return this.handleResponse<{ name: string; ocr_text: string }>(response);
+  }
+
+  /**
+   * Search by HOW AN OBJECT MOVES - filters precomputed traffic-camera tracks
+   * (batch 2) by object + color + direction + speed. No model involved, not
+   * blended with the visual route: CLIP/BEiT3 cannot encode motion.
+   */
+  async trackSearch(
+    query: string,
+    limit = 100,
+    video?: string
+  ): Promise<TrackSearchResponse> {
+    return this.post<TrackSearchResponse>("/track-search", {
+      query,
+      limit,
+      ...(video ? { video } : {}),
+    });
   }
 
   /**

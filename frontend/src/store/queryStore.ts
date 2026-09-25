@@ -15,7 +15,7 @@ export type QueryType = "text" | "image" | "audio";
 // therefore ignores topM/useRerank/model entirely and uses only resultLimit
 // plus the "strip diacritics" checkbox below.
 // (text-search/faiss-search/combined-search remain gone.)
-export type SearchType = "ensemble" | "single" | "temporal" | "trake" | "ocr";
+export type SearchType = "ensemble" | "single" | "temporal" | "trake" | "ocr" | "track";
 
 export type TranslateLanguage = "vi-en" | "en-vi";
 
