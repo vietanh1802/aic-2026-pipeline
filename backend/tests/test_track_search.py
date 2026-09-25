@@ -54,6 +54,21 @@ def tracks_file(tmp_path, monkeypatch):
          "speed": "slow", "color": "dark_gray", "best_frame": 45,
          "best_box": [0.4, 0.4, 0.5, 0.5], "best_score": 0.8,
          "dx": 0.1, "dy": 0.0, "path_len": 0.1, "area_ratio": 1.0},
+        # xe hơi conf cao nhưng lết mép khung (visibility thấp) — bài học
+        # N044-V002: hiện frame đó operator bác kết quả đúng
+        {"video": "N005-V001", "track_id": 7, "entity": "Car", "group": "car",
+         "n_obs": 9, "frame_start": 10, "frame_end": 20, "direction": "toward",
+         "speed": "slow", "color": "white", "best_frame": 20,
+         "best_box": [0.0, 0.85, 0.35, 1.0], "best_score": 0.97,
+         "visibility": 0.1,
+         "dx": 0.0, "dy": 0.05, "path_len": 0.05, "area_ratio": 2.0},
+        # xe hơi conf thấp hơn nhưng nằm trọn trong khung
+        {"video": "N005-V002", "track_id": 8, "entity": "Car", "group": "car",
+         "n_obs": 9, "frame_start": 10, "frame_end": 20, "direction": "toward",
+         "speed": "slow", "color": "white", "best_frame": 15,
+         "best_box": [0.3, 0.3, 0.5, 0.5], "best_score": 0.82,
+         "visibility": 1.0,
+         "dx": 0.0, "dy": 0.04, "path_len": 0.04, "area_ratio": 1.8},
     ]
     path = tmp_path / "tracks_N.jsonl"
     with open(path, "w", encoding="utf-8") as f:
@@ -156,9 +171,10 @@ def test_search_video_prefix_filter(tracks_file):
 
 def test_search_rank_prefers_score_then_track_length(tracks_file):
     """best_score cao hơn phải xếp trên; độ dài track là cộng thưởng nhỏ."""
-    out = ts.search("xe hơi")  # car tracks: N002-V001 (0.85+0.04), N003-V002 (0.75+0.025)
-    assert out["results"][0]["video"] == "N002-V001"
-    assert out["results"][1]["video"] == "N003-V002"
+    out = ts.search("xe hơi")
+    videos = [r["video"] for r in out["results"]]
+    # thứ tự TƯƠNG ĐỐI của cặp cũ (để track mới vào fixture không phá test)
+    assert videos.index("N002-V001") < videos.index("N003-V002")
 
 
 def test_search_deterministic_order(tracks_file):
@@ -173,6 +189,17 @@ def test_search_dark_gray_matches_gray_query(tracks_file):
     out = ts.search("xe tải xám")
     videos = {r["video"] for r in out["results"]}
     assert "N004-V001" in videos
+
+
+def test_search_visibility_beats_raw_confidence(tracks_file):
+    """Bài học N044-V002: conf cao nhất thường rơi đúng lúc vật lết mép
+    khung bị cắt nhiều nhất. Track nhìn thấy trọn vẹn (conf thấp hơn) phải
+    xếp trên track conf cao nhưng visibility thấp."""
+    out = ts.search("xe hơi trắng lại gần camera")
+    # track_id 8 (0.82 conf, visibility 1.0) phải thắng track_id 7 (0.97
+    # conf, visibility 0.1): 0.82*1.0 > 0.97*(0.3+0.7*0.1)=0.36
+    ids = [r["track_id"] for r in out["results"]]
+    assert ids.index(8) < ids.index(7)
 
 
 def test_search_parsed_echo(tracks_file):

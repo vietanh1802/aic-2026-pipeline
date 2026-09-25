@@ -216,7 +216,14 @@ def search(query: str, limit: int = 100, video: Optional[str] = None) -> dict:
             continue
         if speeds and t["speed"] not in speeds:
             continue
-        score = t["best_score"] + 0.005 * min(t["n_obs"], 20)
+        # Thứ hạng: độ tin cậy detector của frame được chọn, NHÂN với độ nhìn
+        # thấy rõ của vật thể trong frame đó. Bài học N044-V002: vật lết mép
+        # khung ảnh có conf cao nhất đúng lúc bị cắt nhiều nhất — hiện frame đó
+        # đứng hạng 1 khiến người vận hành bác kết quả ĐÚNG. Ưu tiên vật nhìn
+        # thấy trọn vẹn; cộng thưởng nhỏ theo độ dài track như cũ.
+        margin = t.get("visibility", 1.0)
+        score = t["best_score"] * (0.3 + 0.7 * margin) \
+            + 0.005 * min(t["n_obs"], 20)
         scored.append((score, t))
     # Điểm giảm dần, rồi theo video/track_id để cùng một truy vấn luôn
     # trả cùng một thứ tự (lý do như ocr_search).
@@ -234,6 +241,7 @@ def search(query: str, limit: int = 100, video: Optional[str] = None) -> dict:
             "color": t.get("color"),
             "direction": t["direction"],
             "speed": t["speed"],
+            "visibility": t.get("visibility"),
             "n_obs": t["n_obs"],
             "frame_start": t["frame_start"],
             "frame_end": t["frame_end"],
