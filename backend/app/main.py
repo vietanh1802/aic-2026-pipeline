@@ -36,8 +36,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -508,6 +509,64 @@ app.include_router(search_state_router.router)
 app.include_router(evaluation_router.router)
 app.include_router(expansion_router.router)
 app.include_router(dres_router.router)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Chặn các route nạp index trong lúc warm-up
+#
+#  Deploy 5.3.7 (2026-09-26) chết ở warm-up với `KeyError: 'M02_V017'`, dù chạy
+#  riêng từng bước nạp trên chính máy chủ đều sạch (index, metadata, SigLIP2).
+#  Thủ phạm là tranh chấp luồng: /status — thẻ TextIndexStatus trên web hỏi mỗi
+#  5 giây — gọi _load_meta() SONG SONG với warm-up. Hai luồng cùng thấy
+#  _meta_loaded còn False (đọc 449 MB JSON mất vài giây), cùng gán lại
+#  `_video_frames = {}`; luồng warm-up đang lặp dict CŨ nhưng tra theo tên
+#  global, lúc đó đã trỏ sang dict MỚI đang điền dở, nên KeyError ở một video
+#  chưa kịp thêm. Metadata lớn gấp 3 (983.931 khung) làm cửa sổ đó dài ra, nên
+#  giờ mới lộ; bản 5.3.0 có cùng lỗi, chỉ là gặp may lúc rollback.
+#
+#  Sửa ở đây thay vì thêm khoá trong preprocess.py (lõi truy xuất, INV-1): trong
+#  lúc "warming", route nào sẽ gọi các hàm _load_* thì trả 503 ngay. Chỉ chặn
+#  đúng trạng thái "warming" — AIC_WARMUP=0 giữ "cold" mãi và mọi thứ vẫn nạp
+#  lười như trước; "failed" cũng cho qua để còn nạp lười mà dùng tạm.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_WARMUP_GATED_PREFIXES = (
+    "/status",            # system_status() -> _load_indexes() + _load_meta()
+    "/ensemble-search",
+    "/single-search",
+    "/temporal-search",   # cả -candidates, -text
+    "/trake-search",      # cả -candidates, -text
+    "/ocr-search",        # _pp._load_meta() để điền video/timestamp
+    "/ocr-text",
+)
+# POST tới đây gọi preprocess._load_meta() (routers/dres.py::_fps) hoặc chạy
+# ensemble_search (benchmark); GET chỉ đọc bảng SQLite nên không chặn.
+_WARMUP_GATED_POST_PREFIXES = (
+    "/api/dres/submissions",
+    "/api/evaluation",
+)
+
+
+def _blocked_during_warmup(method: str, path: str, state: str) -> bool:
+    """True khi request này sẽ đụng tới các hàm nạp của preprocess giữa warm-up."""
+    if state != "warming":
+        return False
+    if method.upper() == "POST" and path.startswith(_WARMUP_GATED_POST_PREFIXES):
+        return True
+    return path.startswith(_WARMUP_GATED_PREFIXES)
+
+
+# Đăng ký TRƯỚC CORSMiddleware bên dưới: middleware thêm sau bọc ngoài, nên CORS
+# vẫn gắn header cho cả câu 503 này — không thì trình duyệt chỉ thấy lỗi CORS.
+@app.middleware("http")
+async def _warmup_gate(request: Request, call_next):
+    if _blocked_during_warmup(request.method, request.url.path, _warm["state"]):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server đang khởi động (warm-up), thử lại sau ít phút.",
+                     "warmup": _warm},
+        )
+    return await call_next(request)
+
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is
