@@ -7,6 +7,7 @@ import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
 import { frameClock, frameIndexFromResult, frameMsOf } from "../../helpers/frameIdentity";
+import { thumbUrl } from "../../helpers/thumb";
 import { pickedKind, type GroupInfoByFrame } from "../../helpers/groupResults";
 import { describeTextFilter } from "../../helpers/textFilter";
 import TextSignalBadge from "../TextSignalBadge";
@@ -356,7 +357,10 @@ export default function FrameDisplay({
                     <MissingFrame name={result.name} />
                   ) : (
                     <img
-                      src={result.url}
+                      // Thumbnail 384 px (~15 KB) thay cho ảnh gốc 1920 px
+                      // (~300 KB) trong ô ~240 px. Chưa có thì onError lùi về
+                      // ảnh gốc. Was: src={result.url}
+                      src={thumbUrl(result.url)}
                       alt={`Frame at ${timestamp[index]}`}
                       loading="lazy"
                       // Keyframes are full 1280x720 JPEGs shown in a ~240px
@@ -368,6 +372,12 @@ export default function FrameDisplay({
                       // Dự phòng khi backend không trả has_image, hoặc ảnh biến
                       // mất sau lúc search.
                       onError={(e) => {
+                        const img = e.currentTarget;
+                        if (result.url && img.dataset.full !== "1") {
+                          img.dataset.full = "1";
+                          img.src = result.url;
+                          return;
+                        }
                         e.currentTarget.style.display = "none";
                         e.currentTarget.nextElementSibling?.classList.remove(
                           "hidden"

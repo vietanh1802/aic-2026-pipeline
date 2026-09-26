@@ -270,6 +270,7 @@ function Strip({
           >
             <KeyframeImg
               src={item.url}
+              thumb
               alt={item.name}
               className={`w-full h-[46px] object-cover rounded border-2 ${
                 item.name === pickedName ? ring : "border-proto-line"
@@ -369,6 +370,7 @@ function TemporalCard({
             >
               <KeyframeImg
                 src={startUrl}
+                thumb
                 alt="start"
                 className="w-full aspect-[3/2] object-cover rounded-lg border-[3px] border-[#5db872]"
               />
@@ -405,6 +407,7 @@ function TemporalCard({
             >
               <KeyframeImg
                 src={endUrl}
+                thumb
                 alt="end"
                 className="w-full aspect-[3/2] object-cover rounded-lg border-[3px] border-[#c64545]"
               />
@@ -637,6 +640,7 @@ function TrakeCard({
                   {pick?.url ? (
                     <KeyframeImg
                       src={pick.url}
+                      thumb
                       alt={parts[index] ?? `E${index + 1}`}
                       className="w-full h-full object-cover"
                     />
