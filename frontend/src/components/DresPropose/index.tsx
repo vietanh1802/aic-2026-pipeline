@@ -12,6 +12,8 @@ import {
   type DresTaskType,
 } from "../../api/dres";
 import { approveWithConfirm } from "../../helpers/dresApprove";
+import { fpsOf, frameToMs } from "../../helpers/frameIdentity";
+import { frameAt } from "../../helpers/frameRange";
 import { useAuthStore } from "../../store/authStore";
 import Button from "../Button";
 import DresTaskClock from "../DresTaskClock";
@@ -42,14 +44,23 @@ export default function DresPropose({
   videoId,
   getPlayhead,
   defaultType,
+  defaultOpen = false,
+  currentSeconds,
 }: {
   videoId: string;
   /** Giây, đọc thẳng currentTime của <video> tại lúc bấm. */
   getPlayhead: () => number;
   defaultType?: DresTaskType;
+  /** Chung kết: khối này là thứ duy nhất để nộp, nên mở sẵn. */
+  defaultOpen?: boolean;
+  /**
+   * Vị trí đang phát (giây, cập nhật ~4 lần/giây) — chỉ để HIỆN frame/ms sẽ
+   * nộp. Lúc bấm nút vẫn đọc `getPlayhead()` cho đúng khung.
+   */
+  currentSeconds?: number;
 }) {
   const role = useAuthStore((state) => state.user?.role);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [status, setStatus] = useState<DresStatus | null>(null);
   const [type, setType] = useState<DresTaskType>(defaultType ?? "kis");
   const [answer, setAnswer] = useState("");
@@ -77,7 +88,26 @@ export default function DresPropose({
   const currentTask = useDresCurrentTask(open);
 
   const canSubmit = canSubmitDres(role, status);
-  const nowMs = () => Math.round(getPlayhead() * 1000);
+  const fps = fpsOf(videoId);
+  // Gửi ms của đúng KHUNG đang hiện (frameAt, cùng phép với dải khung dưới
+  // video), không phải ms thô của playhead.
+  //
+  // Old: const nowMs = () => Math.round(getPlayhead() * 1000);
+  // Lệch một khung: ở 100,5 s / 29,97 fps dải khung ghi frame 3011 (floor),
+  // còn server quy 100500 ms về round(3011,985) = 3012. Màn hình nói một khung,
+  // bài nộp mang khung khác. Giờ gửi frameToMs(3011) = 100467 ms, server quy
+  // lại đúng 3011 (vòng đi-về đã kiểm trong frameIdentity.test.ts). Lệch so
+  // với playhead thô luôn dưới một khung.
+  const msAt = (seconds: number): number =>
+    frameToMs(frameAt(seconds, fps), fps) ?? Math.round(seconds * 1000);
+  const nowMs = () => msAt(getPlayhead());
+  // Frame mà server sẽ quy ra từ ms: cùng `round(t / 1000 * fps)` như
+  // routers/dres.py, để số hiện ở đây trùng số nằm trong bài nộp.
+  const frameOfMs = (ms: number): number | null => (fps ? Math.round((ms / 1000) * fps) : null);
+  const withFrame = (ms: number) => {
+    const frame = frameOfMs(ms);
+    return frame === null ? `${ms} ms` : `frame ${frame} · ${ms} ms`;
+  };
 
   const propose = async (): Promise<DresSubmission | null> => {
     const times = type === "trake" ? marks : [nowMs()];
@@ -162,6 +192,14 @@ export default function DresPropose({
           <div className="p-2 rounded-[8px] bg-white border border-proto-line">
             <DresTaskClock {...currentTask} />
           </div>
+          {currentSeconds !== undefined && (
+            <div className="text-[12px] text-proto-muted">
+              Đang đứng:{" "}
+              <b className="font-mono text-proto-ink">
+                {withFrame(msAt(currentSeconds))}
+              </b>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-1">
             {TYPES.map((t) => (
               <button
@@ -207,7 +245,10 @@ export default function DresPropose({
                   key={`${i}-${ms}`}
                   className="flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-white border border-proto-line"
                 >
-                  E{i + 1} {formatMs(ms)}
+                  {/* Was: E{i + 1} {formatMs(ms)} — chỉ có đồng hồ, không có
+                      frame, trong khi mọi chỗ khác nói bằng số frame. */}
+                  E{i + 1} {formatMs(ms)}{" "}
+                  <span className="font-mono text-proto-muted">({withFrame(ms)})</span>
                   <button
                     type="button"
                     className="text-proto-muted hover:text-[#c64545]"

@@ -22,8 +22,10 @@ import { usePopupStore } from "../../store/popupStore";
 import {
   frameClock,
   frameIdxFromFrameId,
+  frameMsOf,
   startMsAt,
 } from "../../helpers/frameIdentity";
+import { DRES_ONLY } from "../../helpers/finalRound";
 import { frameRange } from "../../helpers/frameRange";
 import { durationForVideo, type DurationTag } from "../../helpers/candidateStripView";
 import { nextSeekRequest, type SeekRequest } from "../../helpers/seekRequest";
@@ -279,6 +281,15 @@ export default function VideoPopup({
                 <span>
                   {frameClock(videoId, frameIdxFromFrameId(frameId)) || "Unknown"}
                 </span>
+                {/* Frame và ms đứng cạnh nhau: DRES chung kết nhận ms, còn
+                    mọi chỗ khác trên màn hình nói bằng số frame. */}
+                {Number.isFinite(frameIdxFromFrameId(frameId)) && (
+                  <span className="font-mono text-[12px] text-proto-muted">
+                    frame {frameIdxFromFrameId(frameId)}
+                    {frameMsOf(videoId, frameIdxFromFrameId(frameId)) !== null &&
+                      ` · ${frameMsOf(videoId, frameIdxFromFrameId(frameId))} ms`}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-bold">Video FPS:</span>
@@ -382,10 +393,19 @@ export default function VideoPopup({
             // TRAKE nộp đúng khung đang dừng; KIS/Q&A nộp khung giữa hai đầu.
             // Hai đầu vẫn ghim được ở cả hai — với TRAKE chúng chảy vào ô
             // "từ/đến" của Điền tự động thay vì quyết định khung nộp.
-            submits={activeTask?.type === "trake" ? "playhead" : "midpoint"}
+            //
+            // Chung kết: "Nộp DRES" luôn lấy THỜI ĐIỂM ĐANG PHÁT, nên con số
+            // "Nộp" ở đây cũng phải là khung đang đứng — để midpoint thì màn
+            // hình nói một frame còn bài nộp đi mang frame khác.
+            submits={
+              DRES_ONLY || activeTask?.type === "trake" ? "playhead" : "midpoint"
+            }
           />
 
-          {duration > 0 && (
+          {/* Chung kết (DRES_ONLY): Add Answer ghi vào giỏ xếp hạng của sơ
+              tuyển nên ẩn đi. Riêng popup mở từ một mốc TRAKE vẫn giữ — nút
+              "Chốt cho E…" ở đó chỉ ghim khung vào ô của thẻ, không ghi giỏ. */}
+          {duration > 0 && (!DRES_ONLY || trakeSlot !== null) && (
             <div className="mt-[10px]">
               <SubmitForm
                 activeTask={activeTask}
@@ -411,19 +431,35 @@ export default function VideoPopup({
           )}
 
           {/* Vòng chung kết: đề xuất nộp DRES tại thời điểm đang phát. Tách
-              khỏi SubmitForm ở trên — đó là giỏ xếp hạng của sơ tuyển. */}
-          <DresPropose
-            videoId={videoId}
-            getPlayhead={livePosition}
-            defaultType={activeTask?.type}
-          />
+              khỏi SubmitForm ở trên — đó là giỏ xếp hạng của sơ tuyển.
+              Khi DRES_ONLY thì khối này lên cột phải, thế chỗ giỏ. */}
+          {!DRES_ONLY && (
+            <DresPropose
+              videoId={videoId}
+              getPlayhead={livePosition}
+              defaultType={activeTask?.type}
+            />
+          )}
         </div>
 
         <div className="w-[340px] shrink-0 border-l border-proto-line flex flex-col overflow-hidden">
           {/* Có task đang mở thì Add Answer ghi thẳng lên server, nên panel
               phải đọc từ đó. Giỏ Zustand bên dưới chỉ còn dùng khi chưa nhận
-              task nào. */}
-          {activeTask ? (
+              task nào.
+
+              Chung kết: cột này chỉ còn "Nộp DRES", mở sẵn — giỏ 100 dòng
+              (và Điền tự động) không còn việc gì khi mỗi câu nộp một đáp án. */}
+          {DRES_ONLY ? (
+            <div className="flex-1 overflow-y-auto p-3">
+              <DresPropose
+                videoId={videoId}
+                getPlayhead={livePosition}
+                defaultType={activeTask?.type}
+                defaultOpen
+                currentSeconds={playhead}
+              />
+            </div>
+          ) : activeTask ? (
             <AnswerPanel
               task={activeTask}
               rowsPerQuery={rowsPerQuery}

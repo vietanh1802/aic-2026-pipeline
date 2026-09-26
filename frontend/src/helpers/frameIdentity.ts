@@ -60,6 +60,27 @@ export function startMsAt(videoId: string, frameIdx: number): number {
 }
 
 /**
+ * Mili-giây của một frame, đúng phép quy đổi server DRES dùng khi nộp
+ * (`round(f / fps * 1000)` trong backend/app/routers/dres.py) — nên số ms hiện
+ * cạnh số frame chính là số sẽ gửi đi. Khác `frameClock` (floor, khớp
+ * `timestamp_ms` của index) ở đúng chỗ làm tròn.
+ *
+ * null khi không biết fps hoặc frame không dùng được, để chỗ gọi không in ra
+ * một con số 0 trông như thật.
+ */
+export function frameToMs(frameIdx: number | null, fps: number): number | null {
+  if (frameIdx === null || !fps || !Number.isFinite(frameIdx) || frameIdx < 0) {
+    return null;
+  }
+  return Math.round((frameIdx / fps) * 1000);
+}
+
+/** `frameToMs` với fps tra theo video. */
+export function frameMsOf(videoId: string, frameIdx: number | null): number | null {
+  return frameToMs(frameIdx, fpsOf(videoId));
+}
+
+/**
  * The frame number of a search result: the field the backend sends, else the
  * trailing number of the keyframe filename ("...-0116-36128.jpg" -> 36128).
  * Returns 0 when neither is usable, as it did when it lived in App.tsx.

@@ -52,7 +52,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render())).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -73,6 +74,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span>
       </span>
       </div>
       </div>"
@@ -83,7 +85,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ markIn: 60 }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -101,6 +104,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       </div>
       <div class="flex items-center gap-3 flex-wrap text-[12px]">
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-ink">1798</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 59993 ms</span>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-muted">3011</b>
       </span>
@@ -108,6 +112,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">2404</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 80214 ms</span>
       </span>
       </div>
       </div>"
@@ -118,7 +123,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ markOut: 150 }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -138,11 +144,13 @@ describe("FrameMarkStrip markup, no overlay", () => {
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-muted">3011</b>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-ink">4495</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 149983 ms</span>
       </span>
       <button type="button" class="text-[11.5px] font-semibold text-proto-primary-active underline decoration-dotted">xem 3 khung</button>
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3753</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 125225 ms</span>
       </span>
       </div>
       </div>"
@@ -153,7 +161,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ markIn: 50, markOut: 200 }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -171,13 +180,16 @@ describe("FrameMarkStrip markup, no overlay", () => {
       </div>
       <div class="flex items-center gap-3 flex-wrap text-[12px]">
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-ink">1498</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 49983 ms</span>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-ink">5994</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 200000 ms</span>
       </span>
       <button type="button" class="text-[11.5px] font-semibold text-proto-primary-active underline decoration-dotted">xem 3 khung</button>
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3746</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 124992 ms</span>
       </span>
       </div>
       </div>"
@@ -188,7 +200,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ markIn: 100, markOut: 100 }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -206,12 +219,15 @@ describe("FrameMarkStrip markup, no overlay", () => {
       </div>
       <div class="flex items-center gap-3 flex-wrap text-[12px]">
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-ink">2997</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100000 ms</span>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-ink">2997</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100000 ms</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">2997</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100000 ms</span>
       </span>
       </div>
       </div>"
@@ -224,7 +240,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     ).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3596</b> <span class="font-mono">02:00.000</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3596</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 119987 ms</span> <span class="font-mono">02:00.000</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -241,13 +258,16 @@ describe("FrameMarkStrip markup, no overlay", () => {
       </div>
       <div class="flex items-center gap-3 flex-wrap text-[12px]">
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-ink">1498</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 49983 ms</span>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-ink">5994</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 200000 ms</span>
       </span>
       <button type="button" class="text-[11.5px] font-semibold text-proto-primary-active underline decoration-dotted">xem 3 khung</button>
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3596</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 119987 ms</span>
       <span class="text-[10.5px] text-proto-muted" title="TRAKE chấm từng mốc trong một cửa sổ hẹp. Hai đầu ghim ở đây đi vào ô từ/đến của Điền tự động trong giỏ.">khung đang đứng</span>
       </span>
       </div>
@@ -259,7 +279,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ markIn: 60, submits: "playhead" }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -277,6 +298,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       </div>
       <div class="flex items-center gap-3 flex-wrap text-[12px]">
       <span class="text-proto-muted">đầu <b class="font-mono text-proto-ink">1798</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 59993 ms</span>
       </span>
       <span class="text-proto-muted">cuối <b class="font-mono text-proto-muted">3011</b>
       </span>
@@ -284,6 +306,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span>
       <span class="text-[10.5px] text-proto-muted" title="TRAKE chấm từng mốc trong một cửa sổ hẹp. Hai đầu ghim ở đây đi vào ô từ/đến của Điền tự động trong giỏ.">khung đang đứng</span>
       </span>
       </div>
@@ -326,7 +349,8 @@ describe("FrameMarkStrip markup, no overlay", () => {
     expect(pretty(render({ duration: 0 }))).toMatchInlineSnapshot(`
       "<div class="mt-2 px-3 py-2.5 rounded-[10px] bg-proto-soft border border-proto-line font-baloo">
       <div class="flex items-center gap-3 flex-wrap mb-2">
-      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b> <span class="font-mono">01:40.500</span>
+      <span class="text-[12px] text-proto-muted">Khung hiện tại <b class="font-mono text-proto-ink text-[15px]">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span> <span class="font-mono">01:40.500</span>
       </span>
       <span class="ml-auto flex items-center gap-2">
       <button type="button" class="px-2.5 py-1 rounded-[7px] border border-proto-line bg-white text-[12px] font-bold text-proto-ink hover:border-proto-primary">⇤ Đầu <span class="text-proto-muted font-normal">I</span>
@@ -347,6 +371,7 @@ describe("FrameMarkStrip markup, no overlay", () => {
       <span class="ml-auto flex items-center gap-2">
       <span class="text-[10px] font-bold uppercase tracking-wide text-proto-muted">Nộp</span>
       <b class="font-mono text-[18px] leading-none text-proto-primary-active">3011</b>
+      <span class="font-mono text-[11px] text-proto-muted"> · 100467 ms</span>
       </span>
       </div>
       </div>"

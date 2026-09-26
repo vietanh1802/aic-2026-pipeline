@@ -4,6 +4,7 @@ import { logout } from "../../api/auth";
 import ApiStatus from "../ApiStatus";
 import { useSearchStore } from "../../store/useSearchStore";
 import GotoFrame from "../GotoFrame";
+import { DRES_ONLY } from "../../helpers/finalRound";
 import type { BoardTask } from "../../api/board";
 import type { AuthUser } from "../../types/auth";
 
@@ -151,7 +152,10 @@ export default function AppNav({
           Trong khu vực đó thì luôn chiếm chỗ, kể cả khi chưa mở task nào: ẩn
           hẳn sẽ làm giỏ — và nút Điền tự động bên trong nó — không còn đường
           vào nếu không biết phải quay lại Board. */}
-      {(screen === "search" || screen === "history") &&
+      {/* Chung kết (DRES_ONLY): giỏ 100 dòng không còn dùng — ẩn cả nút lẫn
+          lời nhắc "vào Board để nhận". */}
+      {!DRES_ONLY &&
+        (screen === "search" || screen === "history") &&
         (task ? (
           <button
             type="button"

@@ -41,6 +41,9 @@ import { addAnswer } from "./api/answers";
 import type { BoardTask } from "./api/board";
 import { type SearchState } from "./api/searchState";
 import SearchHistory from "./components/SearchHistory";
+import DresQueryHistory from "./components/DresQueryHistory";
+import { DRES_ONLY } from "./helpers/finalRound";
+import { recordDresQuery } from "./api/dres";
 import { recordSearchState } from "./helpers/searchStateRecorder";
 import { usePickedFrameStore } from "./store/pickedFrameStore";
 import { useAutofillStore } from "./store/autofillStore";
@@ -417,6 +420,13 @@ function App({
       // liên quan hoặc trỏ vào chỗ trống.
       usePickedFrameStore.getState().set(null);
       recordState();
+      // Chung kết: lưu câu này vào câu DRES đang chạy, để gợi ý sau còn nạp
+      // lại được. Gửi rồi quên như recordState — server tự bỏ qua khi không có
+      // câu DRES nào, và lỗi ghi không được chặn việc tìm.
+      const { queryText: typed, searchType: typedType } = useQueryStore.getState();
+      if (typed.trim()) {
+        void recordDresQuery(typed, typedType).catch(() => undefined);
+      }
     }
     // Mọi nhánh bên dưới đọc từ store, không đọc const ở đầu component — xem
     // lý do ở currentStateInput.
@@ -979,8 +989,9 @@ function App({
             maxDistance={maxDistance}
             isLoading={isLoading}
             onUseAsAnchor={handleUseAsAnchor}
+            // Chung kết (DRES_ONLY): không còn giỏ xếp hạng để thêm vào.
             onAddToBasket={
-              activeTask && activeTask.type !== "trake"
+              !DRES_ONLY && activeTask && activeTask.type !== "trake"
                 ? handleAddToBasket
                 : undefined
             }
@@ -1084,14 +1095,16 @@ function App({
                 swaps={trakeSwaps}
                 onSwap={swapTrakeEvent}
                 onOpenEvent={openTrakeEvent}
+                // Chung kết (DRES_ONLY): "Chọn ▸" và "+ Chốt" đều ghi vào giỏ
+                // 100 dòng — ẩn cả hai; TRAKE nộp bằng các mốc trong "Nộp DRES".
                 onCommit={
-                  activeTask?.type === "trake" ? commitTrakeRow : undefined
+                  !DRES_ONLY && activeTask?.type === "trake" ? commitTrakeRow : undefined
                 }
                 // Chốt từng mốc chỉ có nghĩa khi dòng đáp án mang MỘT frame.
                 // Câu TRAKE thì một dòng thiếu mốc là một dòng sai, nên ở đó
                 // vẫn chỉ có nút nộp cả hàng phía trên.
                 onPickOne={
-                  activeTask && activeTask.type !== "trake"
+                  !DRES_ONLY && activeTask && activeTask.type !== "trake"
                     ? commitTrakeFrame
                     : undefined
                 }
@@ -1165,6 +1178,7 @@ function App({
           doSearch={doSearch}
           disabled={isSearchDisabled || isLoading}
         />
+        <DresQueryHistory />
       </div>
     </div>
   );

@@ -3,6 +3,15 @@ import { useState } from "react";
 import KeyframeImg from "../KeyframeImg";
 import { accuracyColor, accuracyPercent } from "../FrameDisplay/accuracy";
 import { frameGap } from "../../helpers/candidates";
+import { frameMsOf, videoIdFromFrame } from "../../helpers/frameIdentity";
+
+/** ms của một khung ứng viên, quy đổi như server DRES; null khi không tính được. */
+function candidateMs(item?: { name?: string; frame_idx?: number | null } | null): number | null {
+  if (!item || typeof item.frame_idx !== "number" || !item.name) {
+    return null;
+  }
+  return frameMsOf(videoIdFromFrame(item.name), item.frame_idx);
+}
 import type {
   TemporalCandidate,
   TemporalCandidateResult,
@@ -169,6 +178,7 @@ function Lightbox({
               <span className="truncate">{current.name}</span>
               <span className="shrink-0 ml-2">
                 frame {current.frame_idx ?? "—"}
+                {candidateMs(current) !== null && ` · ${candidateMs(current)} ms`}
                 {current.timestamp ? ` · ${current.timestamp}` : ""}
                 {typeof current.score === "number" &&
                   ` · điểm ${current.score}`}
@@ -727,6 +737,9 @@ function TrakeCard({
                       {pick?.frame_idx ?? "—"}
                     </b>
                   </span>
+                  {candidateMs(pick) !== null && (
+                    <span className="font-mono text-right">{candidateMs(pick)} ms</span>
+                  )}
                 </div>
               </div>
 

@@ -6,6 +6,7 @@ import Dropdown, { type DropdownOption } from "../DropDown";
 import { useSubmitStore } from "../../store/submitStore";
 import { videoUrl } from "../../helpers/videoSource";
 import { frameAt } from "../../helpers/frameRange";
+import { frameToMs } from "../../helpers/frameIdentity";
 import { needsSeek, type SeekRequest } from "../../helpers/seekRequest";
 
 interface DriveVideoProps {
@@ -196,7 +197,13 @@ const VideoDrive: React.FC<DriveVideoProps> = ({
             +
           </Button>
           <div>
-            <p>Frame_idx: {frameAt(position, frame_detect) ?? "—"}</p>
+            {/* ms cạnh frame: DRES chung kết nộp bằng ms (frameToMs = đúng
+                phép quy đổi của server). Was: chỉ có Frame_idx. */}
+            <p>
+              Frame_idx: {frameAt(position, frame_detect) ?? "—"}
+              {frameToMs(frameAt(position, frame_detect), frame_detect) !== null &&
+                ` · ${frameToMs(frameAt(position, frame_detect), frame_detect)} ms`}
+            </p>
           </div>
         </div>
       </div>

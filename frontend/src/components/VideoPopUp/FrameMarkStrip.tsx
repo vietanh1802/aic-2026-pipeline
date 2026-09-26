@@ -9,6 +9,15 @@ import {
   frameAt,
   frameRange,
 } from "../../helpers/frameRange";
+import { frameToMs } from "../../helpers/frameIdentity";
+
+/** " · 49360 ms" cạnh một số frame; rỗng khi không quy đổi được. */
+function MsTag({ frame, fps }: { frame: number | null; fps: number }) {
+  const ms = frameToMs(frame, fps);
+  return ms === null ? null : (
+    <span className="font-mono text-[11px] text-proto-muted"> · {ms} ms</span>
+  );
+}
 
 /**
  * Marking the moment, directly under the player it refers to.
@@ -158,7 +167,8 @@ export default function FrameMarkStrip({
           Khung hiện tại{" "}
           <b className="font-mono text-proto-ink text-[15px]">
             {currentFrame ?? "—"}
-          </b>{" "}
+          </b>
+          <MsTag frame={currentFrame} fps={fps} />{" "}
           <span className="font-mono">{clock(currentSeconds)}</span>
         </span>
 
@@ -250,6 +260,7 @@ export default function FrameMarkStrip({
           >
             {range ? range.start : "—"}
           </b>
+          {markIn !== null && range && <MsTag frame={range.start} fps={fps} />}
         </span>
         <span className="text-proto-muted">
           cuối{" "}
@@ -260,6 +271,7 @@ export default function FrameMarkStrip({
           >
             {range ? range.end : "—"}
           </b>
+          {markOut !== null && range && <MsTag frame={range.end} fps={fps} />}
         </span>
 
         {/* Chỉ hiện khi hai đầu KHÁC nhau. Ghim trùng một chỗ thì ba ô ra ba
@@ -283,6 +295,7 @@ export default function FrameMarkStrip({
             <b className="font-mono text-[18px] leading-none text-proto-primary-active">
               {submitFrame}
             </b>
+            <MsTag frame={submitFrame} fps={fps} />
             {/* Nói ra vì với TRAKE con số này KHÔNG đổi khi ghim hai đầu —
                 không có dòng này thì trông như dải ghim bị hỏng. */}
             {onPlayhead && (

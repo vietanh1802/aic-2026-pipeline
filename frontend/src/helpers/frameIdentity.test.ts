@@ -8,9 +8,44 @@ import {
   frameIdxFromFrameId,
   frameIndexFromResult,
   fpsOf,
+  frameMsOf,
+  frameToMs,
   startMsAt,
   videoIdFromFrame,
 } from "./frameIdentity";
+
+describe("frameToMs", () => {
+  it("rounds frame / fps * 1000 like the DRES router", () => {
+    expect(frameToMs(2837, 25)).toBe(113480);
+    // 1 / 29.97 * 1000 = 33.37 -> 33 (router: round(f / fps * 1000))
+    expect(frameToMs(1, 29.97)).toBe(33);
+    expect(frameToMs(0, 30)).toBe(0);
+  });
+
+  it("gives null instead of a fake 0 when it cannot convert", () => {
+    expect(frameToMs(null, 25)).toBeNull();
+    expect(frameToMs(100, 0)).toBeNull();
+    expect(frameToMs(Number.NaN, 25)).toBeNull();
+    expect(frameToMs(-1, 25)).toBeNull();
+  });
+
+  // Màn hình hiện ms, server quy ms về frame bằng round(t / 1000 * fps). Nếu
+  // vòng đi-về lệch thì số frame người dùng thấy khác số frame bị nộp.
+  it.each([25, 29.97, 30, 26.44, 59.94])("round-trips every frame at %s fps", (fps) => {
+    for (let frame = 0; frame <= 200_000; frame += 1) {
+      const ms = frameToMs(frame, fps) as number;
+      if (Math.round((ms / 1000) * fps) !== frame) {
+        throw new Error(`frame ${frame} -> ${ms} ms -> ${Math.round((ms / 1000) * fps)}`);
+      }
+    }
+  });
+
+  it("looks up the fps by video, batch 2 ids included", () => {
+    expect(frameMsOf("L21_V001", 30)).toBe(Math.round((30 / fpsOf("L21_V001")) * 1000));
+    expect(frameMsOf("N001-V001", 25)).toBe(Math.round((25 / fpsOf("N001-V001")) * 1000));
+    expect(frameMsOf("NOPE_V999", 25)).toBeNull();
+  });
+});
 
 describe("videoIdFromFrame", () => {
   it("reads the video out of a keyframe filename", () => {
@@ -84,10 +119,11 @@ describe("frameClock", () => {
   });
 
   it("rolls over at the hour boundary", () => {
-    // K01_V001 runs at 25 fps: 90000 frames is exactly one hour.
-    expect(fpsOf("K01_V001")).toBe(25);
-    expect(frameClock("K01_V001", 90000)).toBe("01:00:00.000");
-    expect(frameClock("K01_V001", 89999)).toBe("00:59:59.960");
+    // Trước dùng K01_V001, nhưng fps_map.json đã bỏ K01–K20 (index không có
+    // batch K). L21_V003 cũng 25 fps: 90000 frames is exactly one hour.
+    expect(fpsOf("L21_V003")).toBe(25);
+    expect(frameClock("L21_V003", 90000)).toBe("01:00:00.000");
+    expect(frameClock("L21_V003", 89999)).toBe("00:59:59.960");
   });
 
   it("returns an empty string for an unknown video, not a made-up clock", () => {

@@ -157,6 +157,42 @@ export function getDresCurrentTask(): Promise<DresCurrentTask> {
   return apiFetch<DresCurrentTask>("/api/dres/current-task");
 }
 
+/** Một lần Search của ai đó trong đội, cho câu DRES đang chạy. */
+export interface DresQuery {
+  id: number;
+  created_at: string;
+  display_name: string;
+  query_text: string;
+  search_type: string;
+}
+
+export interface DresQueryList {
+  /** null khi không có câu nào đang chạy — `reason` nói vì sao. */
+  task_name: string | null;
+  queries: DresQuery[];
+  reason: string | null;
+}
+
+export function listDresQueries(): Promise<DresQueryList> {
+  return apiFetch<DresQueryList>("/api/dres/queries");
+}
+
+/**
+ * Ghi một lần Search vào câu DRES đang chạy. Server tự hỏi DRES câu nào đang
+ * chạy; không có câu nào thì nó bỏ qua, không báo lỗi.
+ */
+export async function recordDresQuery(queryText: string, searchType: string): Promise<void> {
+  await apiFetch("/api/dres/queries", {
+    method: "POST",
+    body: JSON.stringify({ query_text: queryText, search_type: searchType }),
+  });
+  // Danh sách bên dưới ô tìm kiếm tải lại ngay thay vì chờ nhịp poll 5 giây:
+  // người vừa gõ phải thấy câu của mình nằm trong đó.
+  window.dispatchEvent(new Event(DRES_QUERIES_CHANGED));
+}
+
+export const DRES_QUERIES_CHANGED = "dres-queries-changed";
+
 export function listDresSubmissions(
   limit = 50
 ): Promise<{ submissions: DresSubmission[] }> {

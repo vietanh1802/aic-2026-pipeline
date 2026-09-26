@@ -6,7 +6,7 @@ import Skeleton from "react-loading-skeleton"; // nếu bạn dùng react-loadin
 import "react-loading-skeleton/dist/skeleton.css";
 import { accuracyColor, accuracyPercent } from "./accuracy";
 import { videoOf } from "../../helpers/focusFilter";
-import { frameClock, frameIndexFromResult } from "../../helpers/frameIdentity";
+import { frameClock, frameIndexFromResult, frameMsOf } from "../../helpers/frameIdentity";
 import { pickedKind, type GroupInfoByFrame } from "../../helpers/groupResults";
 import { describeTextFilter } from "../../helpers/textFilter";
 import TextSignalBadge from "../TextSignalBadge";
@@ -408,7 +408,17 @@ export default function FrameDisplay({
                     {group && <GroupBadge count={group.count} />}
                   </span>
                   <span className="flex items-center justify-between">
-                    <span>{timestamp[index]}</span>
+                    {/* frame · ms cạnh đồng hồ: DRES chung kết nộp bằng ms.
+                        Was: <span>{timestamp[index]}</span> */}
+                    <span className="truncate">
+                      {timestamp[index]}
+                      <span className="font-mono">
+                        {" · "}
+                        {frameIndexFromResult(result)}
+                        {frameMsOf(videoOf(result), frameIndexFromResult(result)) !== null &&
+                          ` · ${frameMsOf(videoOf(result), frameIndexFromResult(result))} ms`}
+                      </span>
+                    </span>
                     <MatchLabel
                       result={result}
                       minScore={minScore}
