@@ -14,6 +14,8 @@ import {
 import { approveWithConfirm } from "../../helpers/dresApprove";
 import { fpsOf, frameToMs } from "../../helpers/frameIdentity";
 import { frameAt } from "../../helpers/frameRange";
+import { parseFrameList, parseManualPoint, type PointUnit } from "../../helpers/frameList";
+import { formatClock } from "../../helpers/youtube";
 import { useAuthStore } from "../../store/authStore";
 import Button from "../Button";
 import DresTaskClock from "../DresTaskClock";
@@ -46,6 +48,8 @@ export default function DresPropose({
   defaultType,
   defaultOpen = false,
   currentSeconds,
+  pickedSeconds = null,
+  onClearPicked,
 }: {
   videoId: string;
   /** Giây, đọc thẳng currentTime của <video> tại lúc bấm. */
@@ -58,6 +62,13 @@ export default function DresPropose({
    * nộp. Lúc bấm nút vẫn đọc `getPlayhead()` cho đúng khung.
    */
   currentSeconds?: number;
+  /**
+   * Thời điểm chọn trên "Khung thời gian YouTube" (giây). Khác null thì bài
+   * nộp dùng thời điểm này thay cho vị trí trình phát — video trong popup có
+   * thể chưa tải xong trên mạng chậm.
+   */
+  pickedSeconds?: number | null;
+  onClearPicked?: () => void;
 }) {
   const role = useAuthStore((state) => state.user?.role);
   const [open, setOpen] = useState(defaultOpen);
@@ -65,6 +76,16 @@ export default function DresPropose({
   const [type, setType] = useState<DresTaskType>(defaultType ?? "kis");
   const [answer, setAnswer] = useState("");
   const [marks, setMarks] = useState<number[]>([]);
+  // TRAKE điền tay: gõ/dán thẳng số frame. Gửi `frames` thay cho `times_ms`,
+  // nên số trong ô chính là số nằm trong chuỗi TR- — không qua quy đổi ms.
+  const [trakeManual, setTrakeManual] = useState(false);
+  const [manualText, setManualText] = useState("");
+  // KIS / Q&A điền tay một thời điểm: số frame hoặc thời gian trong video, có
+  // bộ chuyển đổi ra ms ngay dưới ô. Điền tay thì thắng cả trình phát lẫn khung
+  // YouTube — người ta gõ vì đã biết chính xác mình muốn nộp gì.
+  const [pointManual, setPointManual] = useState(false);
+  const [pointUnit, setPointUnit] = useState<PointUnit>("frame");
+  const [pointText, setPointText] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DresSubmission | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +93,8 @@ export default function DresPropose({
   // Mốc TRAKE thuộc về một video; trỏ popup sang video khác thì bỏ.
   useEffect(() => {
     setMarks([]);
+    setManualText("");
+    setPointText("");
     setResult(null);
     setError(null);
   }, [videoId]);
@@ -100,7 +123,11 @@ export default function DresPropose({
   // với playhead thô luôn dưới một khung.
   const msAt = (seconds: number): number =>
     frameToMs(frameAt(seconds, fps), fps) ?? Math.round(seconds * 1000);
-  const nowMs = () => msAt(getPlayhead());
+  // Old: const nowMs = () => msAt(getPlayhead());
+  // Khung YouTube đã chọn thì thắng trình phát: người ta chọn ở đó chính vì
+  // trình phát chưa tải được tới cảnh cần nộp.
+  const fromPicked = pickedSeconds !== null;
+  const nowMs = () => msAt(fromPicked ? pickedSeconds : getPlayhead());
   // Frame mà server sẽ quy ra từ ms: cùng `round(t / 1000 * fps)` như
   // routers/dres.py, để số hiện ở đây trùng số nằm trong bài nộp.
   const frameOfMs = (ms: number): number | null => (fps ? Math.round((ms / 1000) * fps) : null);
@@ -109,16 +136,31 @@ export default function DresPropose({
     return frame === null ? `${ms} ms` : `frame ${frame} · ${ms} ms`;
   };
 
+  const manual = parseFrameList(manualText, videoId);
+  const useManual = type === "trake" && trakeManual;
+  const point = parseManualPoint(pointText, pointUnit, videoId, fps);
+  const useManualPoint = type !== "trake" && pointManual;
+
   const propose = async (): Promise<DresSubmission | null> => {
-    const times = type === "trake" ? marks : [nowMs()];
+    // TRAKE điền tay: gửi frames nguyên văn. KIS/Q&A điền tay: gửi đúng số ms
+    // bộ chuyển đổi đang hiện — KIS/Q&A chấm theo ms nên số nhìn thấy phải là
+    // số được gửi. Còn lại: ms như trước.
+    const points = useManual
+      ? { frames: manual.frames }
+      : {
+          times_ms:
+            type === "trake" ? marks : [useManualPoint ? (point.ms as number) : nowMs()],
+        };
     const created = await proposeDresSubmission({
       task_type: type,
       video_id: videoId,
-      times_ms: times,
+      ...points,
       answer: type === "qa" ? answer : undefined,
     });
     setResult(created);
-    if (type === "trake") {
+    // Ô điền tay giữ nguyên: nộp sai một mốc thì sửa đúng mốc đó rồi nộp lại,
+    // khỏi gõ lại cả dãy. Mốc bấm "tại đây" thì vẫn xoá như cũ.
+    if (type === "trake" && !useManual) {
       setMarks([]);
     }
     return created;
@@ -169,13 +211,26 @@ export default function DresPropose({
     }
   };
 
+  const pointReady = !useManualPoint || (point.error === null && point.ms !== null);
   const ready =
     !busy &&
-    (type === "kis" ||
-      (type === "qa" && answer.trim().length > 0) ||
-      (type === "trake" && marks.length > 0));
+    ((type === "kis" && pointReady) ||
+      (type === "qa" && answer.trim().length > 0 && pointReady) ||
+      (type === "trake" &&
+        (useManual ? manual.error === null && manual.frames.length > 0 : marks.length > 0)));
+  // Nhãn nút nói rõ nộp theo nguồn nào — hai nguồn cho hai con số khác nhau.
   const what =
-    type === "trake" ? `TRAKE (${marks.length} mốc)` : `${type === "qa" ? "Q&A" : "KIS"} tại thời điểm đang phát`;
+    type === "trake"
+      ? useManual
+        ? `TRAKE (${manual.frames.length} frame điền tay)`
+        : `TRAKE (${marks.length} mốc)`
+      : `${type === "qa" ? "Q&A" : "KIS"} ${
+          useManualPoint
+            ? `tại frame ${point.frame ?? "?"} (điền tay)`
+            : fromPicked
+              ? "tại thời điểm đã chọn (YouTube)"
+              : "tại thời điểm đang phát"
+        }`;
 
   return (
     <div className="mt-3 rounded-[10px] border-2 border-[#7b1fa2]/40 bg-[#7b1fa2]/5 p-3 font-baloo">
@@ -192,13 +247,31 @@ export default function DresPropose({
           <div className="p-2 rounded-[8px] bg-white border border-proto-line">
             <DresTaskClock {...currentTask} />
           </div>
-          {currentSeconds !== undefined && (
-            <div className="text-[12px] text-proto-muted">
-              Đang đứng:{" "}
-              <b className="font-mono text-proto-ink">
-                {withFrame(msAt(currentSeconds))}
-              </b>
+          {/* Điền tay thì hai dòng này không còn là thứ được nộp — ẩn đi cho
+              khỏi đọc nhầm con số. */}
+          {useManualPoint ? null : fromPicked ? (
+            <div className="text-[12px] text-[#c4302b]">
+              Nộp theo khung YouTube:{" "}
+              <b className="font-mono">{withFrame(msAt(pickedSeconds))}</b>
+              {onClearPicked && (
+                <button
+                  type="button"
+                  className="ml-2 text-[11px] text-proto-muted underline"
+                  onClick={onClearPicked}
+                >
+                  dùng trình phát
+                </button>
+              )}
             </div>
+          ) : (
+            currentSeconds !== undefined && (
+              <div className="text-[12px] text-proto-muted">
+                Đang đứng:{" "}
+                <b className="font-mono text-proto-ink">
+                  {withFrame(msAt(currentSeconds))}
+                </b>
+              </div>
+            )
           )}
           <div className="flex flex-wrap items-center gap-1">
             {TYPES.map((t) => (
@@ -222,6 +295,79 @@ export default function DresPropose({
             </span>
           </div>
 
+          {type !== "trake" && (
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  [false, fromPicked ? "Theo khung YouTube" : "Theo trình phát"],
+                  [true, "Điền tay frame / thời gian"],
+                ] as const
+              ).map(([manualMode, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setPointManual(manualMode)}
+                  className={`text-[11.5px] px-2.5 py-0.5 rounded-[6px] border ${
+                    pointManual === manualMode
+                      ? "bg-white border-[#7b1fa2] font-bold text-[#7b1fa2]"
+                      : "border-transparent text-proto-muted"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {useManualPoint && (
+            <div className="flex flex-col gap-1.5 p-2 rounded-[8px] bg-white border border-proto-line">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(
+                  [
+                    ["frame", "Số frame"],
+                    ["time", "Thời gian"],
+                  ] as const
+                ).map(([unit, label]) => (
+                  <button
+                    key={unit}
+                    type="button"
+                    onClick={() => setPointUnit(unit)}
+                    className={`text-[11.5px] px-2 py-0.5 rounded-[6px] border ${
+                      pointUnit === unit
+                        ? "border-[#7b1fa2] font-bold text-[#7b1fa2]"
+                        : "border-proto-line text-proto-muted"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <input
+                  className="flex-1 min-w-[140px] px-2 py-1 rounded-[6px] border border-proto-line text-[13px] font-mono"
+                  value={pointText}
+                  onChange={(e) => setPointText(e.target.value)}
+                  placeholder={
+                    pointUnit === "frame" ? "15697 hoặc tên keyframe" : "10:27 · 1:02:03.5 · số giây"
+                  }
+                />
+              </div>
+              {/* Bộ chuyển đổi: cùng một khoảnh khắc ở cả ba đơn vị. ms là số
+                  được gửi lên DRES cho KIS / Q&A. */}
+              {point.error ? (
+                <span className="text-[12px] text-[#c64545]">{point.error}</span>
+              ) : point.frame !== null ? (
+                <span className="text-[12.5px] font-mono text-proto-ink">
+                  = frame <b>{point.frame}</b> · <b>{point.ms}</b> ms ·{" "}
+                  {formatClock(point.seconds as number)}
+                  <span className="text-proto-muted"> ({fps} fps)</span>
+                </span>
+              ) : (
+                <span className="text-[11.5px] text-proto-muted">
+                  Gõ một số frame hoặc thời gian để xem quy đổi ra ms.
+                </span>
+              )}
+            </div>
+          )}
+
           {type === "qa" && (
             <input
               className="p-2 rounded-[8px] bg-white border border-proto-line text-sm"
@@ -232,6 +378,61 @@ export default function DresPropose({
           )}
 
           {type === "trake" && (
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  [false, "Mốc tại đây"],
+                  [true, "Điền tay số frame"],
+                ] as const
+              ).map(([manual, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setTrakeManual(manual)}
+                  className={`text-[11.5px] px-2.5 py-0.5 rounded-[6px] border ${
+                    trakeManual === manual
+                      ? "bg-white border-[#7b1fa2] font-bold text-[#7b1fa2]"
+                      : "border-transparent text-proto-muted"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {type === "trake" && trakeManual && (
+            <div className="flex flex-col gap-1.5">
+              <textarea
+                className="p-2 rounded-[8px] bg-white border border-proto-line text-[12.5px] font-mono min-h-[56px]"
+                value={manualText}
+                onChange={(e) => setManualText(e.target.value)}
+                placeholder={"15697, 15820, 16002\nhoặc dán tên keyframe: M05_V019-0193-15697.jpg"}
+              />
+              {manual.error ? (
+                <span className="text-[12px] text-[#c64545]">{manual.error}</span>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {manual.frames.map((frame, i) => (
+                    <span
+                      key={`${i}-${frame}`}
+                      className="text-[12px] px-2 py-0.5 rounded-full bg-white border border-proto-line font-mono"
+                    >
+                      E{i + 1} frame {frame}
+                      {frameToMs(frame, fps) !== null && (
+                        <span className="text-proto-muted"> · {frameToMs(frame, fps)} ms</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {manual.warnings.map((w) => (
+                <span key={w} className="text-[11.5px] text-[#8a6a0f]">⚠ {w}</span>
+              ))}
+            </div>
+          )}
+
+          {type === "trake" && !trakeManual && (
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"

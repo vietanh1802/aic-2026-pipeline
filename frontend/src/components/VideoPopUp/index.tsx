@@ -26,6 +26,8 @@ import {
   startMsAt,
 } from "../../helpers/frameIdentity";
 import { DRES_ONLY } from "../../helpers/finalRound";
+import { youtubeOf } from "../../helpers/youtube";
+import YoutubeTimeline from "./YoutubeTimeline";
 import { frameRange } from "../../helpers/frameRange";
 import { durationForVideo, type DurationTag } from "../../helpers/candidateStripView";
 import { nextSeekRequest, type SeekRequest } from "../../helpers/seekRequest";
@@ -149,6 +151,15 @@ export default function VideoPopup({
     setMarkIn(null);
     setMarkOut(null);
   }, [videoId, frameId]);
+
+  // Thời điểm chọn trên "Khung thời gian YouTube" (giây). Thuộc về một video:
+  // trỏ popup sang video khác thì bỏ, không thì DRES nộp giây của video cũ lên
+  // video mới.
+  const youtube = youtubeOf(videoId);
+  const [ytPick, setYtPick] = useState<number | null>(null);
+  useEffect(() => {
+    setYtPick(null);
+  }, [videoId]);
 
   // Và đổi mốc cũng là đổi khoảnh khắc — kể cả khi hai mốc tình cờ trỏ vào
   // cùng một khung, lúc đó `frameId` ở trên không đổi.
@@ -326,6 +337,22 @@ export default function VideoPopup({
             />
           </div>
 
+          {/* Mạng chậm: xem ở tab YouTube, chọn cùng giây ở đây để nộp. Chỉ
+              hiện cho video có bản YouTube (L, M, S — không có N). */}
+          {youtube && (
+            <YoutubeTimeline
+              info={youtube}
+              fps={frame_detect}
+              picked={ytPick}
+              onPick={setYtPick}
+              playerSeconds={playhead}
+              onSeekPlayer={(seconds) => {
+                setStartAt(seconds * 1000);
+                setSeekRequest((previous) => nextSeekRequest(previous, seconds));
+              }}
+            />
+          )}
+
           {/* Other candidate moments of this video from the current results.
               Mounted here rather than inside VideoDrive: that component owns
               the <video> and the seek effect, and a slot in it would mean
@@ -438,6 +465,8 @@ export default function VideoPopup({
               videoId={videoId}
               getPlayhead={livePosition}
               defaultType={activeTask?.type}
+              pickedSeconds={ytPick}
+              onClearPicked={() => setYtPick(null)}
             />
           )}
         </div>
@@ -457,6 +486,8 @@ export default function VideoPopup({
                 defaultType={activeTask?.type}
                 defaultOpen
                 currentSeconds={playhead}
+                pickedSeconds={ytPick}
+                onClearPicked={() => setYtPick(null)}
               />
             </div>
           ) : activeTask ? (
