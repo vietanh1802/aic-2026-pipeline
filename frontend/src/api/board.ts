@@ -16,7 +16,17 @@ export interface BoardTask {
   question_text: string | null;
   n_events: number | null;
   event_labels: string[];
+  /**
+   * Ai TỪNG giành câu này thời còn Nhận/Nhả. Backend vẫn trả về vì cột trong
+   * CSDL còn, nhưng không ai ghi vào nữa. Đừng dùng để quyết định quyền sửa —
+   * giờ ai cũng sửa được, mỗi người một danh sách riêng.
+   */
   owner: Person | null;
+  /** Ai đã có đáp án cho câu này, kèm số dòng. Nhiều dòng nhất đứng trước. */
+  contributors: Contributor[];
+  /** Bài của ai được chọn để nộp. null = chưa chọn. */
+  chosen_author_id: number | null;
+  /** Tổng số dòng của MỌI người, không phải của riêng ai. */
   answer_count: number;
   verified_count: number;
   updated_at: string | null;
@@ -40,6 +50,13 @@ export interface BoardResponse {
   round: BoardRound | null;
   tasks: BoardTask[];
   me: Person | null;
+  /**
+   * Số người đi thi, KHÔNG tính admin — mẫu số của cột "số người đã làm".
+   *
+   * Đếm ở backend chứ không viết cứng 5: thêm hay khoá một tài khoản là con số
+   * phải đổi theo, mà mẫu số sai thì cả cột trở thành vô nghĩa.
+   */
+  team_size: number;
 }
 
 export function getBoard(packId?: number): Promise<BoardResponse> {
@@ -47,17 +64,50 @@ export function getBoard(packId?: number): Promise<BoardResponse> {
   return apiFetch<BoardResponse>(`/api/board${query}`);
 }
 
-export function claimTask(taskId: number): Promise<{ task: BoardTask }> {
-  return apiFetch<{ task: BoardTask }>(`/api/tasks/${taskId}/claim`, {
+export interface Contributor {
+  id: number;
+  username: string;
+  display_name: string;
+  count: number;
+}
+
+/**
+ * Chọn bài của ai làm bài nộp cho câu này. null = bỏ chọn.
+ *
+ * Ai cũng gọi được, không riêng admin: cả nhóm ngồi cùng lúc, bắt chờ một
+ * người bấm là dựng lại đúng nút cổ chai mà việc bỏ Nhận/Nhả vừa gỡ.
+ */
+export function setChosenAuthor(
+  taskId: number,
+  authorId: number | null
+): Promise<{ chosen_author_id: number | null }> {
+  return apiFetch(`/api/tasks/${taskId}/chosen-author`, {
     method: "POST",
+    body: JSON.stringify({ author_id: authorId }),
   });
 }
 
-export function releaseTask(taskId: number): Promise<{ task: BoardTask }> {
-  return apiFetch<{ task: BoardTask }>(`/api/tasks/${taskId}/release`, {
-    method: "POST",
-  });
+/** Mọi danh sách của mọi người cho một câu — màn Export bày ra để chọn. */
+export function answersByAuthor(taskId: number): Promise<{
+  groups: { author: Person; count: number; answers: AnswerRowLite[] }[];
+  chosen_author_id: number | null;
+}> {
+  return apiFetch(`/api/tasks/${taskId}/answers/by-author`);
 }
+
+export interface AnswerRowLite {
+  id: number;
+  rank: number;
+  video_id: string;
+  frames: number[];
+  /** Đáp án chữ. Chỉ câu Q&A mới có, và đó chính là thứ được chấm. */
+  answer_text: string | null;
+  /** Cần cho patchAnswer: sửa mà gửi sai version thì backend trả 409. */
+  version: number;
+}
+
+// claimTask/releaseTask đã bỏ cùng endpoint /claim và /release ở backend.
+// Không để lại hàm bọc: giữ chúng chỉ khiến người sau gọi vào một URL đã 404.
 
 export function heartbeat(taskId: number | null): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>("/api/presence", {
@@ -112,7 +162,10 @@ export function commitPack(payload: {
   round_label: string;
   filename_pattern: string;
   source_filename: string;
-  edits: { filename: string; question_text: string | null }[];
+  // Số mốc của câu TRAKE, do người nhập gõ. Trước đây trường này là
+  // `question_text` — câu hỏi Q&A mà trình đọc đoán ra rồi cho sửa lại; cả
+  // việc đoán lẫn việc sửa đều đã bỏ, đề bài giờ vào nguyên văn.
+  edits: { filename: string; n_events: number | null }[];
 }): Promise<{
   pack_id: number;
   round_label: string;
@@ -167,16 +220,18 @@ export function patchPack(
   });
 }
 
-export function deletePack(packId: number): Promise<{ pack: RoundPack }> {
-  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}`, {
-    method: "DELETE",
-  });
-}
-
-export function restorePack(packId: number): Promise<{ pack: RoundPack }> {
-  return apiFetch<{ pack: RoundPack }>(`/api/admin/packs/${packId}/restore`, {
-    method: "POST",
-  });
+/**
+ * Xoá một vòng và mọi thứ dưới nó. KHÔNG khôi phục được.
+ *
+ * Trả về số lượng đã xoá chứ không trả về pack: hàng đó không còn tồn tại.
+ * Backend từ chối nếu đó là vòng đang thi.
+ *
+ * restorePack() đã bỏ cùng endpoint /restore — xoá mềm không còn nữa.
+ */
+export function deletePack(
+  packId: number
+): Promise<{ deleted: boolean; tasks: number; answers: number }> {
+  return apiFetch(`/api/admin/packs/${packId}`, { method: "DELETE" });
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────
@@ -193,6 +248,17 @@ export interface AuditEntry {
   restored_at: string | null;
 }
 
+/**
+ * KHÔNG màn nào gọi hai hàm dưới nữa.
+ *
+ * Bảng nhật ký từng nằm cuối màn Evaluation, đã bỏ: nó liệt kê thao tác quản
+ * trị — nhập gói, kích hoạt, xoá — trong khi màn đó là chỗ đọ bài. Thứ người
+ * ta thật sự cần lần lại ở đây là lịch sử TÌM KIẾM, và cái đó giờ nằm trong
+ * bảng "Cả nhóm đang tìm câu này" ở màn Search.
+ *
+ * Hai endpoint /api/admin/audit vẫn còn ở backend và vẫn ghi đủ; giữ hai hàm
+ * bọc này vì đó vẫn là cách đúng để gọi chúng nếu cần dựng lại màn nhật ký.
+ */
 export function getAudit(limit = 100): Promise<{ entries: AuditEntry[] }> {
   return apiFetch<{ entries: AuditEntry[] }>(`/api/admin/audit?limit=${limit}`);
 }

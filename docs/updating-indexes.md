@@ -2,12 +2,24 @@
 
 Step-by-step runbook for the team, in Vietnamese: [`huong-dan-cap-nhat-index.md`](huong-dan-cap-nhat-index.md). This file is the reference behind it — what the pieces are and what goes wrong.
 
-`/opt/aic/indexes` holds two different kinds of file:
+`/opt/aic/indexes` holds three different kinds of file:
 
 - **Index data**, produced by the offline notebooks — `beit3.index`, `clip.index`,
   `beit3_mapping.json`, `clip_mapping.json`, `keyframe_metadata.json`, `keyframes_list.json`.
 - **Model weights**, downloaded once and then kept — `beit3_large_patch16_384_coco_retrieval.pth`,
   `beit3.spm`, `open_clip_model.safetensors`.
+- **ASR/BM25 release**, under an `asr/` subdirectory — `asr/windows.jsonl` and
+  `asr/bm25/{vocabulary.json, posting_offsets.npy, posting_doc_ids.npy,
+  posting_term_frequencies.npy, document_lengths.npy}`. Read by
+  `text_signal.py`'s BM25 filter mode (`AIC_INDEX_DIR`-relative, same as the
+  ASR/OCR text files below — see that module's `_resolve_asr_release_dir()`).
+  This used to be published nowhere in the deploy story: `text_signal.py`
+  looked for it at a path computed from its own file location inside the
+  container, which nothing here ever populated, so BM25 mode silently fell
+  back to substring on every deployed box regardless of what the S3 bucket
+  held. Fixed by pointing it at `AIC_INDEX_DIR` like everything else — so it
+  now needs no separate publish step, just `asr/` present under whatever you
+  sync in step 2 below, same as the two bullets above it.
 
 `s3://aic2026-artifacts/indexes/` is the canonical copy. The API host syncs from it, and
 docker-compose mounts the directory into the container **read-only**.
@@ -98,6 +110,9 @@ Pass the policy as `file://`. Inlining JSON on the command line fails on Windows
 `MalformedPolicyDocument`, because the quotes are stripped before the CLI sees them. Allow a few
 seconds for the grant to propagate before the first upload attempt.
 
-The index set in S3 is now self-contained: 9 objects, 15.0 GiB, including
-`open_clip_model.safetensors`. A rebuilt instance that syncs from S3 gets everything the API
+The index set in S3 was self-contained at 9 objects, 15.0 GiB, including
+`open_clip_model.safetensors`, before the `asr/` subdirectory above existed — that count grows
+once the ASR/BM25 release files are published under `s3://aic2026-artifacts/indexes/asr/` too,
+by the same manual `aws s3 sync` as step 2, nothing here automates that upload for any of these
+files. A rebuilt instance that syncs from S3 gets everything the API
 needs and never downloads at run time.

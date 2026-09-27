@@ -28,7 +28,19 @@ def get_conn() -> sqlite3.Connection:
     # isolation_level=None means autocommit; statements that need a transaction
     # open one explicitly with BEGIN IMMEDIATE. The alternative is a driver that
     # silently holds a transaction open until someone remembers to commit.
-    conn = sqlite3.connect(path, isolation_level=None)
+    # check_same_thread=False: get_db() mở một kết nối RIÊNG cho mỗi request rồi
+    # đóng ngay, nên không có chuyện hai request dùng chung một kết nối. Nhưng
+    # FastAPI chạy dependency đồng bộ ở một luồng threadpool rồi chạy endpoint ở
+    # luồng KHÁC, nên kết nối bị tạo ở luồng này mà dùng ở luồng kia — và sqlite3
+    # cấm điều đó theo mặc định:
+    #
+    #   sqlite3.ProgrammingError: SQLite objects created in a thread can only be
+    #   used in that same thread.
+    #
+    # Lỗi chỉ hiện ra khi có nhiều request liên tiếp, vì lúc đó threadpool mới
+    # phân ra nhiều luồng — chạy một mình thì thường trúng cùng một luồng và
+    # không bao giờ thấy.
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")

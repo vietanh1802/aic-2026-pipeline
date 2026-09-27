@@ -29,3 +29,36 @@ export function videoUrlAt(videoId: string, seconds: number): string {
   }
   return `${url}#t=${seconds.toFixed(2)}`;
 }
+
+/**
+ * Where keyframe stills come from.
+ *
+ * Not the API base. In the deployed setup the API answers on
+ * https://aic-api.umaga.fun while the images live on
+ * https://aic-frames.umaga.fun — `AIC_IMAGE_BASE_URL` in docker-compose.yml,
+ * mirrored here so the client composes the same URL the backend does. The
+ * default matches preprocess.py's: the API's own /static mount, which is what
+ * `npm run dev` proxies.
+ */
+const IMAGE_BASE_URL =
+  env?.VITE_IMAGE_BASE_URL ??
+  `${env?.VITE_API_BASE_URL ?? "http://localhost:8000"}/static`;
+
+/**
+ * The composition rule, separated from the configuration so it can be tested.
+ *
+ * Both mappings were checked when the images were seeded: a single flat
+ * `images/` prefix, no subdirectories, so name → path needs no lookup table.
+ */
+export function buildKeyframeUrl(base: string, name: string): string {
+  if (!name) {
+    return "";
+  }
+  const file = name.endsWith(".jpg") ? name : `${name}.jpg`;
+  return `${base.replace(/\/+$/, "")}/images/${file}`;
+}
+
+/** The image for a keyframe basename, e.g. "L25_V085-0086-30870". */
+export function keyframeUrl(name: string): string {
+  return buildKeyframeUrl(IMAGE_BASE_URL, name);
+}

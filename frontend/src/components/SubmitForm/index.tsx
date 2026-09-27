@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import Button from "../Button";
 import { SuperSimple } from "./RangeForm";
 import {
@@ -11,50 +11,10 @@ import Dropdown from "../DropDown";
 import { getValues } from "../../helpers/getValues.helper";
 import { frameAt, frameRange } from "../../helpers/frameRange";
 import { addAnswer } from "../../api/answers";
+import { recordSearchState } from "../../helpers/searchStateRecorder";
 import type { BoardTask } from "../../api/board";
+import type { MarkedRange } from "../../helpers/basketMath";
 import type { TrakeSlot } from "../VideoPopUp";
-import { gapi } from "gapi-script";
-// ====== GOOGLE API CONFIG ======
-const CLIENT_ID =
-  "530488029353-4bib5u218f93bm22mrtkgeajge477gra.apps.googleusercontent.com";
-const API_KEY = "AIzaSyDfWgoJNwd92S8YfviSokzKuW3FCCckbZc";
-const SCOPES =
-  "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive";
-const DISCOVERY_DOCS = [
-  "https://sheets.googleapis.com/$discovery/rest?version=v4",
-  "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
-];
-const FOLDER_ID = "1iBejYQg8sWKeFmu5gCuUIUIjus2aTUE9";
-// =================================
-
-type GoogleTokenResponse = {
-  access_token?: string;
-  error?: string;
-};
-
-type GoogleTokenClient = {
-  requestAccessToken: () => void;
-};
-
-type GoogleIdentity = {
-  accounts: {
-    oauth2: {
-      initTokenClient: (config: {
-        client_id: string;
-        scope: string;
-        callback: (response: GoogleTokenResponse) => void;
-      }) => GoogleTokenClient;
-    };
-  };
-};
-
-type WindowWithGoogleIdentity = Window & {
-  google?: GoogleIdentity;
-};
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : JSON.stringify(err);
-}
 
 interface SubmitFormData {
   videoId: string;
@@ -69,6 +29,12 @@ interface SubmitFormData {
    *  ghim, và chưa ghim cả hai thì nộp đúng frame như trước. */
   markIn?: number | null;
   markOut?: number | null;
+  /**
+   * Hai đầu đó đã quy ra số frame, null khi chưa ghim đủ cả hai. Chỉ để chuyển
+   * tiếp cho `trakeSlot.onCommit` — khung được nộp vẫn do `frameToSubmit()`
+   * quyết định.
+   */
+  markedRange?: MarkedRange | null;
   /** The player's exact position, read at the moment of submitting. */
   getPlayhead?: () => number;
   /** Set when the popup was opened on one event of a TRAKE line. */
@@ -85,14 +51,12 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
   onBasketChanged,
   markIn = null,
   markOut = null,
+  markedRange = null,
   getPlayhead,
   trakeSlot = null,
 }) => {
   const [answer, setAnswer] = useState<string>("");
   const [values, setValues] = useState(getValues(startAt, duration));
-  const [, setSpreadsheetId] = useState<string | null>(null);
-
-  const submissionFileName = useSubmitStore((state) => state.submissonFileName);
 
   const submitType = useSubmitStore((state) => state.submitType);
   const setSubmitType = useSubmitStore((state) => state.setSubmitType);
@@ -103,6 +67,13 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     activeTask !== null
       ? activeTask.type === "trake"
       : submitType === "Task 3 - trake";
+
+  // Once a Board task is open there is exactly one task type and it is fixed
+  // by the task itself, not by a dropdown — a KIS task pins a single frame and
+  // a TRAKE row is assembled on the search line, so only Q&A still needs
+  // typed text here.
+  const isQaAnswer =
+    activeTask !== null ? activeTask.type === "qa" : submitType === "Task 2 - qna";
 
   // Read at submit time, not at render time: the player moves without React
   // hearing about it between renders.
@@ -116,143 +87,13 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
       ?? here ?? Number.NaN;
   };
 
-  const { task1, task2, task3, addTask1, addTask2, addTask3 } =
-    useSubmitTasks();
+  const { addTask1, addTask2, addTask3 } = useSubmitTasks();
 
   const submitTypeOptions: DropdownOption[] = [
     { id: 0, label: "Task 1 - KIS", value: "Task 1 - kis" as SubmitType },
     { id: 1, label: "Task 2 - Q&A", value: "Task 2 - qna" as SubmitType },
     { id: 2, label: "Task 3 - TRAKE", value: "Task 3 - trake" as SubmitType },
   ];
-
-  // Google is loaded on demand, not on mount.
-  //
-  // Both of these used to run in a useEffect the moment the video popup opened,
-  // so every single frame anyone inspected fetched accounts.google.com and
-  // initialised the Sheets and Drive discovery documents — third-party round
-  // trips in front of a video the user wanted to watch, for a button most
-  // sessions never press. Now the first click on Create Sheet pays that cost,
-  // once, and the promise is cached so a second click does not repeat it.
-  const googleReady = useRef<Promise<void> | null>(null);
-
-  const loadGoogle = (): Promise<void> => {
-    if (googleReady.current) {
-      return googleReady.current;
-    }
-    googleReady.current = new Promise<void>((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.defer = true;
-      script.onload = () => {
-        gapi.load("client", () => {
-          gapi.client
-            .init({ apiKey: API_KEY, discoveryDocs: DISCOVERY_DOCS })
-            .then(() => resolve())
-            .catch(reject);
-        });
-      };
-      script.onerror = () => reject(new Error("Không tải được Google Identity"));
-      document.body.appendChild(script);
-    });
-    return googleReady.current;
-  };
-
-  // Hàm login bằng GIS -> trả access_token
-  const getAccessToken = (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const google = (window as WindowWithGoogleIdentity).google;
-      if (!google) {
-        reject("Google script chưa load");
-        return;
-      }
-
-      const tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: (response) => {
-          if (response.error || !response.access_token) {
-            reject(response);
-          } else {
-            gapi.client.setToken({ access_token: response.access_token });
-            resolve(response.access_token);
-          }
-        },
-      });
-
-      tokenClient.requestAccessToken();
-    });
-  };
-
-  // === GOOGLE SHEETS HANDLER ===
-  const createSheet = async () => {
-    try {
-      await loadGoogle(); // nạp GIS + gapi lần đầu bấm nút này
-      await getAccessToken(); // login + set token cho gapi
-
-      let rows: string[][] = [];
-      let sheetTitle = submissionFileName || "";
-
-      switch (submitType) {
-        case "Task 1 - kis":
-          // rows = [["videoId", "frameIdx"], ...task1.map((i) => [i.videoId, i.frameIdx])];
-          rows = task1.map((i) => [i.videoId, i.frameIdx]);
-          sheetTitle = sheetTitle || "Task 1 Sheet";
-          break;
-        case "Task 2 - qna":
-          // rows = [["videoId", "frameIdx", "answer"], ...task2.map((i) => [i.videoId, i.frameIdx, i.answer])];
-          rows = task2.map((i) => [i.videoId, i.frameIdx, i.answer]);
-          sheetTitle = sheetTitle || "Task 2 Sheet";
-          break;
-        case "Task 3 - trake":
-          // rows = [["videoId", "frames..."], ...task3.map((i) => [i.videoId, ...i.frameIdx])];
-          // rows = task3.flatMap((i) =>
-          //   i.frameIdx.map((frame: string | number) => [i.videoId, frame])
-          // );
-          rows = task3.map((i) => [i.videoId, ...i.frameIdx]);
-          sheetTitle = sheetTitle || "Task 3 Sheet";
-          break;
-        default:
-          alert("Chưa chọn loại Task!");
-          return;
-      }
-
-      if (rows.length < 1) {
-        alert("Chưa có dữ liệu cho " + submitType);
-        return;
-      }
-
-      // 1. Tạo Sheet
-      const sheetResponse = await gapi.client.sheets.spreadsheets.create({
-        properties: { title: sheetTitle },
-      });
-      const id = sheetResponse.result.spreadsheetId!;
-      setSpreadsheetId(id);
-      console.log("✅ Sheet created:", id);
-
-      // 2. Move vào folder
-      await gapi.client.drive.files.update({
-        fileId: id,
-        addParents: FOLDER_ID,
-        fields: "id, parents",
-      });
-      console.log("📂 File moved to folder:", FOLDER_ID);
-
-      // 3. Append dữ liệu
-      await gapi.client.sheets.spreadsheets.values.append({
-        spreadsheetId: id,
-        range: "Sheet1!A1",
-        valueInputOption: "RAW",
-        resource: { values: rows },
-      });
-      console.log("📝 Data appended");
-
-      alert(`✅ Created new sheet trong folder ${FOLDER_ID}, ID: ${id}`);
-    } catch (err: unknown) {
-      console.error("❌ Error creating sheet:", err);
-      alert("Failed: " + errorMessage(err));
-    }
-  };
 
   const handleSubmit = async () => {
     // Midpoint of the marked edges for KIS and Q&A; the raw playhead for TRAKE
@@ -272,7 +113,10 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     // here — the line becomes an answer only once all N cells are filled and
     // the row's own button is pressed.
     if (trakeSlot) {
-      trakeSlot.onCommit(frame);
+      // Kèm hai đầu đã ghim. Với câu TRAKE chúng không đụng tới `frame` —
+      // frameToSubmit() ở trên đã trả về khung đang dừng — mà đi tiếp vào ô
+      // "từ/đến" của mốc này trong bảng Điền tự động.
+      trakeSlot.onCommit(frame, markedRange);
       return;
     }
 
@@ -284,6 +128,14 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           answer_text: activeTask.type === "qa" ? answer || null : null,
         });
         onBasketChanged?.();
+        // Ghi lại khung THẬT SỰ được lấy, không phải cái thẻ đã bấm để mở
+        // popup. Bấm thẻ 3175 rồi tua tới 3180 và chốt 3180 thì thứ đáng mở
+        // lại là 3180 — mà trước đây đường này không ghi gì, nên lịch sử vẫn
+        // dừng ở 3175 và không ai biết người đó đã chỉnh đi đâu.
+        //
+        // Tên keyframe của thẻ cũ được giữ nguyên bên trong helper, vì vòng
+        // khoanh đỏ so theo tên và 3180 thường không trùng keyframe nào.
+        recordSearchState(activeTask.id, { video: videoId, frameIdx: frame });
         if (activeTask.type !== "trake") {
           setAnswer("");
         }
@@ -315,78 +167,54 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
     }
   };
 
-  useEffect(() => {
-    console.log("task1", task1);
-    console.log("task2", task2);
-    console.log("task3", task3);
-    console.log("Filename:", submissionFileName);
-  }, [task1, task2, task3, submissionFileName]);
-
-  // const createCSV = () => {
-  //   let csvString = "";
-  //   switch (submitType) {
-  //     case "Task 1 - kis":
-  //       csvString = task1
-  //         .map((item) => `${item.videoId}, ${item.frameIdx}`)
-  //         .join("\n");
-  //       break;
-
-  //     case "Task 2 - qna":
-  //       csvString = task2
-  //         .map(
-  //           (item) =>
-  //             `${item.videoId}, ${item.frameIdx}, ${escape(item.answer)}`
-  //         )
-  //         .join("\n");
-  //       break;
-
-  //     case "Task 3 - trake":
-  //       csvString = task3
-  //         .map((item) => `${item.videoId},${item.frameIdx.join(",")}`)
-  //         .join("\n");
-  //       break;
-  //   }
-
-  //   return csvString;
-  // };
-
   return (
     <>
       <div className="flex items-start gap-4 w-full">
-        <div className="flex flex-col gap-4 flex-1 rounded-md border border-gray-300 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium text-gray-700">Range</label>
-            <SuperSimple
-              min={0}
-              max={duration}
-              values={values}
-              setValues={setValues}
-              setStartAt={setStartAt}
-            />
+        {/* Once a Board task is open, KIS pins a single frame and TRAKE is
+            assembled on the search line — this card has nothing left to show
+            unless the task is Q&A. */}
+        {(!activeTask || activeTask.type === "qa") && (
+          <div className="flex flex-col gap-4 flex-1 rounded-md border border-gray-300 bg-white p-4 shadow-sm">
+            {/* The range slider drives the old scratchpad's own notion of
+                "current position"; a Board task already has the mark-in/out
+                strip against the video for that. */}
+            {!activeTask && (
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-medium text-gray-700">Range</label>
+                <SuperSimple
+                  min={0}
+                  max={duration}
+                  values={values}
+                  setValues={setValues}
+                  setStartAt={setStartAt}
+                />
+              </div>
+            )}
+
+            {/* Input — nothing to type when pinning a TRAKE moment, and once a
+                Board task is open, only Q&A still needs typed text here. */}
+            {!trakeSlot && (!activeTask || isQaAnswer) && (
+              <input
+                type={isQaAnswer ? "text" : "number"}
+                value={answer}
+                onChange={(event) => setAnswer(event.target.value)}
+                placeholder={
+                  isQaAnswer ? "Type in your answer" : "Type in the number of activities"
+                }
+                className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-blue-400 focus:ring focus:ring-blue-100 outline-none"
+                disabled={!activeTask && submitType === "Task 1 - kis"}
+              />
+            )}
           </div>
+        )}
 
-          {/* Input — nothing to type when pinning a TRAKE moment. */}
-
-          {!trakeSlot && (
-            <input
-              type={submitType == "Task 2 - qna" ? "text" : "number"}
-              value={answer}
-              onChange={(event) => setAnswer(event.target.value)}
-              placeholder={
-                submitType == "Task 2 - qna"
-                  ? "Type in your answer"
-                  : "Type in the number of activities"
-              }
-              className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-blue-400 focus:ring focus:ring-blue-100 outline-none"
-              disabled={submitType === "Task 1 - kis"}
-            />
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3 h-full">
-          {/* The task-type picker and the Sheets export are both about a whole
-              submission file. Pinning one TRAKE moment is neither. */}
-          {!trakeSlot && (
+        {/* ml-auto: với KIS/TRAKE thì thẻ nhập bên trái không hiện, nên cột
+            này là thứ duy nhất trong hàng và nút Add Answer dạt hẳn về mép
+            trái — xa chỗ mắt đang nhìn (dải ghim và số frame nằm bên phải). */}
+        <div className="flex flex-col gap-3 h-full ml-auto">
+          {/* The task-type picker is about a whole scratchpad session; a
+              Board task already fixes its own type. */}
+          {!activeTask && (
             <Dropdown
               options={submitTypeOptions}
               value={submitType}
@@ -397,7 +225,6 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
           )}
           <div className="flex gap-3 items-stretch">
             <Button
-              // leadingIcon={<img src="/send.svg" />}
               className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
               onClick={handleSubmit}
               size="xs"
@@ -405,19 +232,21 @@ export const SubmitForm: React.FC<SubmitFormData> = ({
               // NaN. It used to submit that; now it says so and stops.
               disabled={!Number.isFinite(frame_detect) || frame_detect <= 0}
             >
+              {/* Ô mốc chỉ có ở câu TRAKE, và ở đó chốt một mốc mới là điền
+                  vào ô chứ chưa sinh dòng nào — nên không còn nhãn "→ vào
+                  giỏ". Câu KIS/Q&A đi bằng "Add Answer" như ensemble. */}
               {trakeSlot ? `Chốt cho E${trakeSlot.index + 1}` : "Add Answer"}
             </Button>
-            {!trakeSlot && (
-              <Button
-                // leadingIcon={<img src="/send.svg" />}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-md shadow-sm transition-all duration-300 flex-1 h-10 "
-                size="xs"
-                onClick={createSheet}
-              >
-                Create Sheet
-              </Button>
-            )}
           </div>
+
+          {/* Cụm "K dòng" + nút "Trải K dòng" đã bỏ.
+
+              Nó trải K dòng chia đều trên đoạn vừa ghim, nhưng cùng việc đó
+              nút "+ Điền tự động" trong giỏ đáp án làm tốt hơn: ở đó chọn được
+              nhiều mốc, chọn bước nhảy, chọn chỉ rải lên hay xuống, và với
+              TRAKE thì rải theo từng sự kiện. Hai đường làm một việc, đường ở
+              đây lại chiếm hai dòng ngay dưới nút Add Answer. */}
+
         </div>
       </div>
     </>

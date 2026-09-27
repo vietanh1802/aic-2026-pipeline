@@ -21,6 +21,42 @@
  */
 const EPSILON = 1e-6;
 
+/**
+ * Vị trí của một mốc thời gian trên thanh, tính theo phần trăm bề rộng.
+ *
+ * Tách riêng vì thanh dưới video có HAI thang. Bình thường nó trải cả video;
+ * khi câu TRAKE đã ghim đủ hai đầu thì nó thu về đúng đoạn đó, để chọn khung
+ * bên trong. Một đoạn 300 khung trong video 15.000 khung chỉ chiếm 2% bề rộng
+ * — bấm vào đấy thì mỗi pixel nhảy vài chục khung, không cách nào trúng khung
+ * mình muốn.
+ *
+ * Kẹp trong [0, 1]: đầu phát có thể nằm ngoài cửa sổ khi người dùng tua bằng
+ * điều khiển của trình phát, và một cái vạch vẽ ra ngoài thanh thì tệ hơn là
+ * một cái vạch dính ở mép.
+ */
+export function barPosition(seconds: number, low: number, high: number): number {
+  const width = high - low;
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(seconds)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, (seconds - low) / width));
+}
+
+/**
+ * Chiều ngược lại: bấm vào đâu trên thanh thì đó là giây nào.
+ *
+ * `barPosition` và hàm này phải là hai chiều của cùng một phép quy đổi. Lệch
+ * nhau thì vạch đầu phát đứng một chỗ còn cú bấm nhảy sang chỗ khác, và không
+ * có gì trên màn hình nói cho người dùng biết vì sao.
+ */
+export function barSeconds(fraction: number, low: number, high: number): number {
+  const width = high - low;
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(fraction)) {
+    return low;
+  }
+  return low + Math.min(1, Math.max(0, fraction)) * width;
+}
+
 export function frameAt(seconds: number, fps: number): number | null {
   if (!Number.isFinite(fps) || fps <= 0 || !Number.isFinite(seconds)) {
     return null;
@@ -64,4 +100,61 @@ export function frameRange(
     return null;
   }
   return { start, end, frame: Math.floor((start + end) / 2) };
+}
+
+/**
+ * K guesses spread over a marked interval, best first.
+ *
+ * KIS describes a stretch of video, not an instant, and the score is R@k. So
+ * the useful thing to do with two marked edges is not to submit their midpoint
+ * once but to cover the interval — and to cover it in an order where the first
+ * row is the most defensible, because rank is what R@k reads.
+ *
+ * Bisection gives exactly that order: both edges, then the middle, then the
+ * middle of each half. Cutting at the end of a complete bisection level — 2, 3,
+ * 5, 9, 17 rows — gives the most even spread of that length. Intermediate
+ * lengths are close but not optimal: 7 rows over [0, 1000] leaves a 250-frame
+ * gap where a hand-placed 7 would leave 167. The trade buys one rule that
+ * returns something usable no matter where it stops. Doing it by hand — add
+ * the edges, add the middle, then subdivide, one row at a time — is what this
+ * replaces.
+ *
+ * Short intervals shrink rather than pad: [100, 102] with k = 5 is three rows,
+ * because there is no fourth frame in there to submit.
+ */
+export function spreadFrames(start: number, end: number, k: number): number[] {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || k <= 0) {
+    return [];
+  }
+
+  const low = Math.min(start, end);
+  const high = Math.max(start, end);
+
+  const frames: number[] = [];
+  const seen = new Set<number>();
+  const push = (frame: number) => {
+    if (frames.length >= k || seen.has(frame)) {
+      return;
+    }
+    seen.add(frame);
+    frames.push(frame);
+  };
+
+  push(low);
+  push(high);
+
+  // Breadth-first over the halves, so the whole interval is covered coarsely
+  // before any part of it is covered finely.
+  const queue: [number, number][] = [[low, high]];
+  while (queue.length > 0 && frames.length < k) {
+    const [from, to] = queue.shift() as [number, number];
+    if (to - from < 2) {
+      continue;
+    }
+    const middle = Math.floor((from + to) / 2);
+    push(middle);
+    queue.push([from, middle], [middle, to]);
+  }
+
+  return frames;
 }

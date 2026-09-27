@@ -1,3 +1,4 @@
+# backend/app/ocr_search.py
 # -*- coding: utf-8 -*-
 """
 ocr_search.py — find keyframes by the TEXT VISIBLE ON SCREEN
@@ -59,11 +60,19 @@ from typing import Optional
 # app/data/ would mean a second S3 prefix, a second volume and a second step in
 # the runbook, all to carry 55 MB down a road that already exists.
 #
-# Both directories are in .gitignore, so the checkout CI builds the image from
-# is always empty — production MUST point AIC_OCR_DIR at the mounted volume
-# (see docker-compose.yml).
-OCR_DIR = os.environ.get(
-    "AIC_OCR_DIR",
+# Falls back to AIC_INDEX_DIR, not to a path of its own. That is the whole
+# point: deploy/p6/ssm-deploy-backend.sh runs `docker compose up` against the
+# copy of docker-compose.yml ALREADY ON THE HOST. A deploy ships a new image and
+# never the compose file, so adding a variable to the repo's compose does
+# nothing in production — which is exactly how the first attempt failed: the
+# container looked in /srv/aic/app/indexes (empty, since .gitignore keeps the
+# files out of the image) while the files sat in /opt/aic/indexes.
+#
+# AIC_INDEX_DIR is already set on the host and already points at the mounted
+# volume, so riding on it needs no deploy change at all. It is also simply
+# true: these two files live beside the FAISS indexes and travel with them.
+OCR_DIR = os.environ.get("AIC_OCR_DIR") or os.environ.get(
+    "AIC_INDEX_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "indexes"))
 WITH_MARKS_PATH = os.path.join(OCR_DIR, "ocr_clean.json")
 NO_MARKS_PATH = os.path.join(OCR_DIR, "ocr_clean_nodau.json")
@@ -145,11 +154,23 @@ def _tokenize(text: str) -> list[str]:
     return [w for w in re.split(r"[^0-9a-zA-ZÀ-ỹ]+", text) if w]
 
 
+# Whole-word matching was tried and REMOVED on request (see git history for the
+# regex). It cut "quan an cho lon" from 3,570 hits to 180 by refusing to match
+# 'lon' inside 'long an' — but it also refuses partial words the operator may
+# well have meant, and OCR splits words wrongly often enough that the strictness
+# cost more recall than it bought precision. Substring matching is back.
+
+
 def search(query: str,
            limit: int = 100,
            strip_diacritics: bool = True,
            video: Optional[str] = None) -> dict:
-    """Find frames containing `query`.
+    """Find frames containing EVERY word of `query`.
+
+    A frame missing even one word is not returned, and nothing is returned when
+    nothing qualifies — there is no widening fallback. Words match as
+    substrings, so 'lon' does hit 'long an'; that is deliberate, see the note
+    above _tokenize.
 
     Ranking depends ONLY on the text the user typed; no model takes part:
 
@@ -161,10 +182,14 @@ def search(query: str,
     is almost certainly what someone is after, whereas the same phrase buried in
     200 characters of scrolling slide text is usually a coincidence.
 
-    Returns three counts rather than one:
-      * `phrase_matches`   — contain the whole phrase  <- the count to trust
-      * `all_word_matches` — contain every word, scattered
-      * `any_word_matches` — contain at least one word
+    Returns two counts:
+      * `phrase_matches`   — hold the whole phrase  <- the count to trust
+      * `all_word_matches` — hold every word, scattered; the size of the result
+
+    There is deliberately no "holds at least one word" count. Under this rule
+    such frames are not returned, so reporting them would advertise a looseness
+    that no longer exists — and computing it is what forced the regex across
+    all 179,728 rows on every query.
 
     Notebook 78 measured: `all_word_matches` <= 4 puts the right video first,
     6 times out of 6; >= 142 gets it right only 1 time in 6. Surfacing this
@@ -178,57 +203,34 @@ def search(query: str,
     needle = (_strip_marks(query) if strip_diacritics else query).lower().strip()
     if not needle:
         return {"results": [], "phrase_matches": 0, "all_word_matches": 0,
-                "any_word_matches": 0, "searched_frames": len(haystacks),
-                "processing_time": 0.0}
+                "searched_frames": len(haystacks), "processing_time": 0.0}
 
-    words = _tokenize(needle)
+    # A set, not a list: "chợ chợ" would otherwise want two distinct words and
+    # match nothing, because one word can only be found once.
+    words = set(_tokenize(needle))
     word_count = len(words)
 
-    # ONE pass: tally all three counts, but only build result rows for frames
-    # containing EVERY word.
-    #
-    # This used to build a row for every frame matching even one word. Typing
-    # "Quán ăn Chợ Lớn" matches 87,429 frames on at least one word (because "ăn"
-    # appears inside countless strings); building that many tuples and sorting
-    # them took 3.5 SECONDS, to then return the first 100. Dropping partial
-    # matches brings it to ~0.3 s, and is also closer to the request: "which
-    # frames CONTAIN THIS TEXT", not "part of this text".
-    #
-    # If needle is inside haystack then every word of needle is too, so the
-    # whole-phrase group is a subset of the every-word group and nothing is lost.
-    scored, phrase_hits, all_word_hits, any_word_hits = [], 0, 0, 0
+    # Longest word first. `all()` stops at the first miss, and long words are
+    # the rare ones, so the first probe is the one that does the rejecting.
+    probes = sorted(words, key=len, reverse=True)
+
+    # A frame only earns a row when it holds EVERY word. There is no
+    # partial-match fallback: a query with no result is a true answer, and
+    # quietly widening it hands back near-misses that look like hits. Type
+    # fewer words to widen instead.
+    scored, phrase_hits = [], 0
     for name, haystack in haystacks.items():
         if video and not name.startswith(video):
             continue
-        hits = 0
-        for word in words:
-            if word in haystack:
-                hits += 1
-        if hits == 0:
+        if not all(probe in haystack for probe in probes):
             continue
-        any_word_hits += 1
-        if hits < word_count:
-            continue
-        all_word_hits += 1
-        whole_phrase = word_count == 1 or needle in haystack
+        whole_phrase = needle in haystack
         if whole_phrase:
             phrase_hits += 1
         # The whole phrase always beats the same words scattered — add a step
         # taller than any achievable word count, so one comparison suffices.
-        scored.append(((1000 if whole_phrase else 0) + hits,
+        scored.append(((1000 if whole_phrase else 0) + word_count,
                        len(_display[name]), name))
-
-    # Only fall back to partial matches when nothing contains every word — one
-    # extra pass, taken only in the case where the result list would otherwise
-    # be empty. An approximate answer beats making the operator believe the
-    # whole corpus holds nothing.
-    if not scored and any_word_hits:
-        for name, haystack in haystacks.items():
-            if video and not name.startswith(video):
-                continue
-            hits = sum(1 for word in words if word in haystack)
-            if hits:
-                scored.append((hits, len(_display[name]), name))
 
     # Score descending, then shorter text, then name ascending. The last key
     # exists only so the same query always returns the same order — without it
@@ -251,11 +253,68 @@ def search(query: str,
     return {
         "results": rows,
         "phrase_matches": phrase_hits,
-        "all_word_matches": all_word_hits,
-        "any_word_matches": any_word_hits,
+        "all_word_matches": len(scored),
         "searched_frames": len(haystacks),
         "processing_time": round(time.time() - started, 4),
     }
+
+
+def search_terms(terms : list[str], strip_diacritics : bool = True) -> dict[str, tuple[int, list[tuple[int, bool]]]] :
+    """Sibling of search() for a LIST of terms: one scan of the haystack tests
+    every term, instead of one scan per term (search() is left untouched).
+
+    Returns {frame name : (len(display text), [(term index, whole_phrase), ...])}
+    for every frame that holds at least one term, the matches in term order. The
+    display length is what search() breaks ranking ties on (shorter text first),
+    so a caller can rank frames without a second lookup. No rows, no limit, no
+    ranking here: that is the caller's job (text_lookup.lookup_text_batch_multi).
+
+    Per term the rule is search()'s own: every WORD of the term must be a
+    substring of the frame text, and whole_phrase says the typed phrase itself is
+    (needle in haystack). A blank term matches nothing and is not counted below.
+    With ONE term the result reproduces search() exactly, quirk included: a term
+    without a single word character (for example "(" or an emoji) has nothing to
+    require, so it matches every frame with text. With two or more terms that
+    quirk would turn an OR list into "everything", so a term without word
+    characters is matched as a literal phrase there.
+
+    Speed: search() spends most of its time in the all(... generator ...) of its
+    inner test (about 250 of 320 ms per pass, against 72 ms for a bare `in` loop).
+    Here the longest word of each term (the rarest, so the one that rejects most
+    frames) is tested first with a plain `in`, and only frames that pass it get the
+    remaining words. Measured against N calls of search() with its row limit
+    lifted, both diacritic modes, on the 179,728 real frames: 2.3 to 5.5 times
+    faster (1 term 2.3 to 4.2x, 3 and 5 terms 3.9 to 5.5x), because the scan is
+    shared and no row dicts are built."""
+    _load()
+    haystacks = _haystack["no_marks" if strip_diacritics else "with_marks"]
+    needles = [(index, (_strip_marks(term) if strip_diacritics else term).lower().strip())
+               for index, term in enumerate(terms)]
+    needles = [(index, needle) for index, needle in needles if needle]
+    plans = []  # (term index, needle, first probe, other probes)
+    for index, needle in needles :
+        probes = sorted(set(_tokenize(needle)), key=len, reverse=True)
+        if probes :
+            plans.append((index, needle, probes[0], probes[1 : ]))
+        elif len(needles) > 1 :
+            plans.append((index, needle, needle, []))  # literal phrase
+        else :
+            plans.append((index, needle, "", []))      # search()'s quirk: "" is in every text
+
+    found : dict[str, tuple[int, list[tuple[int, bool]]]] = {}
+    for name, haystack in haystacks.items() :
+        for index, needle, first, rest in plans :
+            if first not in haystack :
+                continue
+            for word in rest :
+                if word not in haystack :
+                    break
+            else :
+                entry = found.get(name)
+                if entry is None :
+                    entry = found[name] = (len(_display[name]), [])
+                entry[1].append((index, needle in haystack))
+    return found
 
 
 def get_text(name: str) -> str:

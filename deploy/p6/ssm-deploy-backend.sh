@@ -39,10 +39,67 @@ if docker image inspect aic2026-api:local >/dev/null 2>&1; then
   docker tag aic2026-api:local "$rollback_tag"
 fi
 
+# Dọn trước khi kéo, không phải sau.
+#
+# Mỗi deploy để lại hai image 1.5 GB — một tag `rollback-<sha>` do chính chỗ
+# trên tạo, một tag `ghcr.io/...:<sha>` do docker pull tạo — và trước đây không
+# có gì xoá chúng. Sau 14 lần deploy, ổ 60 GB còn 741 MB và lần kéo thứ 15 chết
+# giữa chừng với "no space left on device", ngay giữa lúc giải nén layer. Image
+# build xong, push xong, chỉ là không có chỗ để nằm.
+#
+# Tag rollback cũ là rác thuần tuý: ssm-rollback-backend.sh chỉ đọc
+# `rollback-$AIC_DEPLOY_ID` của đúng lần chạy đang diễn ra, nên tag của lần
+# deploy trước không có đường nào được dùng tới. Vẫn giữ vài cái để một người
+# đứng trên máy còn lùi tay được về bản hôm qua.
+#
+# Chạy TRƯỚC pull vì chỗ trống phải có sẵn lúc kéo; dọn sau khi kéo là dọn cho
+# lần deploy sau, còn lần này vẫn chết.
+KEEP_ROLLBACKS="${AIC_KEEP_ROLLBACKS:-3}"
+
+# `docker images` xếp mới nhất trước, nên `tail -n +N` bỏ đi phần đuôi cũ.
+# `+$((K+1))` chứ không phải `+K`: tail đếm từ 1 và in TỪ dòng đó trở đi, nên
+# `+3` chỉ giữ lại hai dòng đầu.
+#
+# Lọc bỏ tag của chính lần này để một lần chạy lại không tự xoá đường lùi.
+stale_rollbacks="$(
+  docker images --format '{{.Repository}}:{{.Tag}}' \
+    | grep '^aic2026-api:rollback-' \
+    | grep -v "^${rollback_tag}$" \
+    | tail -n "+$((KEEP_ROLLBACKS + 1))" || true
+)"
+if [ -n "$stale_rollbacks" ]; then
+  echo "removing $(echo "$stale_rollbacks" | wc -l) stale rollback tags"
+  echo "$stale_rollbacks" | xargs -r docker rmi || true
+fi
+
+# Tag ghcr.io thì không giữ cái nào: ngay sau khi pull nó được gắn thêm tên
+# `aic2026-api:local`, nên bản thân cái tag dài kia không còn việc gì, và bản
+# nào cần thì kéo lại từ registry được. `|| true` ở khắp nơi vì dọn dẹp không
+# bao giờ được phép làm hỏng một deploy đang tốt.
+docker images --format '{{.Repository}}:{{.Tag}}' \
+  | grep '^ghcr\.io/.*/aic2026-api:' \
+  | xargs -r docker rmi 2>/dev/null || true
+
+docker image prune -f || true
+docker builder prune -f || true
+df -h /var/lib/docker | tail -1
+
 # The database lives on the host beside the indexes. Docker would create the
 # directory itself, but only as root with no way to say what mode — making it
 # here keeps ownership predictable for backups.
 mkdir -p /opt/aic/data
+
+# Image giải nén ra khoảng 1.5 GB, lấy 4 GB làm mức sàn cho cả layer tạm lẫn
+# container mới. Nói thẳng ra là hết chỗ, vì thông báo thật của docker là
+# "failed to register layer: open .../test_recurrences.cpython-311.pyc: no
+# space left on device" — nó chỉ vào một file .pyc của sympy, và người đọc log
+# sẽ đi tìm lỗi ở sympy.
+free_kb="$(df -Pk /var/lib/docker | awk 'NR==2 {print $4}')"
+if [ "$free_kb" -lt 4194304 ]; then
+  echo "Chỉ còn $((free_kb / 1024)) MB trống cho /var/lib/docker, cần ít nhất 4096 MB." >&2
+  docker system df >&2
+  exit 1
+fi
 
 docker pull "$AIC_NEW_IMAGE"
 docker tag "$AIC_NEW_IMAGE" aic2026-api:local
@@ -70,6 +127,15 @@ docker compose ps api
 # perfectly good image. The smoke test is what decides that.
 if ! docker compose exec -T api python -m scripts.seed_team; then
   echo "WARNING: seeding failed; run 'docker compose exec api python -m scripts.seed_team' by hand" >&2
+fi
+
+# Register the retrieval-benchmark datasets. Same reasoning and same best-effort
+# stance as seed_team above: idempotent (INSERT OR IGNORE plus a source-hash
+# guard), the tables were already created by migrate() when the container came
+# up, and the benchmark is an admin tool nobody needs in the first minutes after
+# a deploy — a failure here must not roll back a good image.
+if ! docker compose exec -T api python -m scripts.seed_evaluation; then
+  echo "WARNING: evaluation seeding failed; run 'docker compose exec api python -m scripts.seed_evaluation' by hand" >&2
 fi
 REMOTE
 

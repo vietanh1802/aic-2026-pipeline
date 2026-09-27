@@ -4,15 +4,19 @@ import App from "./App";
 import { getAnswers } from "./api/answers";
 import { me } from "./api/auth";
 import { getBoard, heartbeat, type BoardTask } from "./api/board";
+import { canSubmitDres, getDresStatus, listDresSubmissions } from "./api/dres";
 import AnswerBasket from "./components/AnswerBasket";
 import AppNav, { type Screen } from "./components/AppNav";
 import Board from "./pages/Board";
 import ChangePassword from "./pages/ChangePassword";
+import DresPage from "./pages/Dres";
+import EvaluationPage from "./pages/Evaluation";
+import RetrievalBenchmark from "./pages/RetrievalBenchmark";
 import ExportPage from "./pages/Export";
 import ImportPack from "./pages/ImportPack";
 import Login from "./pages/Login";
-import Rounds from "./pages/Rounds";
 import { useAuthStore } from "./store/authStore";
+import { usePopupStore } from "./store/popupStore";
 
 const HEARTBEAT_MS = 10000;
 
@@ -101,6 +105,33 @@ export default function Root() {
     return () => window.clearInterval(timer);
   }, [token, user, task]);
 
+  // Người duyệt được phải biết có đề xuất DRES mới cả khi đang ở màn Search —
+  // đó là lúc họ cũng đang tìm. Câu chung kết mất 10 điểm mỗi phút, nên 5 giây
+  // chứ không đi chung nhịp 10 giây của board.
+  //
+  // "Người duyệt được" tuỳ chế độ nộp: chỉ admin, hoặc cả đội khi admin bật
+  // "Mọi người nộp được". Nên đọc lại chế độ mỗi nhịp, không chỉ xem role.
+  const [dresPending, setDresPending] = useState(0);
+  const role = user?.role;
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    const poll = () =>
+      void Promise.all([getDresStatus(), listDresSubmissions(50)])
+        .then(([status, { submissions }]) =>
+          setDresPending(
+            canSubmitDres(role, status)
+              ? submissions.filter((s) => s.status === "proposed").length
+              : 0
+          )
+        )
+        .catch(() => undefined);
+    poll();
+    const timer = window.setInterval(poll, 5000);
+    return () => window.clearInterval(timer);
+  }, [token, role]);
+
   const refreshCount = useCallback(async () => {
     if (!task) {
       setAnswerCount(0);
@@ -137,6 +168,7 @@ export default function Root() {
         answerCount={answerCount}
         rowsPerQuery={rowsPerQuery}
         onOpenBasket={() => setBasketOpen(true)}
+        dresPending={dresPending}
       />
 
       {roundChanged !== null && (
@@ -148,23 +180,45 @@ export default function Root() {
 
       {screen === "board" && (
         <Board
-          onOpenTask={(picked) => {
+          onOpenTask={(picked, options) => {
             setRoundChanged(null);
             setTask(picked);
             setScreen("search");
+            // Opening a teammate's task from the count is a request to see
+            // what is in it, not to start searching.
+            setBasketOpen(options?.openBasket === true);
           }}
         />
       )}
-      {screen === "import" && (
-        <ImportPack onImported={() => setScreen("rounds")} />
-      )}
-      {screen === "rounds" && <Rounds />}
+      {screen === "evaluation" && <EvaluationPage />}
+      {screen === "retrieval-benchmark" && <RetrievalBenchmark />}
+      {screen === "import" && <ImportPack />}
       {screen === "export" && <ExportPage />}
+      {screen === "dres" && (
+        <DresPage
+          onOpenVideo={(videoId, frameIdx) => {
+            // Cùng đường với giỏ đáp án: popup sống trong App.
+            setScreen("search");
+            usePopupStore.getState().open(videoId, frameIdx);
+          }}
+        />
+      )}
 
       {/* Kept mounted rather than unmounted, so switching to the board and back
-          does not throw away the current search results. */}
-      <div hidden={screen !== "search"}>
-        <App activeTask={task} onBasketChanged={() => void refreshCount()} />
+          does not throw away the current search results.
+
+          Màn "Lịch sử" cũng nằm trong cây này chứ không phải một trang riêng ở
+          Root: bấm "Coi X làm" phải áp truy vấn vào ô search rồi chạy lại, mà
+          hàm làm việc đó sống trong App. Dựng nó ở Root sẽ phải luồn ngược
+          hàm ấy lên qua hai tầng. */}
+      <div hidden={screen !== "search" && screen !== "history"}>
+        <App
+          activeTask={task}
+          rowsPerQuery={rowsPerQuery}
+          onBasketChanged={() => void refreshCount()}
+          view={screen === "history" ? "history" : "search"}
+          onLeaveHistory={() => setScreen("search")}
+        />
       </div>
 
       <AnswerBasket
@@ -174,6 +228,12 @@ export default function Root() {
         onClose={() => {
           setBasketOpen(false);
           void refreshCount();
+        }}
+        onOpenVideo={(videoId, frameIdx) => {
+          // The popup lives inside App, which Root hides on every other screen.
+          // Opening it from the basket has to bring the search screen with it.
+          setScreen("search");
+          usePopupStore.getState().open(videoId, frameIdx);
         }}
       />
     </>

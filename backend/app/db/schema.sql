@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS packs (
   imported_at      TEXT NOT NULL,
   deadline_at      TEXT,               -- NULL = no countdown
   active           INTEGER NOT NULL DEFAULT 1
+  -- `phase` KHÔNG khai báo ở đây, dù nó là cột thật. Xem migrations.py bước 4.
+  --
+  -- Cột thêm sau phải nằm ở đúng MỘT nơi. SQLite không có ALTER TABLE ADD
+  -- COLUMN IF NOT EXISTS, nên khai ở cả hai chỗ thì CSDL mới toanh sẽ có sẵn
+  -- cột từ file này rồi bước migration ném "duplicate column name" và chết
+  -- ngay lúc khởi động. `answers.author_id` và `tasks.chosen_author_id` cũng
+  -- vắng mặt ở đây vì đúng lý do đó.
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -69,6 +76,55 @@ CREATE TABLE IF NOT EXISTS presence (
   task_id       INTEGER REFERENCES tasks(id),
   last_seen_at  TEXT NOT NULL
 );
+
+-- Chỗ làm việc của mỗi người trên mỗi câu: câu truy vấn họ đang gõ, tham số
+-- kèm theo, và khung hình họ vừa bấm vào.
+--
+-- Khác `presence` ở chỗ presence chỉ nói "đang mở câu nào" rồi hết hạn sau vài
+-- chục giây. Bảng này KHÔNG hết hạn: nó tồn tại để người khác mở lại được thứ
+-- bạn đã tìm ra, kể cả khi bạn đã đóng máy.
+--
+-- Khoá theo (user, task) chứ không riêng user: mỗi người có thể đã làm nhiều
+-- câu, và xem lại câu 7 của bạn không nên bị mất chỉ vì bạn đã chuyển sang
+-- câu 12.
+CREATE TABLE IF NOT EXISTS search_states (
+  user_id           INTEGER NOT NULL REFERENCES users(id),
+  task_id           INTEGER NOT NULL REFERENCES tasks(id),
+  query_text        TEXT NOT NULL DEFAULT '',
+  search_type       TEXT NOT NULL DEFAULT 'ensemble',
+  params            TEXT NOT NULL DEFAULT '{}',   -- JSON: topM, rerank, limit…
+  picked_frame      TEXT,                         -- 'L21_V001-0028-3175.jpg'
+  picked_video      TEXT,
+  picked_frame_idx  INTEGER,
+  updated_at        TEXT NOT NULL,
+  PRIMARY KEY (user_id, task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_search_states_task ON search_states(task_id);
+
+-- Mọi lần tìm, giữ lại hết. search_states chỉ có MỘT dòng mỗi người mỗi câu và
+-- bị đè mỗi lần search, nên truy vấn cũ biến mất ngay khi người đó gõ câu
+-- khác — kể cả khi câu cũ mới là câu tìm ra đáp án.
+--
+-- Ghi thêm chứ không thay: search_states vẫn trả lời "ai đang tìm gì NGAY BÂY
+-- GIỜ" cho dòng tóm tắt, còn bảng này trả lời "đã từng tìm bằng gì".
+--
+-- Một dòng cho mỗi TRUY VẤN khác nhau, không phải mỗi lần bấm. Bấm mười khung
+-- trên cùng một truy vấn chỉ cập nhật khung đã chọn của dòng đó.
+CREATE TABLE IF NOT EXISTS search_history (
+  id                INTEGER PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id),
+  task_id           INTEGER NOT NULL REFERENCES tasks(id),
+  query_text        TEXT NOT NULL DEFAULT '',
+  search_type       TEXT NOT NULL DEFAULT 'ensemble',
+  params            TEXT NOT NULL DEFAULT '{}',
+  picked_frame      TEXT,
+  picked_video      TEXT,
+  picked_frame_idx  INTEGER,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_search_history_task
+  ON search_history(task_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS settings (
   key    TEXT PRIMARY KEY,

@@ -25,11 +25,37 @@ PACK_IMPORT = "pack.import"
 PACK_ACTIVATE = "pack.activate"
 PACK_RENAME = "pack.rename"
 PACK_DELETE = "pack.delete"
+# Không còn endpoint nào ghi ra hành động này: xoá vòng giờ là xoá thật,
+# không có đường khôi phục. Giữ hằng số vì nhật ký cũ vẫn chứa nó và màn
+# nhật ký phải đọc lại được những dòng đó.
 PACK_RESTORE = "pack.restore"
 ANSWER_DELETE = "answer.delete"
 ANSWERS_CLEAR = "answers.clear"
 ANSWERS_AUTOFILL_CLEAR = "answers.autofill_clear"
 ANSWERS_RESTORE = "answers.restore"
+# Chọn bài của ai làm bài nộp cho một câu. KHÔNG nằm trong RESTORABLE: nó không
+# xoá gì, chỉ đổi một con trỏ, và "khôi phục" nó nghĩa là chọn lại người cũ —
+# việc đó bấm một cái là xong, không cần cơ chế khôi phục.
+TASK_CHOOSE_AUTHOR = "task.choose_author"
+# Đổi số vòng trong tên file nộp (query-p2-15-qa.csv). Một cú bấm đổi tên cả 25
+# file của gói, và đặt sai thì bài bị chấm hỏng mà không có dấu hiệu gì trên
+# giao diện — nên phải biết ai đổi, đổi lúc nào, từ giá trị nào.
+PACK_SET_PHASE = "pack.set_phase"
+# Dọn lịch sử tìm của một câu. KHÔNG nằm trong RESTORABLE và `detail` không chép
+# các dòng bị xoá: đường khôi phục duy nhất trong file này (`restore_entry`) chỉ
+# biết chèn lại vào bảng `answers`, nên chép lịch sử vào đây cũng không ai lấy
+# ra được. Ghi lại vì bản `scope="all"` của admin xoá cả đường tìm của người
+# khác — cần biết ai đã bấm, chứ không cần lấy lại.
+SEARCH_HISTORY_CLEAR = "search_history.clear"
+# Retrieval Evaluation benchmark runs. None are restorable — a run is
+# recomputable — but a run competes with live search on the same process, so
+# who started or cancelled one and when is worth having.
+EVALUATION_RUN_START = "evaluation.run_start"
+EVALUATION_RUN_CANCEL = "evaluation.run_cancel"
+EVALUATION_RUN_RESUME = "evaluation.run_resume"
+# Đổi ai được gửi bài lên DRES. Bật 'everyone' là mở quyền làm mất 10 điểm cho
+# cả đội, nên phải biết ai bật và lúc nào.
+DRES_SUBMIT_MODE = "dres.submit_mode"
 
 # Which actions put answer rows in `detail`, and so can be undone.
 RESTORABLE = (ANSWER_DELETE, ANSWERS_CLEAR, ANSWERS_AUTOFILL_CLEAR)
@@ -68,6 +94,10 @@ def snapshot_answers(conn: sqlite3.Connection, where: str, params: tuple) -> lis
     return [
         {
             "task_id": row["task_id"],
+            # Phải giữ author_id, không suy ra từ created_by lúc khôi phục:
+            # dòng do admin tạo hộ có created_by khác author_id, đoán lại sẽ
+            # chuyển bài của người này sang tên người khác.
+            "author_id": row["author_id"],
             "sort_key": row["sort_key"],
             "video_id": row["video_id"],
             "frames": row["frames"],
@@ -167,11 +197,16 @@ def restore_answers(
                 skipped += 1
                 continue
             conn.execute(
-                "INSERT INTO answers (task_id, sort_key, video_id, frames, answer_text, "
-                "origin, created_by, updated_by, updated_at, version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                "INSERT INTO answers (task_id, author_id, sort_key, video_id, "
+                "frames, answer_text, origin, created_by, updated_by, "
+                "updated_at, version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                 (
                     answer["task_id"],
+                    # Bản ghi cũ (xoá trước khi có nhiều người dùng) không có
+                    # khoá này; rơi về created_by là đúng vì hồi đó mỗi câu chỉ
+                    # một người làm.
+                    answer.get("author_id") or answer["created_by"],
                     answer["sort_key"],
                     answer["video_id"],
                     answer["frames"],

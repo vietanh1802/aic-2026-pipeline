@@ -1,13 +1,87 @@
 "use client";
+// frontend/src/components/QueryInput/index.tsx
+import { useState } from "react";
+import { Filter, X } from "lucide-react";
 import Button from "../Button";
 import Dropdown, { type DropdownOption } from "../DropDown";
+import TextIndexStatus from "../TextIndexStatus";
 import {
   useQueryStore,
+  type AsrFilterMode,
+  type OcrFilterMode,
   type SearchType,
   type TranslateLanguage,
 } from "../../store/queryStore";
 import type { ModelName } from "../../types/api";
-import { useState } from "react";
+import { expandQuery, type ExpansionResult } from "../../api/expansion";
+import { hasTextFilter } from "../../helpers/textFilter";
+
+// Longest text filter the backend accepts: keep in sync with TEXT_FILTER_MAX_CHARS
+// in backend/app/text_signal.py. A longer value is rejected with HTTP 422 for the
+// WHOLE search request, so the input cuts a long paste instead of failing the search.
+// (maxLength counts UTF-16 units and the backend counts characters, so an astral
+// character such as an emoji counts double here: the limit is never exceeded.)
+const TEXT_FILTER_MAX_CHARS = 200;
+
+interface TextFilterRowProps {
+  label: string;
+  options: DropdownOption[];
+  mode: string;
+  onModeChange: (mode: string) => void;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}
+
+// One text filter (ASR or OCR): source label, mode dropdown, input, clear
+// button. Both rows share this markup so they look and behave the same.
+function TextFilterRow({
+  label,
+  options,
+  mode,
+  onModeChange,
+  value,
+  onChange,
+  placeholder,
+}: TextFilterRowProps) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-[8px] p-1.5 transition-colors ${
+        value.trim() !== "" ? "bg-proto-primary/10" : ""
+      }`}
+    >
+      <span className="w-7 shrink-0 text-[11.5px] font-bold text-proto-muted">
+        {label}
+      </span>
+      <Dropdown
+        options={options}
+        value={mode}
+        onChange={(opt) => onModeChange(opt.value as string)}
+        dropDownWidth={130}
+        dropDirection="down"
+        size="sm"
+      />
+      <input
+        type="text"
+        value={value}
+        maxLength={TEXT_FILTER_MAX_CHARS}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 min-w-0 rounded-[6px] border border-proto-line bg-white px-2 py-1.5 text-[12.5px] text-proto-ink"
+      />
+      {value !== "" && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          title="Xoá bộ lọc"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-proto-line bg-white text-proto-muted"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
 
 interface QueryInputProps {
   doSearch: () => void;
@@ -23,7 +97,14 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const searchType = useQueryStore((state) => state.searchType);
   const setSearchType = useQueryStore((state) => state.setSearchType);
   const singleModel = useQueryStore((state) => state.singleModel);
+  // [siglip2] Tổ hợp model cho ensemble — checkbox, không phải Dropdown.
+  const ensembleModels = useQueryStore((state) => state.ensembleModels);
+  const toggleEnsembleModel = useQueryStore(
+    (state) => state.toggleEnsembleModel
+  );
   const setSingleModel = useQueryStore((state) => state.setSingleModel);
+  const trafficOnly = useQueryStore((state) => state.trafficOnly);
+  const setTrafficOnly = useQueryStore((state) => state.setTrafficOnly);
 
   const topM = useQueryStore((state) => state.topM);
   const setTopM = useQueryStore((state) => state.setTopM);
@@ -38,26 +119,98 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
 
   const translateLang = useQueryStore((state) => state.translateLang);
   const setTranslateLang = useQueryStore((state) => state.setTranslateLang);
-  const queryTranslated = useQueryStore((state) => state.queryTranslated);
+  // `queryTranslated` chỉ còn được GHI, không đọc: bản dịch giờ nằm ngay trong
+  // ô nhập nên không có gì để hiển thị riêng nữa.
   const setQueryTranslated = useQueryStore(
     (state) => state.setQueryTranslated
   );
-  const [isTranslated, setisTranslated] = useState<boolean>(false);
 
+  // ── Text-signal filters (ASR and OCR annotation, /ensemble-search only) ───
+  // Two independent inputs, each with its own mode (OCR has no BM25).
+  const asrFilter = useQueryStore((state) => state.asrFilter);
+  const setAsrFilter = useQueryStore((state) => state.setAsrFilter);
+  const asrFilterMode = useQueryStore((state) => state.asrFilterMode);
+  const setAsrFilterMode = useQueryStore((state) => state.setAsrFilterMode);
+  const ocrFilter = useQueryStore((state) => state.ocrFilter);
+  const setOcrFilter = useQueryStore((state) => state.setOcrFilter);
+  const ocrFilterMode = useQueryStore((state) => state.ocrFilterMode);
+  const setOcrFilterMode = useQueryStore((state) => state.setOcrFilterMode);
+  // Hidden by default; starts open if either filter is already set (e.g. this
+  // component remounted). Stays open until the user clicks the toggle again
+  // — it does not auto-collapse just because the fields are empty.
+  const [filterRowOpen, setFilterRowOpen] = useState(
+    hasTextFilter({ asrFilter, asrFilterMode, ocrFilter, ocrFilterMode })
+  );
+  // Cụm tuỳ chọn (Show Top, Top-M, Rerank, Language, Translate, Search Type)
+  // trước đây gấp sau nút "Tuỳ chọn", đóng sẵn. Bỏ nút, để hiện thường trực:
+  // Search Type nằm trong cụm đó, mà chuyển sang TRAKE hay OCR là việc làm
+  // nhiều lần một vòng — "đóng sẵn" nghĩa là mỗi lần đổi tuyến tìm mất thêm
+  // một cú bấm mở ra và một cú bấm đóng lại.
+  //
+  // Hồi cụm này còn là thanh ngang ở đáy màn hình thì mở ra là nó che mất
+  // hàng kết quả cuối, nên đóng sẵn có lý. Từ 4.2.0 nó là cột trái, không đè
+  // lên gì nữa, nên lý do đó hết hiệu lực.
+
+  /**
+   * Dịch xong thì ghi thẳng vào ô nhập bên dưới, không hiện bảng xem trước.
+   *
+   * Cách cũ đặt bản dịch vào một ô chỉ-đọc nằm PHÍA TRÊN cụm tuỳ chọn, kèm
+   * tiêu đề "Dịch" và nút X. Bản dịch nằm ở đó thì không tìm được gì cả —
+   * nút Search vẫn đọc ô dưới, tức là vẫn câu tiếng Việt — nên vẫn phải tự
+   * bôi đen, copy, rồi dán xuống. Ba thao tác cho một việc đáng lẽ là không
+   * thao tác nào, cộng thêm hai dòng chiếm chỗ trên màn hình.
+   *
+   * Bản gốc không giữ lại được: muốn quay về thì đổi chiều dịch (en-vi) rồi
+   * bấm Translate lần nữa. Vẫn ghi vào `queryTranslated` để biết câu đang nằm
+   * trong ô là do máy dịch ra.
+   */
   const handleTranslate = async () => {
     if (!queryText) return;
     const targetLang = translateLang === "vi-en" ? "en" : "vi";
-    const res = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(
-        queryText
-      )}`
-    );
-    const data = await res.json();
-    const translated = data[0];
-    const texts = translated.map((item: string[]) => item[0]);
-    const queryTranslated = texts.join("");
-    setQueryTranslated(queryTranslated);
-    setisTranslated(true);
+    try {
+      const res = await fetch(
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(
+          queryText
+        )}`
+      );
+      const data = await res.json();
+      const translated = data[0];
+      const texts = translated.map((item: string[]) => item[0]);
+      const result = texts.join("");
+      if (!result) return;
+      setQueryTranslated(result);
+      setQueryText(result);
+    } catch (err) {
+      // Dịch hỏng thì giữ nguyên câu đang gõ. Ném ra ngoài sẽ thành lỗi
+      // không ai bắt, mà thứ người dùng vừa gõ thì biến mất.
+      console.error("Không dịch được:", err);
+    }
+  };
+
+  // Expand: giống Translate ở chỗ ghi thẳng vào ô nhập, khác ở chỗ đi qua
+  // backend (Gemini/Ollama) thay vì gtx trong trình duyệt. Kết quả kèm
+  // check_units — hiện một dòng mờ dưới cụm nút, biến mất ngay khi người dùng
+  // sửa câu, theo cùng triết lý "không để UI cố định chỉ để đọc một lần".
+  const [expanding, setExpanding] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [expansion, setExpansion] = useState<ExpansionResult | null>(null);
+
+  const handleExpand = async () => {
+    if (!queryText || expanding) return;
+    setExpanding(true);
+    setExpandError(null);
+    try {
+      const result = await expandQuery(queryText, "KIS");
+      setQueryText(result.eng_query);
+      setExpansion(result);
+    } catch (err) {
+      setExpandError(
+        err instanceof Error ? err.message : "Không mở rộng được câu truy vấn"
+      );
+      console.error("Không mở rộng được:", err);
+    } finally {
+      setExpanding(false);
+    }
   };
 
   // The OCR route can go deeper: it calls no model, so 2000 rows cost only a
@@ -94,7 +247,9 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   // (N sự kiện tuần tự) — 2 cái sau nhận query bằng cách tách 1 chuỗi theo
   // dấu "." ở backend, khung nhập KHÔNG đổi gì (vẫn 1 ô input như cũ).
   const searchOptions: DropdownOption[] = [
-    { id: 0, label: "Ensemble (BEiT3+CLIP)", value: "ensemble" as SearchType },
+    // [siglip2] Nhãn bỏ liệt kê model cố định — tổ hợp thật giờ chọn bằng
+    // checkbox bên dưới, có thể là 1, 2 hoặc cả 3 model.
+    { id: 0, label: "Ensemble (chọn model bên dưới)", value: "ensemble" as SearchType },
     { id: 1, label: "Single Model", value: "single" as SearchType },
     { id: 2, label: "Temporal Search (Alg.4)", value: "temporal" as SearchType },
     { id: 3, label: "TRAKE (N sự kiện)", value: "trake" as SearchType },
@@ -109,33 +264,65 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
   const modelOptions: DropdownOption[] = [
     { id: 0, label: "BEiT3", value: "beit3" as ModelName },
     { id: 1, label: "CLIP", value: "clip" as ModelName },
+    // [siglip2] +1 option cho Single Model.
+    { id: 2, label: "SigLIP2", value: "siglip2" as ModelName },
   ];
 
-  return (
-    <div className="bg-white border p-5 border-proto-line rounded-xl flex flex-col gap-y-5 font-baloo">
-      <div
-        className={`w-full flex flex-row justify-between ${
-          isTranslated ? "" : "hidden"
-        }`}
-      >
-        <h1 className="font-bold">Dịch</h1>
-        <div
-          className="text-[#c64545] hover:bg-[#c64545]/15 hover:rounded-full px-2 font-bold cursor-pointer text-2xl"
-          onClick={() => setisTranslated(false)}
-        >
-          X
-        </div>
-      </div>
-      <div className={`w-full flex ${isTranslated ? "" : "hidden"}`}>
-        <input
-          value={queryTranslated}
-          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
-          readOnly
-        />
-      </div>
+  // [siglip2] Checkbox tổ hợp cho ensemble — nhãn/value khớp modelOptions.
+  const ensembleModelOptions: { label: string; value: ModelName }[] = [
+    { label: "BEiT3", value: "beit3" },
+    { label: "CLIP", value: "clip" },
+    { label: "SigLIP2", value: "siglip2" },
+  ];
 
-      <div className="w-full flex flex-row justify-between flex-wrap gap-y-3">
-        <div className="flex flex-row gap-x-4 items-center font-baloo flex-wrap gap-y-2">
+  // ASR takes all three modes; OCR has no BM25 index, so it gets the first
+  // two. Same labels and descriptions for both.
+  const asrFilterModeOptions: DropdownOption[] = [
+    {
+      id: 0,
+      label: "Substring",
+      value: "substring" as AsrFilterMode,
+      description: "exact text match, diacritics ignored",
+    },
+    {
+      id: 1,
+      label: "Regex",
+      value: "regex" as AsrFilterMode,
+      description: "pattern match, e.g. (ngò|ngo) or đường\\s+\\w+",
+    },
+    {
+      id: 2,
+      label: "BM25",
+      value: "bm25" as AsrFilterMode,
+      description: "lexical relevance score across transcript",
+    },
+  ];
+  const ocrFilterModeOptions: DropdownOption[] = asrFilterModeOptions.filter(
+    (option) => (option.value as AsrFilterMode) !== "bm25"
+  );
+
+  const asrFilterPlaceholder = {
+    substring: "e.g. ngò, quán trọ, 2018",
+    regex: "e.g. (ngò|ngo), đường\\s+\\w+",
+    bm25: "e.g. khu vườn trái cây miền Tây",
+  }[asrFilterMode];
+  const ocrFilterPlaceholder: Record<OcrFilterMode, string> = {
+    substring: "on-screen text, e.g. QUÁN TRỌ, 2018",
+    regex: "on-screen pattern, e.g. (quán|quan)\\s+trọ",
+  };
+
+  return (
+    // Không còn `border rounded-xl`: khung bao ngoài giờ là cột trái cố định
+    // trong App.tsx, nó đã có viền phải và nền trắng của riêng nó.
+    <div className="p-4 flex flex-col gap-y-4 font-baloo">
+      {/* Khối "Dịch" (tiêu đề + nút X + ô chỉ-đọc) đã bỏ — xem handleTranslate. */}
+
+      {/* Xếp DỌC, không phải `flex-row justify-between` như hồi còn là thanh
+          ngang rộng 900px ở đáy màn hình. Trong cột 360px, `justify-between`
+          đẩy hai cụm ra hai mép rồi bỏ lại một khoảng trống ở giữa, còn từng
+          ô thì bị bóp cho tới lúc rớt dòng lung tung. */}
+      <div className="w-full flex flex-col gap-3">
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2 font-baloo">
           <div className="items-center">
             <p className="font-bold">Show Top:</p>
             <Dropdown
@@ -143,7 +330,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               value={resultLimit}
               onChange={(opt) => setResultLimit(opt.value)}
               dropDownWidth={100}
-              dropDirection="up"
+              dropDirection="down"
             />
           </div>
 
@@ -159,7 +346,7 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                   value={String(topM)}
                   onChange={(opt) => setTopM(Number(opt.value))}
                   dropDownWidth={90}
-                  dropDirection="up"
+                  dropDirection="down"
                 />
               </div>
 
@@ -177,17 +364,32 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
             </>
           )}
 
+          {/* Nhãn cũ ghi "bật — bắt cả lỗi dấu", và đó là lời quảng cáo sai.
+              Đo trên 300 cụm chữ có thật trong kho: gõ CÓ dấu thì bật hay tắt
+              ra y hệt ở 48% truy vấn, phần còn lại chỉ hơn 7%.
+              Công dụng thật nằm chỗ khác — gõ KHÔNG dấu:
+                  bật  →  300/300 tìm thấy
+                  tắt  →   22/300
+              Nên nhãn phải nói đúng điều đó. */}
           {isOcr && (
             <div className="flex flex-col items-start">
               <p className="font-bold">Bỏ dấu</p>
-              <label className="flex items-center gap-x-1 cursor-pointer p-2">
+              <label
+                className="flex items-center gap-x-1 cursor-pointer p-2"
+                title={
+                  "Bật: gõ 'quan an cho lon' vẫn ra 'Quán ăn Chợ Lớn'. " +
+                  "Tắt: phải gõ đúng dấu mới khớp."
+                }
+              >
                 <input
                   type="checkbox"
                   checked={ocrStripDiacritics}
                   onChange={(e) => setOcrStripDiacritics(e.target.checked)}
                 />
                 <span className="text-sm">
-                  {ocrStripDiacritics ? "bật — bắt cả lỗi dấu" : "tắt — khớp y hệt"}
+                  {ocrStripDiacritics
+                    ? "bật — gõ không dấu vẫn ra"
+                    : "tắt — phải gõ đúng dấu"}
                 </span>
               </label>
             </div>
@@ -201,12 +403,55 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                 value={singleModel}
                 onChange={(opt) => setSingleModel(opt.value as ModelName)}
                 dropDownWidth={100}
-                dropDirection="up"
+                dropDirection="down"
               />
             </div>
           )}
+
+          {/* Chỉ tìm trong video camera giao thông (N). Chỉ route ảnh có lọc
+              này (ensemble / 1 model); temporal, TRAKE, OCR tìm như cũ. */}
+          {(searchType === "ensemble" || searchType === "single") && (
+            <label
+              className={`flex items-center gap-x-1.5 cursor-pointer px-2 py-1 rounded-[7px] border text-sm ${
+                trafficOnly
+                  ? "border-[#c47a1f] bg-[#c47a1f]/10 font-bold text-[#8a5a15]"
+                  : "border-proto-line"
+              }`}
+              title="Chỉ trả kết quả từ các video N (camera giao thông)"
+            >
+              <input
+                type="checkbox"
+                checked={trafficOnly}
+                onChange={(e) => setTrafficOnly(e.target.checked)}
+              />
+              Chỉ video giao thông (N)
+            </label>
+          )}
+
+          {/* [siglip2] Tổ hợp model cho ensemble — tick bất kỳ 1-3 cái.
+              Không cho bỏ tick hết (xem toggleEnsembleModel). */}
+          {searchType === "ensemble" && (
+            <div className="flex flex-col items-start">
+              <p className="font-bold">Models (ensemble)</p>
+              <div className="flex items-center gap-x-3 p-2">
+                {ensembleModelOptions.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="flex items-center gap-x-1 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={ensembleModels.includes(opt.value)}
+                      onChange={() => toggleEnsembleModel(opt.value)}
+                    />
+                    <span className="text-sm">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex flex-row items-center gap-x-3">
+        <div className="flex flex-wrap items-end gap-2">
           {/* Translation exists for BEiT3/CLIP, which only understand English.
               Text on screen is native Vietnamese - translating the query into
               English would stop it matching the corpus at all. */}
@@ -221,16 +466,25 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                     setTranslateLang(opt.value as TranslateLanguage)
                   }
                   dropDownWidth={100}
-                  dropDirection="up"
+                  dropDirection="down"
                 />
               </div>
               <div>
-                <p className="font-bold">Button</p>
                 <Button
                   className="h-full bg-gray-500 hover:bg-gray-700"
                   onClick={handleTranslate}
                 >
                   Translate
+                </Button>
+              </div>
+              <div>
+                <Button
+                  className="h-full bg-gray-500 hover:bg-gray-700"
+                  onClick={handleExpand}
+                  disabled={expanding || disabled}
+                  title="Dịch + mở rộng qua backend (Gemini, fallback Ollama local)"
+                >
+                  {expanding ? "Đang mở rộng..." : "Expand"}
                 </Button>
               </div>
             </>
@@ -243,39 +497,114 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               value={searchType}
               onChange={(opt) => setSearchType(opt.value as SearchType)}
               dropDownWidth={194}
-              dropDirection="up"
+              dropDirection="down"
             />
           </div>
         </div>
       </div>
 
-      {/* Gợi ý cú pháp khi chọn Temporal/TRAKE — KHÔNG thêm field nào, chỉ
-          text hướng dẫn. Ô nhập bên dưới vẫn là 1 input duy nhất như cũ. */}
-      {(searchType === "temporal" || searchType === "trake") && (
-        <p className="text-xs text-proto-muted -mt-2">
-          {searchType === "temporal"
-            ? "Nhập đúng 2 đoạn, cách nhau bằng dấu \".\" — vd: \"người bước lên sân khấu. khán giả vỗ tay\""
-            : "Nhập từ 2 đoạn trở lên, theo thứ tự thời gian, cách nhau bằng dấu \".\" — vd: \"cắt nấm. cắt đậu hũ. bật bếp\""}
+      {/* Text-signal filter — additive ASR/OCR annotation, /ensemble-search
+          only (backend never applies it to single/temporal/trake/ocr), so the
+          toggle only shows for that search type to avoid a control that
+          silently does nothing. Hidden by default: most searches don't need
+          it, and showing it always would push the textarea down for everyone. */}
+      {searchType === "ensemble" && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              className="flex items-center gap-1 text-[12.5px] font-semibold text-proto-primary-active w-fit"
+              onClick={() => setFilterRowOpen((open) => !open)}
+            >
+              <Filter size={13} />
+              Text filter
+            </button>
+            <TextIndexStatus />
+          </div>
+
+          {filterRowOpen && (
+            <div className="flex flex-col gap-1">
+              <TextFilterRow
+                label="ASR"
+                options={asrFilterModeOptions}
+                mode={asrFilterMode}
+                onModeChange={(mode) => setAsrFilterMode(mode as AsrFilterMode)}
+                value={asrFilter}
+                onChange={setAsrFilter}
+                placeholder={asrFilterPlaceholder}
+              />
+              <TextFilterRow
+                label="OCR"
+                options={ocrFilterModeOptions}
+                mode={ocrFilterMode}
+                onModeChange={(mode) => setOcrFilterMode(mode as OcrFilterMode)}
+                value={ocrFilter}
+                onChange={setOcrFilter}
+                placeholder={ocrFilterPlaceholder[ocrFilterMode]}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Hai dòng gợi ý cú pháp cho Temporal/TRAKE đã bỏ ("Nhập đúng 2 đoạn,
+          cách nhau bằng dấu ." và bản N đoạn của TRAKE). Cùng lý do với đoạn
+          hướng dẫn OCR bên dưới: đọc một lần là thuộc, từ lần thứ hai trở đi
+          nó chỉ đẩy ô nhập xuống thấp.
+
+          Luật tách đoạn vẫn còn nói ở chỗ gõ vào được: `placeholder` của ô
+          nhập đổi theo searchType và nêu thẳng ví dụ có dấu chấm phân đoạn
+          ("vd: cắt nấm. cắt đậu hũ. bật bếp"). Tách đoạn thật sự làm ở
+          backend — preprocess.py:_split_query_text. */}
+
+      {/* Đoạn hướng dẫn dài cho tuyến OCR đã bỏ. Nó chiếm bốn dòng ngay trên ô
+          nhập, mà cả nhóm đọc đúng một lần rồi thôi — từ lần thứ hai trở đi nó
+          chỉ đẩy ô nhập xuống. Phần đáng nhớ nhất vẫn còn ở chỗ gõ vào được:
+          placeholder của ô nhập nêu sẵn ví dụ có thật. */}
+
+      {/* Ô chữ NHIỀU DÒNG, không phải `<input>` một dòng.
+          Cột nhập rộng 360px, mà một truy vấn TRAKE là bốn câu tả nối nhau —
+          trên một dòng thì thấy được chừng năm chữ đầu, phần còn lại phải rê
+          con trỏ sang mới đọc được. Đúng lúc cần đọc lại nó nhất: trước khi
+          bấm Search. `resize-y` để ai cần thì kéo cao thêm.
+
+          Enter vẫn là Search như cũ, nên `preventDefault` — nếu không nó chèn
+          một dòng trống rồi mới tìm. Shift+Enter mới xuống dòng. */}
+      {/* Kết quả Expand: chỉ hiện ngay sau khi bấm và biến mất khi câu trong
+          ô nhập được sửa. Hai dòng trở xuống là đã chiếm chỗ vĩnh viễn —
+          đúng thứ mà hồi 4.2.0 đã dọn cho khối Dịch. */}
+      {expandError && (
+        <p className="text-[12.5px] text-red-600 leading-snug">{expandError}</p>
+      )}
+      {!expandError && expansion && (
+        <p
+          className="text-[12.5px] text-proto-muted leading-snug"
+          title={expansion.check_units.join(", ")}
+        >
+          {`Check units (${expansion.provider}, ${
+            expansion.elapsed_ms
+          }ms): ${expansion.check_units.join(", ")}`}
         </p>
       )}
 
-      {isOcr && (
-        <p className="text-xs text-proto-muted -mt-2">
-          Gõ ĐÚNG cụm chữ nhìn thấy trên hình — biển hiệu, tên người, dòng chữ
-          chạy, con số. Đừng mô tả cảnh. Gõ càng đặc trưng càng tốt:{" "}
-          <span className="font-bold">Quán ăn Chợ Lớn</span> tốt hơn{" "}
-          <span className="font-bold">quán ăn</span>. Chỉ 180 000/360 531
-          keyframe có chữ, phần còn lại tuyến này không thấy.
-        </p>
-      )}
-
-      <div className="w-full flex flex-row gap-x-3">
-        <input
+      <div className="w-full flex flex-col gap-2">
+        <textarea
           value={queryText}
-          onChange={(e) => setQueryText(e.target.value)}
-          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line"
+          onChange={(e) => {
+            setQueryText(e.target.value);
+            setExpansion(null);
+          }}
+          rows={6}
+          // Dòng chú thích "Enter để tìm · Shift+Enter xuống dòng" đã bỏ khỏi
+          // màn hình — nó chiếm một dòng vĩnh viễn cho một câu đọc một lần.
+          // Chuyển vào tooltip: vẫn tra được, không nằm choán chỗ.
+          title="Enter để tìm · Shift+Enter xuống dòng"
+          className="p-3 w-full rounded-[8px] bg-proto-soft border border-proto-line resize-y min-h-[120px] leading-snug"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !disabled) doSearch();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!disabled) doSearch();
+            }
           }}
           placeholder={
             searchType === "temporal"
@@ -287,7 +616,11 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
               : "Enter your query"
           }
         />
-        <Button onClick={doSearch} disabled={disabled}>
+        {/* Nút "Tuỳ chọn / Ẩn tuỳ chọn" đứng cạnh Search ở đây đã bỏ — cụm
+            tuỳ chọn giờ hiện thường trực, xem chú thích chỗ khai báo. Search
+            còn một mình nên bỏ luôn thẻ bọc `flex` và `flex-1`: một nút duy
+            nhất không cần chia phần ngang với ai. */}
+        <Button onClick={doSearch} disabled={disabled} className="w-full">
           Search
         </Button>
       </div>

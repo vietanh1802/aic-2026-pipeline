@@ -23,6 +23,7 @@ env:
   AIC_BACKEND_URL: ${{ vars.AIC_BACKEND_URL || 'https://aic-api.umaga.fun' }}
   AIC_FRONTEND_URL: ${{ vars.AIC_FRONTEND_URL || 'https://aic.umaga.fun' }}
   AIC_VIDEO_URL: ${{ vars.AIC_VIDEO_URL || 'https://aic-videos.umaga.fun' }}
+  AIC_FRAMES_URL: ${{ vars.AIC_FRAMES_URL || 'https://aic-frames.umaga.fun' }}
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
   CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'aic-2026-pipeline' }}
 
@@ -106,6 +107,7 @@ jobs:
         env:
           VITE_API_BASE_URL: ${{ env.AIC_BACKEND_URL }}
           VITE_VIDEO_BASE_URL: ${{ env.AIC_VIDEO_URL }}
+          VITE_IMAGE_BASE_URL: ${{ env.AIC_FRAMES_URL }}
           VITE_PROXY_BASE_URL: ${{ env.AIC_BACKEND_URL }}
           VITE_APP_VERSION: ${{ needs.version-guard.outputs.version }}
           VITE_APP_COMMIT: ${{ github.sha }}

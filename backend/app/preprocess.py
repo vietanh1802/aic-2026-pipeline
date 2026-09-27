@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 preprocess.py – Tái hiện pipeline từ arXiv 2504.08384
 ======================================================
@@ -74,6 +73,12 @@ BEIT3_MAP_PATH = os.path.join(INDEX_DIR, "beit3_mapping.json")
 CLIP_MAP_PATH  = os.path.join(INDEX_DIR, "clip_mapping.json")
 META_PATH      = os.path.join(INDEX_DIR, "keyframe_metadata.json")
 
+# [siglip2] Model thứ 3. CỐ Ý tách riêng: siglip2_giant_mapping.json là json
+# ĐỘC LẬP của SigLIP2 (faiss_id -> đường dẫn ảnh); keyframe_metadata.json
+# KHÔNG bị thêm field nào, nên không phải sinh lại file 594MB đó.
+SIGLIP2_IDX_PATH = os.path.join(INDEX_DIR, "siglip2_giant.index")
+SIGLIP2_MAP_PATH = os.path.join(INDEX_DIR, "siglip2_giant_mapping.json")
+
 # The five files that have to come from the same generation run. Kept in one
 # place because /status reports on all of them three different ways.
 INDEX_SET_FILES = (
@@ -82,6 +87,9 @@ INDEX_SET_FILES = (
     ("beit3_mapping.json",     BEIT3_MAP_PATH),
     ("clip_mapping.json",      CLIP_MAP_PATH),
     ("keyframe_metadata.json", META_PATH),
+    # [siglip2] 2 file mới. Thiếu -> /status báo, backend vẫn chạy 2 model cũ.
+    ("siglip2_giant.index",         SIGLIP2_IDX_PATH),
+    ("siglip2_giant_mapping.json",  SIGLIP2_MAP_PATH),
 )
 
 # The notebook-generated mappings embed absolute localhost:8000 URLs. We keep
@@ -121,9 +129,21 @@ CLIP_MODEL_NAME  = "ViT-bigG-14"
 CLIP_PRETRAINED  = "laion2b_s39b_b160k"
 
 # Alg.3 — trọng số ensemble. Tổng chuẩn hoá về 1 lúc chạy (pseudocode dòng 2).
-ENSEMBLE_WEIGHTS = {"beit3": 0.5, "clip": 0.5}
+# [siglip2] Thêm entry thứ 3. _merge_ensemble() chuẩn hoá Σw=1 theo TẬP model
+# thực sự có hit ở từng lần gọi, nên 3 trọng số bằng nhau vẫn co giãn đúng cho
+# mọi tổ hợp checkbox (1, 2 hay cả 3 model).
+ENSEMBLE_WEIGHTS = {"beit3": 0.5, "clip": 0.5, "siglip2": 0.5}
 
-MODEL_NAMES = ("beit3", "clip")
+MODEL_NAMES = ("beit3", "clip", "siglip2")
+
+# [siglip2] KHÔNG phải tên field trong keyframe_metadata.json — SigLIP2 dùng
+# json riêng nên metadata không có field nào của nó. Đây là cờ nội bộ để
+# _fid_of() biết phải tra qua _siglip2_name2id thay vì đọc thẳng metadata.
+SIGLIP2_ID_FIELD = "__siglip2_own_json__"
+SIGLIP2_MODEL_ID = "google/siglip2-giant-opt-patch16-384"
+SIGLIP2_DIM      = 1536
+# [siglip2] Weights nằm trong INDEX_DIR như beit3/clip — xem _ensure_siglip2_model().
+SIGLIP2_LOCAL_DIR = os.path.join(INDEX_DIR, "siglip2_giant_model")
 
 # Model chạy khi caller không chỉ định. AIC_MODELS=beit3 để chạy một nhánh khi
 # chưa tải weights CLIP ViT-bigG-14 (~10GB). Lọc theo MODEL_NAMES để tên gõ sai
@@ -140,6 +160,12 @@ _beit3_model = _beit3_tokenizer = None
 _clip_model  = _clip_proc = _clip_tokenizer = None
 _beit3_index = _clip_index = None
 _beit3_map   = _clip_map   = None
+
+# [siglip2]
+_siglip2_model = _siglip2_proc = None
+_siglip2_index = None
+_siglip2_map   = None                       # faiss_id (str) -> đường dẫn ảnh
+_siglip2_name2id: dict[str, int] = {}       # basename ảnh -> faiss_id (tra ngược)
 
 _meta: list[dict] = []
 _meta_loaded  = False
@@ -369,8 +395,116 @@ def _build_relpath_from_map(mapping: dict) -> None:
         _name2relpath.setdefault(fname, rel)
 
 
+
+
+
+def _is_siglip2_dir(d: str) -> bool:
+    """[siglip2] Thư mục này có phải bản SigLIP2 giải nén phẳng không?
+
+    Chỉ có config.json là chưa đủ: INDEX_DIR còn chứa index/mapping của 2 model
+    kia, và về lý thuyết có thể có config.json của thứ khác. Đọc model_type /
+    architectures để chắc chắn, thay vì đoán theo sự tồn tại của file.
+    """
+    cfg = os.path.join(d, "config.json")
+    if not os.path.exists(cfg):
+        return False
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            c = json.load(f)
+    except Exception:
+        return False
+    blob = (str(c.get("model_type", "")) + " "
+            + " ".join(c.get("architectures") or [])).lower()
+    return "siglip" in blob
+
+def _ensure_siglip2_model() -> str:
+    """[siglip2] Trả về nguồn nạp SigLIP2, ưu tiên bản ĐÃ CÓ trong INDEX_DIR.
+
+    Cùng pattern và CÙNG LÝ DO với _load_beit3() (checkpoint .pth + .spm trong
+    INDEX_DIR) và _ensure_clip_checkpoint() (open_clip_model.safetensors trong
+    INDEX_DIR): cache mặc định của huggingface_hub không ổn định trong môi
+    trường đang chạy (đổi ổ đĩa, venv mới, nhiều máy khác nhau), nên để
+    from_pretrained("google/...") tự xử lý là mở đường tải lại ~3.5GB mỗi lần
+    và ăn rate-limit của HuggingFace. Tải tường minh 1 lần vào INDEX_DIR —
+    cùng thư mục bền vững đã dùng cho 2 model kia.
+
+    Chấp nhận cả 4 kiểu bố trí, vì tuỳ cách tải/copy mà file nằm khác nhau:
+      0. PHẲNG ngay trong INDEX_DIR: config.json + model-*.safetensors +
+         tokenizer* nằm chung với beit3.index/clip.index. Đây là kết quả của
+         "tải HF xong copy toàn bộ vào indexes/" — kiểu hay gặp nhất.
+      1. INDEX_DIR/siglip2_giant_model/config.json   (snapshot_download local_dir)
+      2. INDEX_DIR/siglip2-giant-opt-patch16-384/    (copy tay, giữ tên repo)
+      3. INDEX_DIR/models--google--siglip2-.../snapshots/<hash>/  (cache layout,
+         tức copy nguyên thư mục ~/.cache/huggingface/hub qua)
+    Không thấy kiểu nào thì mới tải, và tải vào (1).
+    """
+    # (0) Weights nằm PHẲNG ngay trong INDEX_DIR — kết quả của việc copy thẳng
+    #     nội dung snapshot vào indexes/ (config.json + model-*.safetensors +
+    #     tokenizer* nằm chung với beit3.index/clip.index). Phải kiểm model_type
+    #     vì INDEX_DIR có thể chứa config.json của thứ khác.
+    if _is_siglip2_dir(INDEX_DIR):
+        return INDEX_DIR
+
+    for cand in (SIGLIP2_LOCAL_DIR,
+                 os.path.join(INDEX_DIR, SIGLIP2_MODEL_ID.split("/")[-1])):
+        if os.path.exists(os.path.join(cand, "config.json")):
+            return cand
+
+    snap_root = os.path.join(INDEX_DIR,
+                             "models--" + SIGLIP2_MODEL_ID.replace("/", "--"),
+                             "snapshots")
+    if os.path.isdir(snap_root):
+        for s in sorted(os.listdir(snap_root)):
+            p = os.path.join(snap_root, s)
+            if os.path.exists(os.path.join(p, "config.json")):
+                return p
+
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    print(f"[preprocess] Downloading SigLIP2 (~3.5GB, chỉ 1 lần vào "
+          f"{SIGLIP2_LOCAL_DIR})...")
+    from huggingface_hub import snapshot_download
+    snapshot_download(repo_id=SIGLIP2_MODEL_ID, local_dir=SIGLIP2_LOCAL_DIR)
+    print(f"[preprocess] SigLIP2 model đã lưu tại {SIGLIP2_LOCAL_DIR}")
+    return SIGLIP2_LOCAL_DIR
+
+def _load_siglip2():
+    """[siglip2] Nạp SigLIP2-Giant — cùng khuôn _load_beit3()/_load_clip().
+
+    Dùng transformers.AutoModel/AutoProcessor GIỐNG HỆT cell indexing đã tạo ra
+    siglip2_giant.index, để embedding TEXT ở đây nằm cùng không gian vector với
+    embedding ẢNH trong index — lệch processor/model version có thể sai lặng lẽ
+    mà không báo lỗi gì.
+    """
+    global _siglip2_model, _siglip2_proc
+    if _siglip2_model is not None:
+        return
+    from transformers import AutoProcessor, AutoModel
+
+    src = _ensure_siglip2_model()
+    dtype = torch.float16 if DEVICE == "cuda" else torch.float32
+    _siglip2_proc = AutoProcessor.from_pretrained(src)
+    # `dtype=` là kwarg MỚI; transformers < 4.56 chỉ nhận `torch_dtype=`.
+    try:
+        _siglip2_model = AutoModel.from_pretrained(src, dtype=dtype)
+    except TypeError:
+        _siglip2_model = AutoModel.from_pretrained(src, torch_dtype=dtype)
+    _siglip2_model = _siglip2_model.to(DEVICE).eval()
+    # In ra CLASS và model_type thật sự nạp được. INDEX_DIR có thể chứa
+    # config.json/tokenizer* của nhiều model (CLIP cũng để file ở đó), nạp nhầm
+    # thì embedding sai lặng lẽ — thà nói to ra ngay lúc khởi động.
+    _mt = getattr(getattr(_siglip2_model, "config", None), "model_type", "?")
+    print(f"[preprocess] SigLIP2 loaded on {DEVICE} (dtype={dtype}) từ {src}")
+    print(f"[preprocess] SigLIP2 class={type(_siglip2_model).__name__} "
+          f"model_type={_mt}")
+    if "siglip" not in str(_mt).lower():
+        print(f"[preprocess] ⚠ model_type={_mt!r} KHÔNG phải siglip — gần như "
+              f"chắc chắn đã nạp nhầm model từ {src}. Tách weights SigLIP2 ra "
+              f"thư mục riêng (INDEX_DIR/siglip2_giant_model/).")
+
+
 def _load_indexes():
     global _beit3_index, _clip_index, _beit3_map, _clip_map
+    global _siglip2_index, _siglip2_map, _siglip2_name2id
     if _beit3_index is None and os.path.exists(BEIT3_IDX_PATH):
         _beit3_index = faiss.read_index(BEIT3_IDX_PATH)
         _index_loaded["beit3.index"] = _file_identity(BEIT3_IDX_PATH)
@@ -387,6 +521,25 @@ def _load_indexes():
             _index_loaded["clip_mapping.json"] = _file_identity(CLIP_MAP_PATH)
             _build_relpath_from_map(_clip_map)
         print(f"[preprocess] CLIP FAISS: {_clip_index.ntotal} vectors")
+    # [siglip2] Cùng khuôn 2 khối trên, KHÔNG sửa gì 2 khối cũ.
+    #
+    # Khác 1 điểm: dựng thêm _siglip2_name2id (basename -> faiss_id). Vì
+    # keyframe_metadata.json không mang field nào của SigLIP2, mọi chỗ cần
+    # "faiss_id SigLIP2 của keyframe này" đều đi qua bảng tra ngược này.
+    if _siglip2_index is None and os.path.exists(SIGLIP2_IDX_PATH):
+        _siglip2_index = faiss.read_index(SIGLIP2_IDX_PATH)
+        _index_loaded["siglip2_giant.index"] = _file_identity(SIGLIP2_IDX_PATH)
+        if os.path.exists(SIGLIP2_MAP_PATH):
+            _siglip2_map = _read_json(SIGLIP2_MAP_PATH)
+            _index_loaded["siglip2_giant_mapping.json"] = _file_identity(SIGLIP2_MAP_PATH)
+            _build_relpath_from_map(_siglip2_map)
+            _siglip2_name2id = {os.path.basename(p): int(i)
+                                for i, p in _siglip2_map.items() if p}
+            print(f"[preprocess] SigLIP2 mapping: {len(_siglip2_name2id)} keyframes")
+        else:
+            print("[preprocess] ⚠ SigLIP2: thiếu siglip2_giant_mapping.json -> "
+                  "search được nhưng KHÔNG rerank/temporal/trake được")
+        print(f"[preprocess] SigLIP2 FAISS: {_siglip2_index.ntotal} vectors")
 
 
 def _load_meta():
@@ -411,11 +564,50 @@ def _load_meta():
     print(f"[preprocess] Metadata: {len(_meta)} keyframes · {len(_video_frames)} videos")
 
 
+def frames_for_video(video_id : str) -> list[str] :
+    """Every frame name belonging to one video, in frame_idx order.
+
+    Thin read-only view over _video_frames (already built by _load_meta() at
+    startup from keyframe_metadata.json's own "video" field -- no new preload
+    step, no extra memory beyond the dict wrapper itself, since these are the
+    same metadata objects _meta already holds). Exists so other modules (e.g.
+    text_lookup.py) never reach into _video_frames directly. An empty list
+    means the video has no keyframes in the visual corpus -- see /status's
+    "videos" count, which is exactly len(_video_frames)."""
+    return [m["name"] for m in _video_frames.get(video_id, [])]
+
+
+def fps_for_video(video_id : str) -> float :
+    """fps of one video, read off its own keyframe metadata. 25.0 fallback
+    matches temporal_search()'s own default when a record has no fps."""
+    frames = _video_frames.get(video_id, [])
+    return float(frames[0]["fps"]) if frames else 25.0
+
+
 def _model_parts(model_name: str):
     """Trả (index, mapping, hàm encode text, tên trường faiss_id) của 1 model."""
     if model_name == "beit3":
         return _beit3_index, _beit3_map, encode_text_beit3, "faiss_id_beit3"
+    # [siglip2] id_field là CỜ NỘI BỘ, không phải field metadata — xem _fid_of().
+    if model_name == "siglip2":
+        return _siglip2_index, _siglip2_map, encode_text_siglip2, SIGLIP2_ID_FIELD
     return _clip_index, _clip_map, encode_text_clip, "faiss_id_clip"
+
+
+def _fid_of(m: dict, id_field: str) -> int:
+    """faiss_id của 1 bản ghi metadata, trong không gian id của model đang xét.
+
+    [siglip2] beit3/clip đọc thẳng field trong keyframe_metadata.json. SigLIP2
+    KHÔNG có field nào ở đó (dùng json riêng), nên tra ngược theo tên file qua
+    _siglip2_name2id — dựng từ siglip2_giant_mapping.json lúc _load_indexes().
+
+    Trả -1 khi không tra được: mọi nơi gọi đều đã lọc `>= 0` sẵn, nên keyframe
+    nào SigLIP2 chưa index (index mới chạy một phần) tự bị bỏ qua thay vì làm
+    hỏng cả lượt tìm.
+    """
+    if id_field == SIGLIP2_ID_FIELD:
+        return int(_siglip2_name2id.get(m.get("name", ""), -1))
+    return int(m.get(id_field, -1))
 
 
 def _image_url(name: str) -> str:
@@ -489,6 +681,69 @@ def encode_text_clip(text: str) -> np.ndarray:
     return feats.cpu().numpy().astype("float32")
 
 
+
+def _siglip2_features(outputs, kind: str):
+    """[siglip2] Lấy tensor feature từ output của get_text_features()/
+    get_image_features(), chịu được mọi kiểu trả về của các bản transformers.
+
+    KHỚP CHÍNH XÁC extract_siglip2_features() trong cell indexing đã tạo ra
+    siglip2_giant.index — cùng THỨ TỰ ƯU TIÊN, nên text và ảnh chắc chắn nằm
+    cùng một không gian vector:
+        1. Tensor trực tiếp
+        2. .pooler_output      <- transformers 5.x trả cái này
+        3. .text_embeds / .image_embeds
+        4. tensor 2D đầu tiên trong tuple/list
+
+    Docstring gốc của cell indexing: "For current Transformers 5.x in the
+    user's environment, it returns BaseModelOutputWithPooling. We extract
+    pooler_output first." Index đã build bằng pooler_output, nên nhánh text
+    PHẢI theo đúng thứ tự này, không được đổi.
+    """
+    embeds_attr = "text_embeds" if kind == "text" else "image_embeds"
+
+    if torch.is_tensor(outputs):
+        feats = outputs
+    elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+        feats = outputs.pooler_output
+    elif hasattr(outputs, embeds_attr) and getattr(outputs, embeds_attr) is not None:
+        feats = getattr(outputs, embeds_attr)
+    elif isinstance(outputs, (tuple, list)):
+        feats = next((x for x in outputs if torch.is_tensor(x) and x.ndim == 2), None)
+        if feats is None:
+            raise RuntimeError(f"Không tìm thấy tensor 2D trong output SigLIP2 ({kind})")
+    else:
+        raise TypeError(f"Kiểu output SigLIP2 không hỗ trợ ({kind}): {type(outputs)}")
+
+    if not torch.is_tensor(feats):
+        raise TypeError(f"Feature SigLIP2 không phải tensor ({kind}): {type(feats)}")
+    if feats.ndim != 2 or feats.shape[-1] != SIGLIP2_DIM:
+        raise RuntimeError(
+            f"Feature SigLIP2 sai shape ({kind}): {tuple(feats.shape)}, "
+            f"mong đợi (batch, {SIGLIP2_DIM}). Nhiều khả năng nạp nhầm model — "
+            f"kiểm tra config.json trong INDEX_DIR có bị lẫn của model khác không.")
+    return feats
+
+@torch.no_grad()
+def encode_text_siglip2(text: str) -> np.ndarray:
+    """SigLIP2-Giant -> (1, 1536) float32 L2-normalized.
+
+    [siglip2] CHƯA KIỂM CHỨNG bằng thực nghiệm: cell indexing chỉ gọi
+    get_image_features() để build index, chưa bao giờ chạy nhánh TEXT.
+    padding="max_length" theo đúng khuyến nghị của dòng SigLIP/SigLIP2 (train
+    theo độ dài cố định; câu ngắn không pad sẽ lệch phân bố so với lúc train).
+    Chạy verify_siglip2.py trước khi tin dùng trong ensemble.
+    """
+    _load_siglip2()
+    inputs = _siglip2_proc(text=[text], padding="max_length", truncation=True,
+                           return_tensors="pt")
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    out    = _siglip2_model.get_text_features(**inputs)
+    feats  = _siglip2_features(out, "text")
+    feats  = feats.float()
+    feats  = feats / feats.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    return feats.cpu().numpy().astype("float32")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Bước 1 — tìm thô trên MỘT model
 # ─────────────────────────────────────────────────────────────────────────────
@@ -556,7 +811,9 @@ def _neighbor_faiss_ids(meta: dict, model_name: str) -> list[int]:
     thứ tự thời gian trong cùng video, cửa sổ ±2 keyframe. Không có bước dự
     phòng này thì rerank im lặng trở thành không-làm-gì.
     """
-    id_field = "faiss_id_beit3" if model_name == "beit3" else "faiss_id_clip"
+    # [siglip2] Lấy id_field qua _model_parts để model thứ 3 nhận đúng cờ
+    # SIGLIP2_ID_FIELD, thay cho ternary 2 nhánh cũ.
+    _, _, _, id_field = _model_parts(model_name)
 
     raw = meta.get("neighbors_clip") or []
     if raw:
@@ -565,8 +822,11 @@ def _neighbor_faiss_ids(meta: dict, model_name: str) -> list[int]:
         out = []
         for cid in raw:
             nb = _clipid2meta.get(int(cid))
-            if nb and nb.get(id_field, -1) >= 0:
-                out.append(int(nb[id_field]))
+            if nb is None:
+                continue
+            fid = _fid_of(nb, id_field)          # [siglip2]
+            if fid >= 0:
+                out.append(fid)
         return out
 
     frames = _video_frames.get(meta.get("video", ""), [])
@@ -577,8 +837,8 @@ def _neighbor_faiss_ids(meta: dict, model_name: str) -> list[int]:
     except StopIteration:
         return []
     lo, hi = max(0, pos - 2), min(len(frames), pos + 3)
-    return [int(frames[i][id_field]) for i in range(lo, hi)
-            if frames[i].get(id_field, -1) >= 0]
+    out = [_fid_of(frames[i], id_field) for i in range(lo, hi)]   # [siglip2]
+    return [f for f in out if f >= 0]
 
 
 def rerank_one_model(hits: list[dict], query: str, model_name: str) -> list[dict]:
@@ -750,7 +1010,7 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     anchor_fi = anchor.get("frame_idx", 0)
     fps       = float(anchor.get("fps", 25.0))
 
-    frames = [m for m in _video_frames.get(video, []) if m.get(id_field, -1) >= 0]
+    frames = [m for m in _video_frames.get(video, []) if _fid_of(m, id_field) >= 0]
     if not frames:
         return {"error": f"Video {video} chưa có frame nào được index"}
 
@@ -775,7 +1035,7 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     left = []
     for i in range(pos, max(-1, pos - max_frames - 1), -1):
         m = frames[i]
-        s = score_frame(m[id_field], q_start)
+        s = score_frame(_fid_of(m, id_field), q_start)
         if s < sim_thr:
             break
         left.append((m, s))
@@ -784,7 +1044,7 @@ def temporal_search(query_start: str, query_end: str, anchor_name: str,
     right = []
     for i in range(pos, min(len(frames), pos + max_frames + 1)):
         m = frames[i]
-        s = score_frame(m[id_field], q_end)
+        s = score_frame(_fid_of(m, id_field), q_end)
         if s < sim_thr:
             break
         right.append((m, s))
@@ -852,10 +1112,20 @@ def preload() -> None:
     _load_indexes()
     _load_meta()
     for name in ACTIVE_MODELS:
+        # [siglip2] Model chưa có index thì ĐỪNG nạp weights. SigLIP2-Giant
+        # nặng ~3.5GB: khi index chưa build xong, không có nhánh này thì boot
+        # vẫn tải đủ 3.5GB về ngồi không — chậm boot, tốn RAM/VRAM, mà
+        # _search_one() vẫn trả [] ngay vì index is None.
+        _idx, _, _, _ = _model_parts(name)
+        if _idx is None:
+            print(f"[preprocess] {name}: chưa có index -> bỏ qua preload weights")
+            continue
         if name == "beit3":
             _load_beit3()
         elif name == "clip":
             _load_clip()
+        elif name == "siglip2":
+            _load_siglip2()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -905,7 +1175,7 @@ def trake_search(queries: list[str], anchor_name: str, gap_c: int = 60,
     video = anchor.get("video", "")
     fps   = float(anchor.get("fps", 25.0))
 
-    frames = [m for m in _video_frames.get(video, []) if m.get(id_field, -1) >= 0]
+    frames = [m for m in _video_frames.get(video, []) if _fid_of(m, id_field) >= 0]
     F = len(frames)
     if F == 0:
         return {"error": f"Video {video} chưa có frame nào được index"}
@@ -922,7 +1192,7 @@ def trake_search(queries: list[str], anchor_name: str, gap_c: int = 60,
         except Exception:
             return -1.0
 
-    scores = [[score_frame(frames[j][id_field], q_embs[i]) for j in range(F)]
+    scores = [[score_frame(_fid_of(frames[j], id_field), q_embs[i]) for j in range(F)]
              for i in range(n)]
 
     # Bước 2 — DP: dp[i][j] = tổng điểm tốt nhất nếu event i chọn frame j.
@@ -1120,26 +1390,151 @@ def trake_search_candidates(queries: list[str], top_m: int = 50,
                             top_videos: int = 5, gap_c: int = 60,
                             min_score: float = 0.10,
                             model_name: str = "clip") -> list[dict]:
-    """Tương tự temporal_search_candidates() nhưng cho N query (TRAKE). Gọi
-    trake_search() ĐÃ CÓ — y nguyên — cho mỗi video ứng viên.
+    """[VIẾT LẠI — đơn giản hóa, thay hoàn toàn cách cũ]
 
-    min_score: ngưỡng "đủ tốt" lúc khám phá video (trake_search() bản thân
-    không có sim_thr như temporal_search(), nên tham số này tách riêng thay
-    vì tái dùng — cùng default 0.10 cho nhất quán toàn hệ thống).
+    KHÔNG còn gọi trake_search()/_discover_candidate_videos() — tự chứa toàn
+    bộ logic mới, để không đụng 2 hàm đó (trake_search() vẫn dùng cho
+    /trake-search thủ công có anchor_name; _discover_candidate_videos() vẫn
+    dùng cho temporal_search_candidates()).
+
+    Flow mới, theo đúng ý tưởng đã thống nhất:
+      1. N query (đã tách sẵn bởi _split_query_text()) → search ĐỘC LẬP N lần
+         bằng ensemble_search() ĐẦY ĐỦ (Alg.2 rerank + Alg.3 ensemble BEiT3+
+         CLIP) trên TOÀN BỘ index — không giới hạn 1 video.
+      2. Đếm TẦN SUẤT: video nào xuất hiện trong kết quả của bao nhiêu trong
+         N lần search đó. Lọc lấy top_videos video tần suất cao nhất.
+      3. Encode N câu query CHỈ 1 LẦN (single model, đúng tham số model_name
+         hiện có) — dùng lại cho MỌI video ứng viên. Bản cũ encode lại N câu
+         này mỗi lần gọi trake_search() cho từng video (N × top_videos lần
+         encode) — đây mới là nguồn chậm thật sự (encode chạy CPU), không
+         phải độ phức tạp DP (DP chỉ là numpy thuần, rẻ).
+      4. Với MỖI video ứng viên: chấm điểm N query lên mọi frame video đó,
+         chọn theo GREEDY TUẦN TỰ — mỗi event chọn frame điểm cao nhất trong
+         số frame ĐỨNG SAU frame đã chọn của event trước (trong gap_c) —
+         O(N×F)/video, không phải O(N×F²) như DP cũ.
+
+    LƯU Ý — 1 điều chỉnh so với đề xuất "chọn độc lập, không ràng buộc thứ
+    tự": rủi ro thật với hành động lặp lại (nấu ăn lặp thao tác, đua xe lặp
+    vòng — phổ biến ở TRAKE) là event sau vô tình chọn trúng frame đứng
+    TRƯỚC event trước về thời gian → sai bản chất TRAKE (yêu cầu đúng thứ
+    tự). Greedy tuần tự vẫn O(N×F) — gần như y hệt chi phí ý tưởng gốc, chỉ
+    thêm 1 điều kiện lọc — nhưng đảm bảo đúng thứ tự.
+
+    Response format GIỮ NGUYÊN 100% — UI không cần đổi gì:
+      [{"video", "events": [{"name","url","frame_idx","timestamp","score",
+        "candidates"}, ...], "combined_score", "discovery_score",
+        "discovery_score_sum"}, ...]
     """
     _load_indexes()
     _load_meta()
 
-    candidates = _discover_candidate_videos(queries, model_name, top_m,
-                                            min_score=min_score)[:top_videos]
+    n = len(queries)
+    if n < 2:
+        return []
+
+    # ── Bước 1+2: discovery bằng ensemble_search() thật + đếm tần suất video ──
+    video_hits: dict[str, list[dict]] = {}
+    for q in queries:
+        hits = ensemble_search(q, top_k=top_m, use_rerank=True)
+        seen_this_query: set[str] = set()
+        for h in hits:
+            v = h.get("video")
+            if not v or v in seen_this_query:
+                continue
+            seen_this_query.add(v)
+            video_hits.setdefault(v, []).append(h)
+
+    ranked_videos = sorted(
+        video_hits.items(),
+        key=lambda kv: (-len(kv[1]), -sum(h["distance"] for h in kv[1])),
+    )[:top_videos]
+    if not ranked_videos:
+        return []
+
+    # ── Bước 3: encode N query CHỈ 1 LẦN, dùng lại cho mọi video ────────────
+    index, _, encode_fn, id_field = _model_parts(model_name)
+    if index is None or not _meta:
+        return []
+    q_embs = [encode_fn(q).ravel() for q in queries]
+
+    def score_frame(fid: int, q: np.ndarray) -> float:
+        """Giống hệt score_frame trong trake_search()/temporal_search() —
+        reconstruct() rồi dot product, chính xác tuyệt đối."""
+        try:
+            vec = index.reconstruct(int(fid)).astype("float32").ravel()
+            return float(np.dot(q, vec))
+        except Exception:
+            return -1.0
+
     results = []
-    for c in candidates:
-        r = trake_search(queries, anchor_name=c["anchor_name"], gap_c=gap_c,
-                         model_name=model_name)
-        if "error" not in r:
-            r["discovery_score"]     = c["discovery_score"]
-            r["discovery_score_sum"] = c["discovery_score_sum"]
-            results.append(r)
+    for video, hits in ranked_videos:
+        frames = [m for m in _video_frames.get(video, [])
+                 if _fid_of(m, id_field) >= 0]
+        F = len(frames)
+        if F == 0:
+            continue
+
+        scores = [[score_frame(_fid_of(frames[j], id_field), q_embs[i]) for j in range(F)]
+                 for i in range(n)]
+
+        fps = float(frames[0].get("fps", 25.0))
+        gap_frames = gap_c * fps if gap_c else None
+
+        # ── Bước 4: GREEDY TUẦN TỰ — mỗi event chọn max trong số frame đứng
+        # SAU frame đã chọn của event trước (và trong gap_c) ────────────────
+        chosen_idx: list[int] = []
+        lower = -1
+        ok = True
+        for i in range(n):
+            best_j, best_s = -1, float("-inf")
+            for j in range(F):
+                if j <= lower:
+                    continue
+                if gap_frames is not None and chosen_idx:
+                    prev_fi = frames[chosen_idx[-1]]["frame_idx"]
+                    if (frames[j]["frame_idx"] - prev_fi) > gap_frames:
+                        continue
+                if scores[i][j] > best_s:
+                    best_s, best_j = scores[i][j], j
+            if best_j < 0:
+                ok = False
+                break
+            chosen_idx.append(best_j)
+            lower = best_j
+        if not ok:
+            continue
+
+        # Candidate list mỗi event — top-10, để UI review/đổi (Figure 4c),
+        # y nguyên logic top_candidates() cũ trong trake_search().
+        def top_candidates(i: int, k: int = 10) -> list[dict]:
+            order = sorted(range(F), key=lambda j: -scores[i][j])[:k]
+            return [{
+                "name": frames[j]["name"], "url": _image_url(frames[j]["name"]),
+                "frame_idx": frames[j].get("frame_idx"),
+                "timestamp": frames[j].get("timestamp_str", ""),
+                "score": round(scores[i][j] * 100, 2),
+            } for j in order]
+
+        events = []
+        for i in range(n):
+            j = chosen_idx[i]
+            events.append({
+                "name":      frames[j]["name"],
+                "url":       _image_url(frames[j]["name"]),
+                "frame_idx": frames[j].get("frame_idx"),
+                "timestamp": frames[j].get("timestamp_str", ""),
+                "score":     round(scores[i][j] * 100, 2),
+                "candidates": top_candidates(i),
+            })
+
+        results.append({
+            "video":               video,
+            "events":              events,
+            "combined_score":      round(
+                sum(scores[i][chosen_idx[i]] for i in range(n)) * 100, 2),
+            "discovery_score":     len(hits),
+            "discovery_score_sum": round(sum(h["distance"] for h in hits), 4),
+        })
 
     results.sort(key=lambda r: -(r.get("combined_score") or 0))
     return results
@@ -1202,6 +1597,9 @@ def system_status() -> dict:
         "vectors": {
             "beit3": _beit3_index.ntotal if _beit3_index is not None else 0,
             "clip":  _clip_index.ntotal  if _clip_index  is not None else 0,
+            # [siglip2] 0 = chưa có index. Frontend đọc đúng số này để quyết
+            # định có cho tick checkbox SigLIP2 hay không.
+            "siglip2": _siglip2_index.ntotal if _siglip2_index is not None else 0,
         },
         # Which build of the index set this process is actually serving, and
         # whether the files underneath it have moved since. `stale_files` being
@@ -1224,6 +1622,8 @@ def system_status() -> dict:
                               f"({'loaded' if _beit3_model else 'lazy'})",
             "coarse_grained": f"OpenCLIP {CLIP_MODEL_NAME} 1280-dim "
                               f"({'loaded' if _clip_model else 'lazy'})",
+            "siglip2":        f"SigLIP2-Giant {SIGLIP2_DIM}-dim "
+                              f"({'loaded' if _siglip2_model else 'lazy'})",
         },
         "ensemble_weights": ENSEMBLE_WEIGHTS,
     }

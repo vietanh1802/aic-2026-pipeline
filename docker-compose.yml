@@ -40,10 +40,11 @@ services:
       # FAISS indexes: up to s3://aic2026-artifacts/indexes/, then
       # ssm-sync-indexes.sh pulls them onto /opt/aic/indexes on the host.
       #
-      # Never leave this at its default: backend/app/indexes/ is in .gitignore,
-      # so the checkout CI builds the image from is always EMPTY. The image
-      # would ship without the files and /ocr-search would 503 while every
-      # other check stayed green.
+      # Only an override. app/ocr_search.py already falls back to AIC_INDEX_DIR
+      # above, which is where those files land — and it has to, because
+      # ssm-deploy-backend.sh runs `docker compose up` against the compose file
+      # ALREADY ON THE HOST. A deploy ships an image, never this file, so a
+      # variable added here alone would never reach production.
       AIC_OCR_DIR: ${AIC_OCR_DIR:-/opt/aic/indexes}
       # The collaboration database. Bind-mounted to the host beside the
       # indexes and images, not left in the container's writable layer: every
@@ -56,6 +57,23 @@ services:
       AIC_CORS_ORIGINS: ${AIC_CORS_ORIGINS:-https://aic.umaga.fun}
       AIC_MODELS: ${AIC_MODELS:-}
       AIC_WARMUP: ${AIC_WARMUP:-1}
+      # Read only when the Retrieval Evaluation benchmark asks for a translation
+      # (app/translation.py, lazily via os.getenv). The app starts fine without
+      # it; only a benchmark run fails, one query at a time, until it is set.
+      #
+      # Passthrough, never a value: the key comes from the host — either the
+      # `.env` file docker compose reads for interpolation, next to this file at
+      # /opt/aic/app/.env, or the shell that runs `docker compose up`. Like
+      # AIC_OCR_DIR above, a deploy ships an image and not this file, so adding
+      # the line here also means adding it by hand to /opt/aic/app/docker-compose.yml.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Nút Expand (app/expansion.py): fallback Ollama local khi Gemini chết.
+      # EC2 BỎ TRỐNG (card không đủ VRAM cho qwen 27B cạnh search stack — xem
+      # .env.example); chỉ máy thi tự chạy backend mới đặt giá trị này.
+      # Cùng cơ chế passthrough như GEMINI_API_KEY — giá trị thật sống ở .env
+      # trên host, không nằm trong repo.
+      AIC_OLLAMA_URL: ${AIC_OLLAMA_URL:-}
+      AIC_OLLAMA_MODEL: ${AIC_OLLAMA_MODEL:-qwen3.8:27b}
       HF_HOME: /opt/aic/model-cache/huggingface
       TORCH_HOME: /opt/aic/model-cache/torch
       XDG_CACHE_HOME: /opt/aic/model-cache/xdg

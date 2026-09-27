@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 
 import {
-  claimTask,
+
   getBoard,
-  releaseTask,
+
   type BoardResponse,
   type BoardTask,
 } from "../api/board";
 import { ApiRequestError } from "../api/base";
 import Button from "../components/Button";
+import { taskBriefText } from "../helpers/taskBrief";
 import { useAuthStore } from "../store/authStore";
 
 const POLL_MS = 3000;
@@ -31,7 +32,7 @@ const TYPE_LABEL: Record<BoardTask["type"], string> = {
 export default function Board({
   onOpenTask,
 }: {
-  onOpenTask: (task: BoardTask) => void;
+  onOpenTask: (task: BoardTask, options?: { openBasket?: boolean }) => void;
 }) {
   const me = useAuthStore((state) => state.user);
   const [board, setBoard] = useState<BoardResponse | null>(null);
@@ -63,23 +64,32 @@ export default function Board({
     };
   }, []);
 
-  const act = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn();
-      setBoard(await getBoard());
-    } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : "Thao tác hỏng");
-    }
-  };
+  // `act` từng bọc claimTask/releaseTask — hai thứ duy nhất trang này gọi mà
+  // có thể đổi dữ liệu. Bỏ Nhận/Nhả rồi thì Board chỉ còn đọc: nó tải bảng và
+  // mở task, không ghi gì. Xoá luôn cho khỏi ai tưởng còn đường ghi ở đây.
 
   const rowsPerQuery = board?.round?.rows_per_query ?? 100;
+  // Mẫu số của cột "số người đã làm". 5 chỉ là giá trị chống đỡ cho lần
+  // render đầu khi bảng chưa về — con số thật do backend đếm từ danh sách
+  // tài khoản, nên thêm hay khoá một người là nó tự đổi theo.
+  const teamSize = board?.team_size ?? 5;
   const tasks = (board?.tasks ?? []).filter((task) => {
-    if (filter === "open") return !task.owner;
-    if (filter === "mine") return task.owner?.id === me?.id;
+    // Không còn quyền sở hữu, nên lọc theo VIỆC ĐÃ LÀM: câu nào chưa ai đụng
+    // tới, và câu nào chính tôi đã có đáp án.
+    if (filter === "open") return task.contributors.length === 0;
+    if (filter === "mine")
+      return task.contributors.some((c) => c.id === me?.id);
     return true;
   });
-  const done = (board?.tasks ?? []).filter(
-    (task) => task.answer_count >= rowsPerQuery
+  // "Đủ 100 dòng" nghĩa là CÓ MỘT NGƯỜI làm xong, không phải tổng của cả nhóm
+  // đạt 100.
+  //
+  // Trước đây đếm bằng task.answer_count, mà con số đó cộng dồn cả 5 người: ba
+  // người mỗi người 40 dòng thành 120, vượt 100, và câu đó bị tính là xong
+  // trong khi không ai có nổi một danh sách hoàn chỉnh để nộp. Bài nộp lấy của
+  // MỘT người, nên phép đếm cũng phải theo từng người.
+  const done = (board?.tasks ?? []).filter((task) =>
+    task.contributors.some((c) => c.count >= rowsPerQuery)
   ).length;
 
   if (board && !board.round) {
@@ -119,7 +129,10 @@ export default function Board({
         {(
           [
             ["all", "Tất cả"],
-            ["open", "Chưa ai nhận"],
+            // "Chưa ai nhận" là chữ còn sót từ thời Nhận/Nhả. Bộ lọc này vốn
+            // đã đọc contributors, tức là "chưa ai LÀM" — nhãn cũ mô tả một cơ
+            // chế không còn tồn tại.
+            ["open", "Chưa ai làm"],
             ["mine", "Của tôi"],
           ] as const
         ).map(([id, label]) => (
@@ -147,15 +160,19 @@ export default function Board({
               <th className="text-left px-3 py-2 w-16">Mã</th>
               <th className="text-left px-3 py-2 w-20">Loại</th>
               <th className="text-left px-3 py-2">Đề bài</th>
-              <th className="text-left px-3 py-2 w-36">Người giữ</th>
-              <th className="text-left px-3 py-2 w-24">Đáp án</th>
+              <th className="text-left px-3 py-2 w-44">Ai đã làm</th>
+              <th className="text-left px-3 py-2 w-28">Số người đã làm</th>
               <th className="px-3 py-2 w-32"></th>
             </tr>
           </thead>
           <tbody>
             {tasks.map((task) => {
-              const mine = task.owner?.id === me?.id;
-              const full = task.answer_count >= rowsPerQuery;
+              const mine = task.contributors.some((c) => c.id === me?.id);
+              // Cùng phép đếm với `done` ở trên: đã có ít nhất một người làm
+              // xong một danh sách đầy đủ.
+              const full = task.contributors.some(
+                (c) => c.count >= rowsPerQuery
+              );
               return (
                 <tr
                   key={task.id}
@@ -170,56 +187,92 @@ export default function Board({
                     </span>
                   </td>
                   <td className="px-3 py-2 text-proto-body">
-                    <span className="line-clamp-2">{task.query_text}</span>
+                    <span className="line-clamp-2">{taskBriefText(task)}</span>
                     {task.viewers.length > 0 && (
                       <span className="text-[10.5px] text-[#9b6dd6] block mt-0.5">
                         đang xem: {task.viewers.map((v) => v.display_name).join(", ")}
                       </span>
                     )}
                   </td>
+                  {/* Thay cho cột "Người giữ". Ai cũng làm được mọi câu, nên
+                      thứ đáng biết không phải ai đang giữ mà là câu nào đã có
+                      người ngó tới, và mỗi người được bao nhiêu dòng. Tên tôi
+                      in đậm để tự nhận ra giữa 5 người. */}
                   <td className="px-3 py-2 text-proto-muted">
-                    {task.owner ? (
-                      <span className={mine ? "text-proto-ink font-semibold" : ""}>
-                        {task.owner.display_name}
+                    {task.contributors.length === 0 ? (
+                      <span className="text-proto-line">chưa ai làm</span>
+                    ) : (
+                      <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                        {task.contributors.map((c) => (
+                          <span
+                            key={c.id}
+                            className={
+                              c.id === task.chosen_author_id
+                                ? "text-[#3d7a4d] font-bold"
+                                : c.id === me?.id
+                                ? "text-proto-ink font-semibold"
+                                : ""
+                            }
+                            title={
+                              c.id === task.chosen_author_id
+                                ? `${c.display_name} — bài đang được chọn để nộp`
+                                : `${c.display_name} · ${c.count} dòng`
+                            }
+                          >
+                            {c.display_name}
+                            <span className="text-proto-line">({c.count})</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </td>
+                  {/* Số NGƯỜI đã làm câu này, không phải tổng số dòng.
+                      "300/100" là con số vô nghĩa: nó cộng dồn ba danh sách
+                      của ba người rồi đem so với hạn mức của MỘT danh sách,
+                      nên vừa vượt trần vừa không nói lên điều gì. Bài nộp lấy
+                      của một người, còn thứ đáng biết khi lướt bảng là câu nào
+                      đã có người ngó tới. Chi tiết từng người vẫn nằm nguyên ở
+                      cột bên trái. */}
+                  <td className="px-3 py-2">
+                    {task.contributors.length === 0 ? (
+                      <span className="font-mono text-proto-line">
+                        0/{teamSize}
                       </span>
                     ) : (
-                      "—"
+                      <button
+                        type="button"
+                        title={
+                          full
+                            ? `Đã có người làm đủ ${rowsPerQuery} dòng`
+                            : `Chưa ai đủ ${rowsPerQuery} dòng`
+                        }
+                        onClick={() => onOpenTask(task, { openBasket: true })}
+                        className="underline decoration-dotted underline-offset-2"
+                      >
+                        <b
+                          className={`font-mono ${
+                            full ? "text-[#3d7a4d]" : "text-proto-ink"
+                          }`}
+                        >
+                          {task.contributors.length}
+                        </b>
+                        <span className="text-proto-muted font-mono">
+                          /{teamSize}
+                        </span>
+                      </button>
                     )}
-                  </td>
-                  <td className="px-3 py-2 font-mono">
-                    <span className={full ? "text-[#3d7a4d] font-bold" : ""}>
-                      {task.answer_count}
-                    </span>
-                    <span className="text-proto-muted">/{rowsPerQuery}</span>
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
-                    {!task.owner && (
-                      <Button
-                        size="xs"
-                        onClick={() => void act(() => claimTask(task.id))}
-                      >
-                        Nhận
-                      </Button>
-                    )}
-                    {mine && (
-                      <span className="inline-flex gap-1.5">
-                        <Button size="xs" onClick={() => onOpenTask(task)}>
-                          Mở
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          onClick={() => void act(() => releaseTask(task.id))}
-                        >
-                          Nhả
-                        </Button>
-                      </span>
-                    )}
-                    {task.owner && !mine && (
-                      <Button size="xs" variant="ghost" onClick={() => onOpenTask(task)}>
-                        Xem
-                      </Button>
-                    )}
+                    {/* Chỉ còn một nút. "Nhận"/"Nhả" đã bỏ — không còn gì để
+                        giành — và "Xem" cũng vậy: xem hay sửa giờ là một, ai
+                        mở cũng làm được. */}
+                    <Button
+                      size="xs"
+                      variant={mine ? "primary" : "outline"}
+                      onClick={() => onOpenTask(task)}
+                    >
+                      Mở
+                    </Button>
                   </td>
                 </tr>
               );

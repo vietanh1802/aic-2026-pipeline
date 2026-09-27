@@ -1,4 +1,4 @@
-// types/api.ts
+// frontend/src/types/api.ts
 //
 // Khớp với backend/app/main.py + preprocess.py hiện tại (arXiv 2504.08384).
 // Đã BỎ hoàn toàn các hàm gọi endpoint cũ: searchByText, searchByTextNoAgent,
@@ -38,6 +38,90 @@ export interface SearchResult {
   demo?: boolean;
 }
 
+/**
+ * HOW and WHERE one source matched a video - matches backend's MatchDetail
+ * dataclass (backend/app/text_signal.py), which feeds the Text signal popover.
+ * Every field is a plain JSON type, so it arrives exactly as declared here.
+ */
+export interface MatchDetail {
+  // [text, is_hit] segments of the matched text; truncation ellipses are part
+  // of the text, never separate markers and never offsets.
+  snippet: [string, boolean][];
+  // bm25 only: the distinct query words found in the chosen window; [] otherwise.
+  matched_terms: string[];
+  // bm25 only: how many distinct query words there were; 0 otherwise.
+  terms_total: number;
+  // Best-estimate moment in seconds from the video start.
+  at_s: number;
+  // bm25 only: the transcript window's range; null otherwise.
+  start_s: number | null;
+  end_s: number | null;
+  // True only for the bm25 estimate. ASR substring/regex also read as
+  // approximate, but for another reason (the frame's transcript spans about
+  // 60 s); the popover decides that from the source, see helpers/textSignalView.
+  time_approx: boolean;
+  // Corpus-only video rank (bm25 and OCR substring); null for the per-frame
+  // ASR substring and regex scans, which rank nothing.
+  rank: number | null;
+  total_matched: number | null;
+  // OCR only: the frame holds the whole phrase, not its words scattered.
+  exact_phrase: boolean | null;
+}
+
+/**
+ * One source's (asr or ocr) best result for a video — matches backend's
+ * SourceMatch dataclass (backend/app/text_signal.py). match_frame/match_type
+ * are null when location is "none".
+ */
+export interface SourceMatch {
+  match_frame: string | null;
+  match_type: "exact" | "normalized" | null;
+  location: "here" | "elsewhere" | "none";
+  // Optional: absent from an older backend, and null on a source with location
+  // "none" or one whose detail failed to build. The popover works without it.
+  detail?: MatchDetail | null;
+}
+
+/**
+ * Per-video text-signal annotation — matches backend's VideoAnnotation
+ * dataclass (backend/app/text_signal.py). Purely additive: it never removes
+ * a result or changes a rank, see SearchResponse.video_annotations below.
+ *
+ * Stage C replaced the old flat `sources`/`snippets` arrays with per-source
+ * SourceMatch objects naming the actual frame that matched (and whether it
+ * is one already on screen) — components reading the old shape (notably
+ * TextSignalBadge) need a matching rewrite; see Stage C's report.
+ */
+export interface VideoAnnotation {
+  matched: boolean;
+  score: number;
+  mode: string;
+  asr: SourceMatch;
+  ocr: SourceMatch;
+}
+
+/**
+ * Modes of the two independent text filters. Match the backend's TextMatchMode
+ * (ASR) and OcrFilterMode (OCR) in backend/app/text_signal.py: OCR has no BM25
+ * index, so it has no "bm25" (the backend answers HTTP 422 to it).
+ */
+export type AsrFilterMode = "substring" | "regex" | "bm25";
+export type OcrFilterMode = "substring" | "regex";
+
+/**
+ * The text-filter part of the /ensemble-search request: an ASR filter and an
+ * OCR filter, each with its own mode. When either string is non-empty the
+ * backend uses these and ignores the legacy text_filter / text_filter_mode
+ * (still accepted, so an older frontend keeps working). Both strings are capped
+ * at 200 characters (TEXT_FILTER_MAX_CHARS); a longer one fails the whole search.
+ */
+export interface TextFilterRequestFields {
+  asr_filter?: string;
+  asr_filter_mode?: AsrFilterMode;
+  ocr_filter?: string;
+  ocr_filter_mode?: OcrFilterMode;
+}
+
 export interface SearchResponse {
   total_results: number;
   returned_results: number;
@@ -47,6 +131,18 @@ export interface SearchResponse {
   max_distance: number;
   // true nếu backend đang chạy demo mode (chưa có beit3.index/clip.index thật)
   demo_mode?: boolean;
+  // Present only on /ensemble-search when a text filter was non-empty — keyed
+  // by video_id. No frame is ever dropped because of this; see main.py.
+  video_annotations?: Record<string, VideoAnnotation>;
+  // True when ANY text filter is active (split or the legacy single one).
+  text_filter_active?: boolean;
+  // The active source's mode, or "mixed" when both filters are used.
+  text_filter_mode?: string;
+  // Independent ASR / OCR filters: which sources ran, and with which mode.
+  asr_filter_active?: boolean;
+  ocr_filter_active?: boolean;
+  asr_filter_mode?: AsrFilterMode | null;
+  ocr_filter_mode?: OcrFilterMode | null;
 }
 
 /** One OCR text hit. Same shape as SearchResult, so the grid is reused. */
@@ -64,14 +160,13 @@ export interface OcrSearchResponse extends SearchResponse {
   /** Images holding the typed phrase verbatim. */
   phrase_matches: number;
   /**
-   * Images holding every word. The number to watch: measured over the 25
-   * preliminary queries (notebook 78), <= 4 puts the right video first 6 times
-   * out of 6, while >= 142 gets it right only 1 in 6 - meaning type more text
-   * rather than paging through 500 images.
+   * Images holding every word, each as a whole word - also the size of the
+   * result. The number to watch: measured over the 25 preliminary queries
+   * (notebook 78), <= 4 puts the right video first 6 times out of 6, while
+   * >= 142 gets it right only 1 in 6 - meaning type more text rather than
+   * paging through 500 images.
    */
   all_word_matches: number;
-  /** Images holding at least one word. Usually huge; reference only. */
-  any_word_matches: number;
   /** Total frames carrying text - the denominator for everything above. */
   searched_frames: number;
 }
@@ -142,6 +237,31 @@ export interface TrakeCandidateResult extends TrakeSearchResult {
 //  Status / health — khớp system_status() trong preprocess.py
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface OcrStatus {
+  ready: boolean;
+  files_present: boolean;
+  with_marks_path: string;
+  no_marks_path: string;
+  total_frames?: number;
+  frames_with_text?: number;
+  load_seconds?: number;
+}
+
+export interface AsrTextStatus {
+  ready: boolean;
+  files_present: boolean;
+  file_path: string;
+  entries_loaded: number;
+  load_seconds: number;
+}
+
+export interface TextSignalStatus {
+  bm25_ready: boolean;
+  bm25_unavailable_reason: string | null;
+  bm25_release_dir: string;
+  bm25_documents: number;
+}
+
 export interface SystemStatus {
   demo_mode: boolean;
   device: string;
@@ -149,11 +269,17 @@ export interface SystemStatus {
   image_base_url: string;
   pipeline_order: string;
   files: Record<string, boolean>;
-  vectors: { beit3: number; clip: number };
+  // [siglip2] optional: backend cũ chưa có key này -> đừng để vỡ type.
+  vectors: { beit3: number; clip: number; siglip2?: number };
   keyframes: number;
   videos: number;
   models: { fine_grained: string; coarse_grained: string };
   ensemble_weights: Record<string, number>;
+  // Optional: present on every real /status response (see main.py's status()),
+  // marked optional here only so older mocked responses in tests don't break.
+  ocr?: OcrStatus;
+  asr_text?: AsrTextStatus;
+  text_signal?: TextSignalStatus;
 }
 
 export type WarmupState = "cold" | "warming" | "ready" | "failed";
@@ -177,7 +303,8 @@ export interface ApiError {
 //  Model dùng cho /single-search và /temporal-search
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ModelName = "beit3" | "clip";
+// [siglip2] Model thứ 3.
+export type ModelName = "beit3" | "clip" | "siglip2";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Submit (chưa có endpoint /submit ở backend — xem docs/KIEN_TRUC_PIPELINE.md
@@ -241,13 +368,29 @@ class VideoSearchApi {
     query: string,
     limit = 100,
     topM = 50,
-    useRerank = true
+    useRerank = true,
+    textFilter?: TextFilterRequestFields,
+    // [siglip2] Tổ hợp model tick trên UI. Bỏ trống / undefined -> KHÔNG gửi
+    // field `models`, backend chạy mọi model active như cũ.
+    models?: ModelName[],
+    // Chỉ giữ video thuộc các nhóm này (["N"] = camera giao thông). Bỏ trống
+    // thì KHÔNG gửi field, backend tìm trên mọi video như cũ.
+    videoGroups?: string[]
   ): Promise<SearchResponse> {
+    // The text filter is sent as the four asr_filter / ocr_filter fields, and
+    // only when at least one is set (the caller passes undefined otherwise).
+    // Previous version sent the single legacy pair on every request:
+    //   text_filter: textFilter,
+    //   text_filter_mode: textFilterMode,
+    // The backend still accepts it, but this client no longer sends it.
     return this.post<SearchResponse>("/ensemble-search", {
       query,
       limit,
       top_m: topM,
       use_rerank: useRerank,
+      ...(textFilter ?? {}),
+      ...(models && models.length > 0 ? { models } : {}),
+      ...(videoGroups && videoGroups.length > 0 ? { video_groups: videoGroups } : {}),
     });
   }
 
@@ -260,7 +403,8 @@ class VideoSearchApi {
     model: ModelName,
     limit = 100,
     topM = 50,
-    useRerank = true
+    useRerank = true,
+    videoGroups?: string[]
   ): Promise<SearchResponse> {
     return this.post<SearchResponse>("/single-search", {
       query,
@@ -268,6 +412,7 @@ class VideoSearchApi {
       limit,
       top_m: topM,
       use_rerank: useRerank,
+      ...(videoGroups && videoGroups.length > 0 ? { video_groups: videoGroups } : {}),
     });
   }
 

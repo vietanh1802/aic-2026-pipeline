@@ -42,45 +42,65 @@ def test_kis_keeps_every_line_of_the_file():
     assert task.lines == 3
 
 
-def test_qa_question_is_the_last_sentence_ending_in_a_question_mark():
+# ── Đề bài vào nguyên văn ────────────────────────────────────────────────────
+#
+# Năm test dưới đây thay cho năm test cũ, vốn chốt hai cơ chế đoán vừa bỏ:
+# tách câu hỏi Q&A (câu cuối có dấu "?") và tách mốc TRAKE (regex `^E(\d+)`).
+#
+# Bộ SOTUYEN2 cho thấy cả hai đều đoán sai theo kiểu im lặng —
+# `query-p2-8-trake.txt` mở đầu bằng một dòng dẫn nhập nên bốn mốc bị tách ra
+# khỏi `query_text` rồi bị frontend bỏ quên, còn `query-p2-21-trake.txt` viết
+# `Cảnh 1:` nên không khớp regex, ra 0 mốc, và câu TRAKE đó xuất một cột frame
+# như câu KIS. Số mốc giờ do admin gõ ở màn Import.
+
+
+def test_qa_keeps_the_whole_file_and_infers_no_question():
     text = (
         "Đoạn video về một chương trình từ thiện của câu lạc bộ FANA. "
         "Câu lạc bộ đang trao quà tại một xã thuộc tỉnh Khánh Hòa. "
         "Hỏi xã này có tên là gì? (tại thời điểm đó)"
     )
     task = parse("query-p1-15-qa.txt", text)
-    assert task.question_text == "Hỏi xã này có tên là gì? (tại thời điểm đó)"
     assert task.query_text == text
-
-
-def test_qa_without_a_question_mark_says_so():
-    task = parse("query-p1-99-qa.txt", "Không có dấu hỏi nào ở đây.")
     assert task.question_text is None
-    assert any("?" in warning for warning in task.warnings)
 
 
-def test_trake_counts_event_lines_not_the_highest_number():
-    # query-p1-18-trake.txt really does carry E1, E2, E2, E4.
+def test_qa_without_a_question_mark_is_not_a_warning_any_more():
+    task = parse("query-p1-99-qa.txt", "Không có dấu hỏi nào ở đây.")
+    assert task.query_text == "Không có dấu hỏi nào ở đây."
+    assert task.warnings == []
+
+
+def test_trake_keeps_the_event_lines_inside_the_brief():
     text = "E1: cắt nấm\nE2: cắt củ năng\nE2: cắt đậu hủ\nE4: bật bếp"
     task = parse("query-p1-18-trake.txt", text)
-    assert task.n_events == 4
-    assert task.event_labels == ["cắt nấm", "cắt củ năng", "cắt đậu hủ", "bật bếp"]
-    assert any("not sequential" in warning for warning in task.warnings)
+    assert task.query_text == text
+    assert task.event_labels == []
+    # Số mốc không đoán nữa: E1, E2, E2, E4 là bốn dòng nhưng số cao nhất là 4,
+    # và `Cảnh 1:` thì không có số nào để đếm. Người nhập gõ.
+    assert task.n_events is None
 
 
-def test_trake_context_before_the_first_event_becomes_the_query():
+def test_trake_context_line_stays_with_the_events():
     text = "Đoạn video múa lân màu vàng đen trắng.\nE1: lân xoay vòng\nE2: bốn chân chạm đất"
     task = parse("query-p1-16-trake.txt", text)
-    assert task.query_text == "Đoạn video múa lân màu vàng đen trắng."
-    assert task.n_events == 2
+    assert task.query_text == text
+    assert "lân xoay vòng" in task.query_text
 
 
-def test_trake_accepts_a_dot_after_the_event_number():
-    task = parse("query-p1-20-trake.txt", "E1. một\nE2. hai")
-    assert task.n_events == 2
+def test_trake_written_with_canh_instead_of_e_is_kept_whole():
+    # query-p2-21-trake.txt. Regex cũ khớp 0 dòng ở đây và nuốt mất cả bốn mốc.
+    text = (
+        "4 cảnh này xảy ra liên tiếp nhau.\n"
+        "Cảnh 1: Hai người phụ nữ dán niêm phong một thùng carton.\n"
+        "Cảnh 2: Các thùng mì tôm được sắp xếp ngay ngắn."
+    )
+    task = parse("query-p2-21-trake.txt", text)
+    assert task.query_text == text
+    assert "Cảnh 2" in task.query_text
 
 
-def test_sequential_events_raise_no_warning():
+def test_no_file_shape_raises_a_warning_any_more():
     task = parse("query-p1-4-trake.txt", "E1: a\nE2: b\nE3: c\nE4: d")
     assert task.warnings == []
 
@@ -114,8 +134,12 @@ def test_the_real_pack_parses_the_way_the_spec_measured_it():
     assert 3 not in codes                      # gaps in the numbering are normal
     assert max(codes) == 25 and len(codes) == 24
 
-    warned = [task for task in matched if task.warnings]
-    assert [task.code for task in warned] == ["18"]
+    # Không còn cảnh báo nào: cả hai chỗ sinh ra chúng — số mốc không liên tục
+    # và Q&A thiếu dấu "?" — đều là kết luận của việc đoán cấu trúc, mà giờ
+    # không ai đoán nữa. Task 18 từng là cái duy nhất bị cảnh báo.
+    assert [task.code for task in matched if task.warnings] == []
 
-    # Every Q&A question was inferred; none fell back to null.
-    assert all(task.question_text for task in matched if task.type == "qa")
+    # Đề bài vào nguyên văn, không file nào bị nuốt mất chữ.
+    assert all(task.query_text for task in matched)
+    assert all(task.question_text is None for task in matched)
+    assert all(task.n_events is None for task in matched)

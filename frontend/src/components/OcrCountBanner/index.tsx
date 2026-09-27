@@ -5,8 +5,7 @@
  * and the operator needs all three to decide what to do next:
  *
  *   phrase    images holding the typed phrase verbatim  <- the one to trust
- *   allWords  images holding every word, but scattered
- *   anyWord   usually huge; only useful as a denominator
+ *   allWords  images holding every word, scattered - the size of the result
  *
  * `allWords` is the one to watch. Measured over the 25 preliminary-round
  * queries (notebook 78_Vanh_tim_bang_chu):
@@ -23,7 +22,6 @@
 export interface OcrCounts {
   phrase: number;
   allWords: number;
-  anyWord: number;
   searched: number;
 }
 
@@ -36,7 +34,7 @@ interface Props {
 const numberFormat = new Intl.NumberFormat("vi-VN");
 
 export default function OcrCountBanner({ counts, shown }: Props) {
-  const { phrase, allWords, anyWord, searched } = counts;
+  const { phrase, allWords, searched } = counts;
 
   // Thresholds come from the measurements above, not from taste: <= 4 is the
   // band measured right 6/6, > 100 the band measured right 1/6. In between
@@ -73,9 +71,6 @@ export default function OcrCountBanner({ counts, shown }: Props) {
         <span>
           <span className="font-bold">{numberFormat.format(allWords)}</span> ảnh
           chứa đủ mọi từ
-        </span>
-        <span className="opacity-70">
-          {numberFormat.format(anyWord)} ảnh chứa ít nhất một từ
         </span>
         <span className="opacity-70">
           trên {numberFormat.format(searched)} keyframe có chữ

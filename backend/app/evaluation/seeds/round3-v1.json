@@ -1,0 +1,881 @@
+{
+  "schema_version": 2,
+  "dataset": {
+    "slug": "round3",
+    "display_name": "AI Challenge 2026 - Round 3",
+    "version": "round3-v1",
+    "query_count": 35,
+    "task_counts": {
+      "KIS": 26,
+      "QA": 8,
+      "TRAKE": 1
+    },
+    "source": {
+      "filename": "SOTUYEN3-bo-de-thi + team round3 submission CSVs",
+      "sha256": null,
+      "provenance": "team_submission_csv_derived"
+    }
+  },
+  "reference_set": {
+    "version": "r3-submission-v1",
+    "label_semantics": "Derived from the team's own Round 3 submission CSVs, NOT from a frame-by-frame manual review like r1/r2. The target video is row 1 of the submitted file and valid_intervals is the span of frames the team actually submitted for that video. A query therefore counts correct when retrieval lands somewhere the team itself submitted - a looser bar than the r1/r2 manually reviewed intervals.",
+    "interval_annotation": "submission_derived_for_kis_qa; trake_intentionally_not_interval_scored_tier0",
+    "notes": "Organiser filenames in SOTUYEN3-bo-de-thi reuse the 'p2-' prefix of Round 2; query ids here are renamed to 'p3-N' so they do not collide with round2-v1, where N is still the original question number. Question 34 is omitted on the team's instruction (wrong video chosen, only 54 rows submitted), so ordinals run 1-36 with 34 missing and 35 queries in total. Intervals are clustered: a gap larger than max(6 x median step, 40) starts a new interval, which is how a query the operator pinned in two separate places keeps two intervals. qa_answer is taken from row 1 and stripped of the surrounding quotes."
+  },
+  "queries": [
+    {
+      "id": "p3-1",
+      "ordinal": 1,
+      "task_type": "KIS",
+      "query_vi": "Một chén trứng gà đã đánh tan được đổ vào nồi nước súp đang nấu. Trong nồi có các nguyên liệu được cắt thành sợi, gồm nấm và măng. Người đầu bếp dùng dao cắt đậu hũ thành từng miếng nhỏ ngay phía trên nồi. Đậu hũ được cho trực tiếp vào nồi rồi các nguyên liệu được khuấy đều với nhau.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V424",
+        "valid_intervals": [
+          {
+            "start": 5142,
+            "end": 5736
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5436,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-2",
+      "ordinal": 2,
+      "task_type": "KIS",
+      "query_vi": "Một nhóm đông học sinh mặc đồng phục tập trung thành nhiều hàng trước khu vực trường học. Phía trước mỗi hàng có người cầm bảng ghi số lớp để phân chia các nhóm học sinh. Sau đó, các hàng học sinh lần lượt di chuyển vào bên trong khuôn viên trường dưới sự hướng dẫn của giáo viên. Cuối đoạn, học sinh nối thành hàng dài, đi qua hành lang và lên cầu thang của tòa nhà.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V026",
+        "valid_intervals": [
+          {
+            "start": 1494,
+            "end": 1790
+          },
+          {
+            "start": 3060,
+            "end": 3156
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 1498,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-3",
+      "ordinal": 3,
+      "task_type": "KIS",
+      "query_vi": "Người đầu bếp lần lượt cho nhiều loại nguyên liệu vào một nồi nước dùng đang sôi. Đầu tiên, một loại rau củ màu cam được cho vào nồi. Sau đó, một loại nguyên liệu dạng ống nhỏ được đổ từ đĩa vào nồi. Tiếp theo, các loại rau củ và nấm được cho vào, gồm những miếng màu xanh và các lát nấm màu nâu. Cuối cùng, một đĩa thịt đã cắt thành từng miếng mỏng được đổ vào nồi để nấu cùng các nguyên liệu trước đó.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V390",
+        "valid_intervals": [
+          {
+            "start": 5493,
+            "end": 5533
+          },
+          {
+            "start": 5620,
+            "end": 6070
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 5513,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-4",
+      "ordinal": 4,
+      "task_type": "KIS",
+      "query_vi": "Một giáo viên nữ ngồi bên phải màn hình và giảng bài Tiếng Anh. Trên bảng xanh lần lượt xuất hiện hai câu ví dụ, một câu nói về việc đi bảo tàng vào tuần trước, câu còn lại nói về thói quen chơi bóng đá khi còn trẻ. Sau đó, nội dung trên bảng bổ sung phần giải thích chức năng của hai ví dụ và cuối cùng xuất hiện công thức ngữ pháp tương ứng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V075",
+        "valid_intervals": [
+          {
+            "start": 996,
+            "end": 2580
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1012,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-5",
+      "ordinal": 5,
+      "task_type": "QA",
+      "query_vi": "Một giáo viên nam đứng bên trái màn hình giảng bài ôn tập môn Địa lí. Nội dung trình chiếu giới thiệu khái quát một vùng kinh tế, sau đó chuyển sang vị trí địa lí, phạm vi lãnh thổ và ý nghĩa phát triển. Ở phần sau, một bản đồ khí hậu Việt Nam được đưa lên để minh họa cho bài giảng. Theo nội dung bài giảng, vùng được nhắc đến gồm bao nhiêu tỉnh, thành?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V016",
+        "valid_intervals": [
+          {
+            "start": 2563,
+            "end": 5632
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 3648,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "6",
+      "trake_events": null
+    },
+    {
+      "id": "p3-6",
+      "ordinal": 6,
+      "task_type": "QA",
+      "query_vi": "Một giáo viên nam đứng bên trái màn hình và giảng bài trước một máy tính. Trên màn hình lớn hiển thị hướng dẫn chấm điểm, trong đó phần a đề cập đến cấu trúc của bài nghị luận văn học gồm mở bài, thân bài và kết bài. Nội dung bài giảng liên quan đến một tác phẩm văn học và yêu cầu phân tích nhân vật. Phía dưới màn hình xuất hiện dòng chữ giới thiệu chương trình ôn thi môn Ngữ văn. Tác giả được giới thiệu là người có duyên nợ gắn bó với đề tài miền núi nào?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V027",
+        "valid_intervals": [
+          {
+            "start": 11366,
+            "end": 12356
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 11856,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "Tây Bắc",
+      "trake_events": null
+    },
+    {
+      "id": "p3-7",
+      "ordinal": 7,
+      "task_type": "KIS",
+      "query_vi": "Đoạn phim ghi lại cảnh giao thông trên đường phố, trong đó hai thanh niên chạy xe với tư thế bất cẩn trên làn ô tô, tiềm ẩn nguy cơ gây tai nạn giao thông.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V018",
+        "valid_intervals": [
+          {
+            "start": 15745,
+            "end": 15865
+          },
+          {
+            "start": 16010,
+            "end": 16140
+          },
+          {
+            "start": 16199,
+            "end": 16434
+          }
+        ],
+        "interval_count": 3,
+        "reference_frame_idx": 15805,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-8",
+      "ordinal": 8,
+      "task_type": "QA",
+      "query_vi": "Đoạn phim ghi lại cuộc phỏng vấn một người đàn ông đam mê sưu tầm game, chia sẻ rằng niềm đam mê của anh được truyền cảm hứng từ món đồ chơi của bà mình. Trong đoạn phỏng vấn xuất hiện một dòng chữ neon phát sáng. Dòng chữ đó là gì?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V018",
+        "valid_intervals": [
+          {
+            "start": 21160,
+            "end": 21655
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 21405,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "SEGA",
+      "trake_events": null
+    },
+    {
+      "id": "p3-9",
+      "ordinal": 9,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip bắt đầu  với các người mẫu trình diễn những bộ trang phục màu kem dáng rộng, được điểm xuyết bằng các mảng vải nhiều màu sắc và họa tiết hình học. Nhiều tác phẩm đầy màu sắc được trưng bày trên thảm cỏ ngoài trời, thu hút đông đảo người dân và du khách tham quan. Những món đồ thủ công như búp bê và quả cầu được tạo nên từ nhiều mảnh vải màu sắc, hoa văn khác nhau.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V007",
+        "valid_intervals": [
+          {
+            "start": 15640,
+            "end": 16828
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 16228,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-10",
+      "ordinal": 10,
+      "task_type": "KIS",
+      "query_vi": "Đoạn video ghi lại cuộc diễu hành của những chiếc xe lội nước độc đáo, có hình dáng như ô tô cổ điển nhưng có thể di chuyển trực tiếp trên mặt nước. Những chiếc xe lần lượt xuống kênh, chạy qua các cây cầu giữa sự theo dõi của đông đảo người dân đứng hai bên bờ. Nhiều mẫu xe với màu sắc và kiểu dáng khác nhau cùng di chuyển trên kênh, tạo nên một khung cảnh vừa lạ mắt vừa sôi động",
+      "submitted_count": 99,
+      "reference": {
+        "video_id": "L21_V003",
+        "valid_intervals": [
+          {
+            "start": 25154,
+            "end": 26610
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 25882,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-11",
+      "ordinal": 11,
+      "task_type": "KIS",
+      "query_vi": "Người phụ nữ đang lấy 1 thành phẩm từ trong đồ vật màu đỏ, và cho lần lượt nguyên liệu vào tiếp, thành phầm có màu trắng, được nở to hơn ban đầu, có hình thù giống các sợi que dính với nhau. Các thành phẩm được bày trí trên 1 vật liệu màu trắng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V483",
+        "valid_intervals": [
+          {
+            "start": 194,
+            "end": 689
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 439,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-12",
+      "ordinal": 12,
+      "task_type": "KIS",
+      "query_vi": "Một người đang đổ 1 chất lỏng đựng trong bát màu trắng vào chiếc chảo màu đỏ, sau khi chất lỏng được xóc đều cùng các thực phẩm có sẵn trong chảo, tạo 1 hiện tượng bốc lên trong chảo có màu hồng. Sau đó. chuyển từ nồi to qua nồi nhỏ hơn, công đoạn tương tự, khi chất lỏng tiếp xúc lửa trên bếp đều tạo chung 1 hiện tượng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V484",
+        "valid_intervals": [
+          {
+            "start": 5907,
+            "end": 6402
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6152,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-13",
+      "ordinal": 13,
+      "task_type": "KIS",
+      "query_vi": "Hàng trăm chiếc lờ/lợp bắt cá bằng tre đan được tập kết thành từng dãy lớn bên bờ sông. Khung cảnh bờ sông miền Tây rợp bóng những hàng dừa, với ghe neo sát mép nước và rất nhiều cần xé tre được tập kết dưới các gốc dừa, tạo nên nét sinh hoạt làng nghề mộc mạc, đặc trưng vùng sông nước.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L29_V014",
+        "valid_intervals": [
+          {
+            "start": 18421,
+            "end": 18718
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 18568,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-14",
+      "ordinal": 14,
+      "task_type": "QA",
+      "query_vi": "Một bé gái mặc áo bơi họa tiết hoa lá đang trả lời phỏng vấn bên cạnh một hồ bơi. Tiếp theo là hình ảnh cháu bé bơi trong hồ nước, đội mũ bơi màu tím. Hãy cho biết bé gái này sắp lên học lớp mấy (đáp án chỉ ghi 1 chữ số)",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V047",
+        "valid_intervals": [
+          {
+            "start": 5207,
+            "end": 5801
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5501,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "5",
+      "trake_events": null
+    },
+    {
+      "id": "p3-15",
+      "ordinal": 15,
+      "task_type": "KIS",
+      "query_vi": "Đoạn video ghi lại cảnh 1 người đầu bếp đã sơ chế thực phẩm với nước lạnh và để ráo nước. Sau đó, đầu bếp sử dụng 1 loạt bột nhào chung với thực phẩm, để qua một bên và chuẩn bị các loại gia vị khác. Tiếp theo, đầu bếp cho 1 miếng nguyên liệu màu xanh lá cây kết hợp 2 miếng màu vàng vào 1 chảo màu đỏ đã đổ dầu ăn trước khi chiên thực phẩm chính.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V136",
+        "valid_intervals": [
+          {
+            "start": 3217,
+            "end": 7137
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5177,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-16",
+      "ordinal": 16,
+      "task_type": "KIS",
+      "query_vi": "Một người đang đổ 1 nguyên liệu vào trong 1 nồi thủy tinh, sau đó, sử dụng 1 đôi đũa để đảo nguyên liệu màu đỏ có chút màu xanh lá cây. Sau khi, nguyên liệu đã biến đổi màu, người đàn ông đổ thêm 1.5L nguyên liệu dạng lỏng, 1/2 muỗng (cà phê) nguyên liệu trắng có vị mặn, 1/2 muỗng nguyên liệu trắng có vị ngọt, 2 muỗng hạt nguyên liệu có vị từ xương hầm",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V481",
+        "valid_intervals": [
+          {
+            "start": 4973,
+            "end": 5229
+          },
+          {
+            "start": 5400,
+            "end": 5536
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 5101,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-17",
+      "ordinal": 17,
+      "task_type": "KIS",
+      "query_vi": "Một nguyên liệu đã được chiên sơ, được sơ chế cắt làm 2 nửa (không để 2 nửa tách rời). Tiếp theo, người đàn ông sử dụng 1 công cụ để tách phần lõi và lớp vỏ của nguyên liệu. Sau đó, đặt phần nguyên liệu vừa sơ chế trên 1 loại công cụ có màu trắng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V482",
+        "valid_intervals": [
+          {
+            "start": 1981,
+            "end": 2272
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 2050,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-18",
+      "ordinal": 18,
+      "task_type": "QA",
+      "query_vi": "Các cảnh quay nối tiếp nhau từ nhiều góc máy trong một lớp học tại một thời điểm. Cảnh đầu tiên là cảnh một sư cô ân cần quan sát một cậu bé áo xanh lá ngồi học bài. Sau đó là cảnh quay cận trang vở môn Toán, ghi lại các nét chữ mà học sinh đang ghi chép. Trong lớp học này, giáo viên nữ trong trang phục màu hồng đứng lớp chính, còn sư cô di chuyển xung quanh lớp học để hỗ trợ các em. Các giáo viên tham gia giảng dạy tại lớp học này là giáo viên dạy chính ở trường tiểu học nào?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V010",
+        "valid_intervals": [
+          {
+            "start": 3062,
+            "end": 3557
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 3067,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "Công Hải",
+      "trake_events": null
+    },
+    {
+      "id": "p3-19",
+      "ordinal": 19,
+      "task_type": "KIS",
+      "query_vi": "Sau khi lướt qua các cọc trụ, chú lân vàng đứng thăng bằng bằng ba chân trên ba đỉnh trụ, trước khi khéo léo đặt nốt chân còn lại lên trụ thứ tư. Chú lân cúi đầu ngoạm lấy cành hoa màu tím rồi xoay người quay lưng lại. Theo từng tiếng chập cheng vang lên, lân mở rồi đóng hàm đúng 4 nhịp, rồi nhả cành hoa rơi xuống đất.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L24_V032",
+        "valid_intervals": [
+          {
+            "start": 13589,
+            "end": 14170
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 13646,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-20",
+      "ordinal": 20,
+      "task_type": "KIS",
+      "query_vi": "Slide bài giảng về một nhóm hợp chất hữu cơ. Trong slide có 2 hình đặt cạnh nhau là hai biến thể của cùng 1 loại hạt lương thực, và ở nửa dưới là một sơ đồ phân loại của nhóm hợp chất ấy. Đáng chú ý có một phân loại được mô tả bởi cấu trúc phân tử là những dải hình tròn dài được bắc cầu với nhau bằng những cặp hình tròn màu tím.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V021",
+        "valid_intervals": [
+          {
+            "start": 14230,
+            "end": 14824
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 14524,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-21",
+      "ordinal": 21,
+      "task_type": "TRAKE",
+      "query_vi": "Một món ăn làm từ tôm và các loại gia vị. E1: Khoảnh khắc người đầu bếp bắt đầu trộn hỗn hợp nước xốt, trong nước xốt này có 2 thành phần là nước cam và vỏ cam. E2: Khoảnh khắc người đầu bếp bắt đầu cắt bỏ đầu tôm. E3: Người đầu bếp cho tôm ra dĩa. Hãy chọn khoảnh khắc con tôm đầu tiên chạm vào dĩa. E4: Khoảnh khắc tép cam thứ 4 được xếp lên dĩa khi trang trí món ăn.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V156",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Khoảnh khắc người đầu bếp bắt đầu trộn hỗn hợp nước xốt, trong nước xốt này có 2 thành phần là nước cam và vỏ cam.",
+          "reference_frame_idx": 3260,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Khoảnh khắc người đầu bếp bắt đầu cắt bỏ đầu tôm.",
+          "reference_frame_idx": 3767,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Người đầu bếp cho tôm ra dĩa. Hãy chọn khoảnh khắc con tôm đầu tiên chạm vào dĩa.",
+          "reference_frame_idx": 4785,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Khoảnh khắc tép cam thứ 4 được xếp lên dĩa khi trang trí món ăn.",
+          "reference_frame_idx": 6727,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are the team's submitted row 1, descriptive/display only."
+    },
+    {
+      "id": "p3-22",
+      "ordinal": 22,
+      "task_type": "KIS",
+      "query_vi": "Một phương tiện giao thông trên không chạy bằng điện đang bay thử nghiệm phía trên khuôn viên rộng lớn với những khu vườn xanh được cắt tỉa theo hình học và các công trình kiến trúc cổ kính. Phần phía trên thiết bị bay có dạng khung tròn lớn. Đây là việc thử nghiệm thiết bị bay này ở một nước Tây Âu",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V012",
+        "valid_intervals": [
+          {
+            "start": 19952,
+            "end": 20249
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 20099,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-23",
+      "ordinal": 23,
+      "task_type": "KIS",
+      "query_vi": "Trong clip có cảnh 3 cặp trâu nước đang được điều khiển chạy đua trên ruộng bùn ở 1 quốc gia Đông Nam Á. Sau đó có cảnh 1 cặp trâu màu trắng (màu sáng) chạy đua.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V005",
+        "valid_intervals": [
+          {
+            "start": 24453,
+            "end": 24552
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 24477,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-24",
+      "ordinal": 24,
+      "task_type": "QA",
+      "query_vi": "Một đầu bếp đang chuẩn bị một món ăn từ một miếng thực phẩm màu cam. Người này băm nhỏ một số nguyên liệu, tách các hạt nhỏ khỏi cành rồi trộn chúng thành hỗn hợp gia vị. Sau đó, nhiều loại gia vị được lần lượt thêm vào và hỗn hợp được phủ lên cả hai mặt của nguyên liệu chính trước khi thêm một chất lỏng. Trong quá trình nêm gia vị, lượng nước tương được sử dụng là bao nhiêu?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V448",
+        "valid_intervals": [
+          {
+            "start": 2303,
+            "end": 2799
+          },
+          {
+            "start": 2970,
+            "end": 3258
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 2767,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "2 muỗng cà phê",
+      "trake_events": null
+    },
+    {
+      "id": "p3-25",
+      "ordinal": 25,
+      "task_type": "KIS",
+      "query_vi": "Một người dùng vá nhúng những lát thịt mỏng vào nồi nước đang sôi. Thịt sau đó được cho vào tô có sẵn sợi trắng cùng với cà chua và một số nguyên liệu khác. Cuối cùng, nước dùng nóng được chan vào tô.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V155",
+        "valid_intervals": [
+          {
+            "start": 5921,
+            "end": 6218
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6068,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-26",
+      "ordinal": 26,
+      "task_type": "KIS",
+      "query_vi": "Một bài giảng chuyển qua nhiều sơ đồ hình học không gian. Các hình ban đầu gồm một đường xiên đi qua một hình phẳng và hai hình phẳng giao nhau. Tiếp đó xuất hiện một điểm phía trên một hình phẳng có đoạn thẳng nối vuông góc xuống dưới. Cuối cùng là một khối gồm bốn đỉnh, sau đó được bổ sung thêm các đường nét đứt, điểm và ký hiệu vuông góc.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V043",
+        "valid_intervals": [
+          {
+            "start": 2848,
+            "end": 7798
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5298,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-27",
+      "ordinal": 27,
+      "task_type": "QA",
+      "query_vi": "Cảnh quay 2 người đang nắn những cục bột nhỏ thành hình dẹt. 1 người nắn cục bột màu trắng, người còn lại nắn cục bột màu khác. Sau đó họ đặt nhân vào phần giữa và cuộn lớp bột bao quanh phần nhân. Trước khi đặt lên dĩa, họ đặt thành phẩm lên 1 miếng lá nhỏ. Hỏi trên dĩa có mấy  màu bột khác nhau?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V351",
+        "valid_intervals": [
+          {
+            "start": 5192,
+            "end": 5390
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5290,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "3",
+      "trake_events": null
+    },
+    {
+      "id": "p3-28",
+      "ordinal": 28,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay phỏng vấn một người phụ nữ, đeo kính gọng đen, tay đang ôm một bao đồ như quần áo. Xung quanh đó có những bao đồ khác. Bao đồ trên tay người phụ nữ có màu trắng vào có 1 logo màu xanh lá cây.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V091",
+        "valid_intervals": [
+          {
+            "start": 1454,
+            "end": 1553
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1503,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-29",
+      "ordinal": 29,
+      "task_type": "KIS",
+      "query_vi": "Một người đang múc canh từ trong nồi qua một tô nhỏ hơn. Chiếc tô này đang đặt trên 1 tấm vải có sọc trắng và đặt trên một khay gỗ. Tổng số lần quay được của người này múc canh ra tô là 2 lần.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V051",
+        "valid_intervals": [
+          {
+            "start": 5688,
+            "end": 5985
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5895,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-30",
+      "ordinal": 30,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip bắt đầu khi có 1 người đang phất cờ về đích đến trong chặng đua xe đạp quanh hồ. Ngay sau đó, một đoàn đông vận động viên xe đạp đang vào cua giữa khung cảnh đường phố rợp bóng cây. Một người đứng bên đường, tay trái cầm điện thoại để ghi hình, còn tay phải cầm một cây gậy có gắn thiết bị quay ở đầu hướng về phía đoàn đua.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V005",
+        "valid_intervals": [
+          {
+            "start": 2216,
+            "end": 2315
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 2265,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-31",
+      "ordinal": 31,
+      "task_type": "KIS",
+      "query_vi": "Điểm thú vị trong cảnh là một bạn trẻ có mái tóc sáng màu, trông có vẻ là người nước ngoài, đang ngồi xếp  bằng cùng người dân địa phương và trực tiếp tham gia đóng gói những chiếc bánh gói lá. Trong cảnh có chiếc quạt máy với cánh quạt màu xanh lá cây",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V023",
+        "valid_intervals": [
+          {
+            "start": 4832,
+            "end": 4931
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 4888,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-32",
+      "ordinal": 32,
+      "task_type": "KIS",
+      "query_vi": "Đoạn phim bắt đầu với cảnh hai mẹ con cầm điện thoại trò chuyện, sau đó chuyển sang cảnh người con trả lời phỏng vấn, phía sau có một phụ nữ da đen đang bước qua.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V010",
+        "valid_intervals": [
+          {
+            "start": 23344,
+            "end": 23542
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 23442,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-33",
+      "ordinal": 33,
+      "task_type": "KIS",
+      "query_vi": "Cảnh quay slow motion từ flycam ghi lại màn nước rút của hai tay đua dẫn đầu, trong đó tay đua mũ đen được cho là đuối sức hơn tay đua mũ trắng và để thua ở đoạn cuối.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V009",
+        "valid_intervals": [
+          {
+            "start": 6366,
+            "end": 6762
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6562,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    },
+    {
+      "id": "p3-35",
+      "ordinal": 35,
+      "task_type": "QA",
+      "query_vi": "Giải đề THPTQG 2018 tại nhóm X. Nhóm này gồm 4 câu hỏi trắc nghiệm 4 đáp án A, B, C, D, trong đó đáp án 4 câu không trùng nhau và đều chứa chữ số 0. Hỏi X là số mấy?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V014",
+        "valid_intervals": [
+          {
+            "start": 40488,
+            "end": 44646
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 42546,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": "3",
+      "trake_events": null
+    },
+    {
+      "id": "p3-36",
+      "ordinal": 36,
+      "task_type": "KIS",
+      "query_vi": "Camera lia chậm trên mặt bàn làm việc, bắt đầu từ một bức ảnh/tranh một người đang bắt tay với Bác Hồ, sau đó chuyển sang phần bên phải là tay nghệ nhân đang vẽ lại chân dung người bắt tay Bác. Người nghệ nhân này vẽ bằng một cây bút đặc biệt trên một chất liệu đặc biệt.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L28_V010",
+        "valid_intervals": [
+          {
+            "start": 14808,
+            "end": 14907
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 14857,
+        "status": "manual_reference",
+        "confidence": "submission_derived_span",
+        "provenance": "team_round3_submission_csv"
+      },
+      "qa_answer": null,
+      "trake_events": null
+    }
+  ]
+}

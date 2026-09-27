@@ -1,3 +1,4 @@
+# backend/app/main.py
 # -*- coding: utf-8 -*-
 """
 main.py – FastAPI backend, thuần theo arXiv 2504.08384
@@ -27,6 +28,7 @@ immediately — an RRF blend would smear out exactly that advantage. Blending
 (OCR / ASR / caption / tag -> BM25 -> RRF) waits until Q5/Q6 are settled.
 """
 
+import logging
 import os
 import threading
 import time
@@ -34,8 +36,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -44,14 +47,23 @@ from app.db.connection import get_conn
 from app.db.migrate import migrate
 from app.routers import (
     answers as answers_router,
+    dres as dres_router,
     auth as auth_router,
     board as board_router,
+    evaluation as evaluation_router,
+    expansion as expansion_router,
     export as export_router,
     packs as packs_router,
     rounds as rounds_router,
+    search_state as search_state_router,
 )
+from app.evaluation.runner import interrupt_incomplete_runs
 from app.version import SHORT_COMMIT, VERSION
 from app import ocr_search as ocr_route
+from app import asr_text as _asr_text
+from app import text_signal as _text_signal
+from app import text_lookup as _text_lookup
+from app.text_signal import TEXT_FILTER_MAX_CHARS, OcrFilterMode, TextMatchMode, annotate_request
 # Import the MODULE, not just its functions: _load_meta() rebinds _name2meta
 # rather than mutating it, so `from ... import _name2meta` would hold the empty
 # startup dict forever and every OCR result would lose video/timestamp.
@@ -93,6 +105,16 @@ class SearchResultEx(SearchResult):
 
 class SearchResponseEx(SearchResponse):
     results: List[SearchResultEx]
+    video_annotations: Optional[dict] = None
+    text_filter_active: bool = False
+    text_filter_mode: Optional[str] = None
+    # Independent ASR / OCR filters (additive). text_filter_active above is True
+    # when ANY source is active, split or legacy; text_filter_mode is the active
+    # source's mode, or "mixed" when both filters are used.
+    asr_filter_active: bool = False
+    ocr_filter_active: bool = False
+    asr_filter_mode: Optional[str] = None
+    ocr_filter_mode: Optional[str] = None
 
 
 class EnsembleSearchRequest(BaseModel):
@@ -102,6 +124,61 @@ class EnsembleSearchRequest(BaseModel):
                              description="Top-M mỗi model trước khi gộp (Alg.3, paper dùng 50)")
     use_rerank: bool = Field(True,
                              description="Bật Alg.2 rerank lân cận cho TỪNG model trước khi ensemble")
+    text_filter: str = Field(
+        default="",
+        # Longer terms are rejected with HTTP 422 for the whole request (also on
+        # /single-search, which inherits this model and ignores the filter).
+        max_length=TEXT_FILTER_MAX_CHARS,
+        description=(
+            "Term, phrase, or pattern to annotate results with. "
+            "Empty string disables annotation."
+        )
+    )
+    text_filter_mode: TextMatchMode = Field(
+        default=TextMatchMode.substring,
+        description="How to match: substring | regex | bm25"
+    )
+    # Independent ASR / OCR filters, each with its own mode. When either string
+    # is non-empty after strip these are used and text_filter / text_filter_mode
+    # above are ignored; otherwise the legacy pair runs exactly as before (kept
+    # for old callers and for the deploy window in which an old frontend talks to
+    # this backend). /single-search inherits all of them and ignores them, like
+    # the legacy pair. OCR has no BM25 index, hence OcrFilterMode (no "bm25": HTTP 422).
+    asr_filter: str = Field(
+        default="",
+        max_length=TEXT_FILTER_MAX_CHARS,
+        description="Term, phrase or pattern matched against ASR (speech). Empty disables the ASR filter."
+    )
+    asr_filter_mode: TextMatchMode = Field(
+        default=TextMatchMode.substring,
+        description="How the ASR filter matches: substring | regex | bm25"
+    )
+    ocr_filter: str = Field(
+        default="",
+        max_length=TEXT_FILTER_MAX_CHARS,
+        description="Term, phrase or pattern matched against OCR (on-screen text). Empty disables the OCR filter."
+    )
+    ocr_filter_mode: OcrFilterMode = Field(
+        default=OcrFilterMode.substring,
+        description="How the OCR filter matches: substring | regex"
+    )
+    # [siglip2] Tổ hợp model tham gia ensemble — checkbox nào tick trên UI thì
+    # tên model đó nằm trong list này. None/rỗng = dùng mọi model đang active
+    # trên server, đúng hành vi cũ, nên client cũ không phải đổi gì.
+    # /single-search kế thừa field này và bỏ qua nó (nó có `model` riêng), y
+    # như cách nó đang bỏ qua các field filter ở trên.
+    models: Optional[List[str]] = Field(
+        default=None,
+        description="Tập con bất kỳ của beit3/clip/siglip2 (1, 2 hoặc cả 3). "
+                    "None = dùng mọi model đang active trên server.",
+    )
+    # Chỉ tìm trong một số nhóm video, theo chữ cái đầu mã video: "N" = camera
+    # giao thông, "M" = tin tức, "S" = đua xe đạp, "L" = batch 1. None/rỗng =
+    # mọi video, đúng hành vi cũ. Xem _scoped_search() vì sao lọc ở đây.
+    video_groups: Optional[List[str]] = Field(
+        default=None,
+        description="Chỉ giữ video có mã bắt đầu bằng một trong các chữ này (vd [\"N\"]).",
+    )
 
     class Config:
         json_schema_extra = {"example": {
@@ -111,7 +188,7 @@ class EnsembleSearchRequest(BaseModel):
 
 
 class SingleSearchRequest(EnsembleSearchRequest):
-    model: str = Field("clip", description="beit3 hoặc clip")
+    model: str = Field("clip", description="beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -158,7 +235,6 @@ class OcrSearchResponse(SearchResponse):
     # paging through.
     phrase_matches:   int = 0
     all_word_matches: int = 0
-    any_word_matches: int = 0
     searched_frames:  int = 0
 
 
@@ -169,7 +245,7 @@ class TemporalSearchRequest(BaseModel):
     gap_c:       int   = Field(20, ge=1, le=300, description="Khoảng cách tối đa (giây) — paper: gap_C")
     max_frames:  int   = Field(20, ge=1, le=100, description="Số frame tối đa mỗi chiều — paper: 20")
     sim_thr:     float = Field(0.10, description="Dừng mở rộng khi điểm tụt dưới ngưỡng này")
-    model:       str   = Field("clip", description="Model dùng để tính điểm: beit3 hoặc clip")
+    model:       str   = Field("clip", description="Model dùng để tính điểm: beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -221,7 +297,7 @@ class TrakeSearchRequest(BaseModel):
     anchor_name: str       = Field(..., description="Tên file keyframe neo, lấy từ kết quả search — xác định VIDEO cần tìm")
     gap_c:       int       = Field(60, ge=1, le=600,
                                    description="Khoảng cách tối đa (giây) giữa 2 event LIÊN TIẾP")
-    model:       str       = Field("clip", description="Model dùng để tính điểm: beit3 hoặc clip")
+    model:       str       = Field("clip", description="Model dùng để tính điểm: beit3, clip hoặc siglip2")
 
     class Config:
         json_schema_extra = {"example": {
@@ -268,7 +344,7 @@ class TemporalSearchCandidatesRequest(BaseModel):
     gap_c:       int   = Field(20, ge=1, le=300)
     max_frames:  int   = Field(20, ge=1, le=100)
     sim_thr:     float = Field(0.10)
-    model:       str   = Field("clip", description="beit3 hoặc clip")
+    model:       str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TrakeSearchCandidatesRequest(BaseModel):
@@ -277,7 +353,7 @@ class TrakeSearchCandidatesRequest(BaseModel):
     top_videos: int       = Field(5,  ge=1, le=20)
     gap_c:      int       = Field(60, ge=1, le=600)
     min_score:  float     = Field(0.10, description="Ngưỡng 'đủ tốt' lúc đếm tần suất khám phá video")
-    model:      str       = Field("clip", description="beit3 hoặc clip")
+    model:      str       = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TemporalCandidateResult(TemporalSearchResponse):
@@ -310,7 +386,7 @@ class TemporalSearchTextRequest(BaseModel):
     gap_c:      int   = Field(20, ge=1, le=300)
     max_frames: int   = Field(20, ge=1, le=100)
     sim_thr:    float = Field(0.10)
-    model:      str   = Field("clip", description="beit3 hoặc clip")
+    model:      str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TrakeSearchTextRequest(BaseModel):
@@ -320,7 +396,7 @@ class TrakeSearchTextRequest(BaseModel):
     top_videos: int   = Field(5,  ge=1, le=20)
     gap_c:      int   = Field(60, ge=1, le=600)
     min_score:  float = Field(0.10)
-    model:      str   = Field("clip", description="beit3 hoặc clip")
+    model:      str   = Field("clip", description="beit3, clip hoặc siglip2")
 
 
 class TemporalSearchTextResponse(BaseModel):
@@ -336,6 +412,8 @@ class TrakeSearchTextResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 #  App
 # ─────────────────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.environ.get("AIC_IMAGES_DIR", os.path.join(BASE_DIR, "static", "images"))
@@ -369,6 +447,19 @@ def _run_warmup() -> None:
         # Missing OCR files only print a warning — they must never flip the
         # whole warm-up to failed and take the visual route down with them.
         ocr_route.preload()
+        # Same reasoning as ocr_route.preload() above: a missing ASR index
+        # must not fail warm-up or take the visual route down with it.
+        _asr_text.preload()
+        # BM25 used to load lazily, on the first bm25-mode request -- which
+        # meant a broken path sat unnoticed in /status (bm25_ready: false,
+        # bm25_unavailable_reason: null, because nothing had tried loading it
+        # yet) until someone's first live query during competition. Eager
+        # like the two above; _load_bm25() already swallows its own failure.
+        _text_signal.preload()
+        # Warms text_lookup's lazy windows.jsonl parse (~490ms, measured) --
+        # otherwise whichever production request makes the first bm25/ASR
+        # lookup pays it instead. Same never-raises reasoning as the others.
+        _text_lookup.preload()
         _warm["state"] = "ready"
     except Exception as exc:                  # noqa: BLE001 — surfaced on /health
         _warm["state"] = "failed"
@@ -387,6 +478,11 @@ async def lifespan(app: FastAPI):
     _conn = get_conn()
     try:
         migrate(_conn)
+        # A benchmark run left mid-flight by the previous process is marked
+        # interrupted here, never resumed silently — an admin decides.
+        interrupted = interrupt_incomplete_runs(_conn)
+        if interrupted:
+            print(f"[evaluation] marked {interrupted} unfinished run(s) as interrupted")
     finally:
         _conn.close()
 
@@ -416,6 +512,68 @@ app.include_router(board_router.router)
 app.include_router(answers_router.router)
 app.include_router(export_router.router)
 app.include_router(rounds_router.router)
+app.include_router(search_state_router.router)
+app.include_router(evaluation_router.router)
+app.include_router(expansion_router.router)
+app.include_router(dres_router.router)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Chặn các route nạp index trong lúc warm-up
+#
+#  Deploy 5.3.7 (2026-09-26) chết ở warm-up với `KeyError: 'M02_V017'`, dù chạy
+#  riêng từng bước nạp trên chính máy chủ đều sạch (index, metadata, SigLIP2).
+#  Thủ phạm là tranh chấp luồng: /status — thẻ TextIndexStatus trên web hỏi mỗi
+#  5 giây — gọi _load_meta() SONG SONG với warm-up. Hai luồng cùng thấy
+#  _meta_loaded còn False (đọc 449 MB JSON mất vài giây), cùng gán lại
+#  `_video_frames = {}`; luồng warm-up đang lặp dict CŨ nhưng tra theo tên
+#  global, lúc đó đã trỏ sang dict MỚI đang điền dở, nên KeyError ở một video
+#  chưa kịp thêm. Metadata lớn gấp 3 (983.931 khung) làm cửa sổ đó dài ra, nên
+#  giờ mới lộ; bản 5.3.0 có cùng lỗi, chỉ là gặp may lúc rollback.
+#
+#  Sửa ở đây thay vì thêm khoá trong preprocess.py (lõi truy xuất, INV-1): trong
+#  lúc "warming", route nào sẽ gọi các hàm _load_* thì trả 503 ngay. Chỉ chặn
+#  đúng trạng thái "warming" — AIC_WARMUP=0 giữ "cold" mãi và mọi thứ vẫn nạp
+#  lười như trước; "failed" cũng cho qua để còn nạp lười mà dùng tạm.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_WARMUP_GATED_PREFIXES = (
+    "/status",            # system_status() -> _load_indexes() + _load_meta()
+    "/ensemble-search",
+    "/single-search",
+    "/temporal-search",   # cả -candidates, -text
+    "/trake-search",      # cả -candidates, -text
+    "/ocr-search",        # _pp._load_meta() để điền video/timestamp
+    "/ocr-text",
+)
+# POST tới đây gọi preprocess._load_meta() (routers/dres.py::_fps) hoặc chạy
+# ensemble_search (benchmark); GET chỉ đọc bảng SQLite nên không chặn.
+_WARMUP_GATED_POST_PREFIXES = (
+    "/api/dres/submissions",
+    "/api/evaluation",
+)
+
+
+def _blocked_during_warmup(method: str, path: str, state: str) -> bool:
+    """True khi request này sẽ đụng tới các hàm nạp của preprocess giữa warm-up."""
+    if state != "warming":
+        return False
+    if method.upper() == "POST" and path.startswith(_WARMUP_GATED_POST_PREFIXES):
+        return True
+    return path.startswith(_WARMUP_GATED_PREFIXES)
+
+
+# Đăng ký TRƯỚC CORSMiddleware bên dưới: middleware thêm sau bọc ngoài, nên CORS
+# vẫn gắn header cho cả câu 503 này — không thì trình duyệt chỉ thấy lỗi CORS.
+@app.middleware("http")
+async def _warmup_gate(request: Request, call_next):
+    if _blocked_during_warmup(request.method, request.url.path, _warm["state"]):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server đang khởi động (warm-up), thử lại sau ít phút.",
+                     "warmup": _warm},
+        )
+    return await call_next(request)
+
 
 # The frontend is served from a different origin than the API, so CORS is
 # required. Leaving AIC_CORS_ORIGINS empty allows any origin, which is
@@ -466,6 +624,35 @@ def _make_response(results: list[dict], query_type: str, t0: datetime) -> Search
 #fix async def
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tìm trong một nhóm video (vd chỉ camera giao thông)
+#
+#  FAISS nằm trong preprocess.py (lõi truy xuất, INV-1 — không sửa) và chỉ tìm
+#  trên cả 983.931 khung. Nên khi có video_groups thì lấy RỘNG hơn nhiều — top-M
+#  mỗi model 2000 thay vì 50 — rồi mới lọc theo mã video. Nhóm N chiếm ~20% kho,
+#  nên 2000 ứng viên mỗi model thường còn vài trăm khung N, dư cho 100 dòng. Chi
+#  phí thêm nhỏ: FAISS flat vốn quét cả kho dù M lớn hay nhỏ; chỉ phần rerank
+#  (vài dot product mỗi ứng viên) lớn theo M.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VIDEO_GROUPS = ("K", "L", "M", "N", "S")
+_SCOPED_TOP_M = 2000
+
+
+def _clean_groups(groups: Optional[List[str]]) -> tuple[str, ...]:
+    cleaned = tuple(sorted({g.strip().upper() for g in (groups or []) if g and g.strip()}))
+    bad = [g for g in cleaned if g not in _VIDEO_GROUPS]
+    if bad:
+        raise HTTPException(400, f"video_groups không hợp lệ: {bad} — chỉ nhận {list(_VIDEO_GROUPS)}")
+    return cleaned
+
+
+def _keep_groups(results: list, groups: tuple[str, ...], limit: int) -> list:
+    """Giữ kết quả thuộc các nhóm, đúng thứ tự xếp hạng, cắt còn `limit`."""
+    return [r for r in results
+            if str(r.get("video") or r.get("name") or "").startswith(groups)][:limit]
+
+
 @app.post("/ensemble-search", response_model=SearchResponseEx,
           summary="Alg.3 — search → rerank từng model → ensemble")
 def ensemble_search_endpoint(req: EnsembleSearchRequest):
@@ -479,11 +666,95 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
     bằng chính embedding của model đó mới có nghĩa. Sau đó Alg.3 chuẩn hoá
     s/S_max nên hai thang điểm khác nhau vẫn gộp được công bằng.
     """
+    # [siglip2] Validate ngay tại request cho lỗi rõ ràng, giống cách
+    # /single-search validate `model`, thay vì rơi xuống preprocess rồi trả
+    # rỗng im lặng.
+    if req.models:
+        bad = [m for m in req.models if m not in MODEL_NAMES]
+        if bad:
+            raise HTTPException(
+                400, f"models chứa tên không hợp lệ: {bad} — "
+                     f"phải là tập con của {list(MODEL_NAMES)}")
+        # Tên hợp lệ nhưng index CHƯA có (SigLIP2 còn đang build) thì
+        # _search_one() trả [] và ensemble ra rỗng KHÔNG kèm lý do — người dùng
+        # tick mỗi SigLIP2 rồi ngồi đoán. Nói thẳng, nhưng CHỈ khi mọi model
+        # được chọn đều thiếu index; còn ít nhất 1 model chạy được thì im lặng
+        # bỏ qua model thiếu, đúng hành vi cũ.
+        vec = system_status().get("vectors", {})
+        if not any(vec.get(m, 0) > 0 for m in req.models):
+            raise HTTPException(
+                503, f"Các model được chọn {req.models} đều chưa nạp được index. "
+                     f"Số vector hiện có: { {m: vec.get(m, 0) for m in req.models} }. "
+                     f"Kiểm tra file .index trong AIC_INDEX_DIR.")
+    groups = _clean_groups(req.video_groups)
     t0 = datetime.now()
     try:
-        results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
-                                  use_rerank=req.use_rerank)
-        return _make_response(results, "ensemble", t0)
+        if groups:
+            pool = ensemble_search(req.query, top_k=_SCOPED_TOP_M * 3,
+                                   top_m=max(req.top_m, _SCOPED_TOP_M),
+                                   use_rerank=req.use_rerank,
+                                   models=req.models or None)
+            results = _keep_groups(pool, groups, req.limit)
+        else:
+            results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
+                                      use_rerank=req.use_rerank,
+                                      models=req.models or None)
+
+        response = _make_response(results, "ensemble", t0)
+
+        # Text-signal annotation (additive metadata only -- see text_signal.py).
+        # Off by default: an empty text_filter changes nothing, so existing
+        # callers see identical results. No frames are removed and no ranks
+        # change; the UI decides what to do with the per-video annotation.
+        #
+        # Guarded in its own try/except: annotation is metadata on top of the
+        # visual results, so a failure here must not turn a working search
+        # into an HTTP 500 -- the visual results still have to reach the user.
+        #
+        # Routing (split ASR / OCR filters versus the legacy single filter) lives
+        # in text_signal.annotate_request() so it can be tested without importing
+        # this module; the endpoint only copies its result into the response.
+        try:
+            outcome = annotate_request(
+                asr_filter=req.asr_filter, asr_filter_mode=req.asr_filter_mode,
+                ocr_filter=req.ocr_filter, ocr_filter_mode=req.ocr_filter_mode,
+                legacy_filter=req.text_filter, legacy_mode=req.text_filter_mode,
+                results=results,
+            )
+            response.video_annotations = outcome.video_annotations
+            response.text_filter_active = outcome.text_filter_active
+            response.text_filter_mode = outcome.text_filter_mode
+            response.asr_filter_active = outcome.asr_filter_active
+            response.ocr_filter_active = outcome.ocr_filter_active
+            response.asr_filter_mode = outcome.asr_filter_mode
+            response.ocr_filter_mode = outcome.ocr_filter_mode
+        # Previous inline block, replaced by annotate_request() above (the legacy
+        # branch of that function does exactly this):
+        #
+        #     if req.text_filter.strip():
+        #         frame_names: dict[str, list[str]] = {}
+        #         for frame in results:
+        #             frame_names.setdefault(frame["video"], []).append(frame["name"])
+        #         annotations = annotate_videos(
+        #             video_ids=list(frame_names.keys()), filter_query=req.text_filter,
+        #             mode=req.text_filter_mode, frame_names=frame_names)
+        #         response.video_annotations = {vid: asdict(ann) for vid, ann in annotations.items()}
+        #         response.text_filter_active = True
+        #         response.text_filter_mode = req.text_filter_mode.value
+        #     else:
+        #         response.text_filter_active = False
+        except Exception:
+            # logger.exception() captures the full traceback, not just str(e) --
+            # a print() here previously threw away exactly the information
+            # needed to tell "the text index never loaded" apart from "this
+            # query genuinely crashed the annotation code".
+            logger.exception("[text_signal] annotation failed")
+            response.text_filter_active = False
+            response.asr_filter_active = False
+            response.ocr_filter_active = False
+            response.video_annotations = None
+
+        return response
     except Exception as e:
         raise HTTPException(500, f"Ensemble search error: {e}")
 
@@ -498,10 +769,17 @@ def single_search_endpoint(req: SingleSearchRequest):
     """
     if req.model not in MODEL_NAMES:
         raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    groups = _clean_groups(req.video_groups)
     t0 = datetime.now()
     try:
-        results = single_model_search(req.query, req.model, top_k=req.limit,
-                                      top_m=req.top_m, use_rerank=req.use_rerank)
+        if groups:
+            pool = single_model_search(req.query, req.model, top_k=_SCOPED_TOP_M,
+                                       top_m=max(req.top_m, _SCOPED_TOP_M),
+                                       use_rerank=req.use_rerank)
+            results = _keep_groups(pool, groups, req.limit)
+        else:
+            results = single_model_search(req.query, req.model, top_k=req.limit,
+                                          top_m=req.top_m, use_rerank=req.use_rerank)
         return _make_response(results, f"single:{req.model}", t0)
     except Exception as e:
         raise HTTPException(500, f"Single search error: {e}")
@@ -678,7 +956,7 @@ def ocr_search_endpoint(req: OcrSearchRequest):
         ))
 
     return OcrSearchResponse(
-        total_results=found["any_word_matches"],
+        total_results=found["all_word_matches"],
         returned_results=len(rows),
         results=rows,
         query_type="ocr" + ("" if req.strip_diacritics else ":with_marks"),
@@ -686,7 +964,6 @@ def ocr_search_endpoint(req: OcrSearchRequest):
         max_distance=max((r.distance for r in rows), default=0.0),
         phrase_matches=found["phrase_matches"],
         all_word_matches=found["all_word_matches"],
-        any_word_matches=found["any_word_matches"],
         searched_frames=found["searched_frames"],
     )
 
@@ -703,7 +980,8 @@ def ocr_text_endpoint(name: str):
 
 @app.get("/status", summary="Còn thiếu file gì")
 def status():
-    return {**system_status(), "warmup": _warm, "ocr": ocr_route.status()}
+    return {**system_status(), "warmup": _warm, "ocr": ocr_route.status(),
+            "asr_text": _asr_text.status(), "text_signal": _text_signal.status()}
 
 
 @app.get("/health")

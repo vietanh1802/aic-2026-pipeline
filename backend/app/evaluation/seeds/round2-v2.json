@@ -1,0 +1,1214 @@
+{
+  "schema_version": 2,
+  "dataset": {
+    "slug": "round2",
+    "display_name": "AI Challenge 2026 - Round 2",
+    "version": "round2-v2",
+    "query_count": 29,
+    "task_counts": {
+      "KIS": 19,
+      "QA": 8,
+      "TRAKE": 2
+    },
+    "source": {
+      "filename": "SOTUYEN2-bo-de-thi + team round2 submission review",
+      "sha256": null,
+      "provenance": "team_submission_summary_plus_manual_review"
+    }
+  },
+  "reference_set": {
+    "version": "r2-manual-v2",
+    "label_semantics": "Team manually reviewed target video, valid frame interval(s), and (for QA) answer text from Round 2; these are historical team references, not organizer-certified ground truth.",
+    "interval_annotation": "complete_for_kis_qa; trake_intentionally_not_interval_scored_tier0",
+    "notes": "valid_intervals holds one or more {start,end} frame ranges (inclusive) per reference; a query counts correct if any candidate frame for the correct video falls in any listed interval. Several KIS queries (p2-5, p2-15, p2-16, p2-17, p2-22, p2-24) have more than one valid interval. TRAKE (p2-8, p2-21) is scored on video ranking only for now; their trake_events are descriptive only, not scored intervals. qa_answer values were cross-checked against the actual submission CSVs (100/100, or 98-99/99, row agreement per query). p2-27 was excluded from organizer ranking (more than 3 answers met the requirements, per AIC2026 official announcement); it is not present in v2."
+  },
+  "queries": [
+    {
+      "id": "p2-1",
+      "ordinal": 1,
+      "task_type": "KIS",
+      "query_vi": "Nhóm 5 người đang chơi đùa bên cạnh một con vật màu vàng. Một trong số đó đã mang một vật trông như trái bí đỏ đi giấu. Người đàn ông thức dậy không thấy quả bí đỏ đâu nên đánh thức con vật dậy.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L24_V035",
+        "valid_intervals": [
+          {
+            "start": 142,
+            "end": 1817
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 142,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The query is almost entirely physical action and color description; 'bí đỏ' is only a visual resemblance and is not a reliable topical ASR/OCR signal."
+      }
+    },
+    {
+      "id": "p2-2",
+      "ordinal": 2,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip bắt đầu với cảnh một người đang dùng điện thoại chụp ảnh bức tranh hình tê giác trên tường. Đoạn clip kết thúc với cảnh một người chụp ảnh các hình graffiti 3 chú khỉ trên một cây cầu",
+      "submitted_count": 98,
+      "reference": {
+        "video_id": "L21_V013",
+        "valid_intervals": [
+          {
+            "start": 22335,
+            "end": 22993
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 22335,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Tê giác, graffiti and khỉ describe the photographed artwork itself rather than a clear narrated or textual topic, so no sufficiently useful ASR/OCR term is supported."
+      }
+    },
+    {
+      "id": "p2-3",
+      "ordinal": 3,
+      "task_type": "KIS",
+      "query_vi": "Một chú lân (hay rồng/sư tử?) màu vàng nhảy hay rơi từ trên cao xuống, gần với mô hình chiếc tàu thủy nhỏ màu xanh dương.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L24_V044",
+        "valid_intervals": [
+          {
+            "start": 461,
+            "end": 638
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 461,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "The query is a visual action description and is explicitly uncertain whether the figure is lân, rồng or sư tử, so those labels should not become filters."
+      }
+    },
+    {
+      "id": "p2-4",
+      "ordinal": 4,
+      "task_type": "KIS",
+      "query_vi": "Hai bạn trẻ đang treo băng-rôn lớn có tông màu xanh dương, được trang trí bằng hình ảnh núi, mây và một con đường dẫn tới trường học. Trên băng rôn còn có hình ảnh 02 em bé vùng khó khăn đang mặc áo màu vàng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V072",
+        "valid_intervals": [
+          {
+            "start": 675,
+            "end": 753
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 675,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "Although a banner is present, the query gives only its visual imagery and does not provide a specific campaign, organization, slogan or sufficiently distinctive topic term."
+      }
+    },
+    {
+      "id": "p2-5",
+      "ordinal": 5,
+      "task_type": "KIS",
+      "query_vi": "Một người áo đỏ, đội nón màu trắng, đang lấy nước rưới vào mặt của mình. Khung hình có hai người đi xe đạp, người mặc áo xanh đậm đang đuổi theo người mặc áo đen phối cam.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V022",
+        "valid_intervals": [
+          {
+            "start": 26060,
+            "end": 26165
+          },
+          {
+            "start": 26246,
+            "end": 26330
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 26060,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "This is purely a cycling-action and clothing-color description with no location, event, team or other topical vocabulary."
+      }
+    },
+    {
+      "id": "p2-6",
+      "ordinal": 6,
+      "task_type": "KIS",
+      "query_vi": "Đoạn video do người đi đường phía sau ghi lại cho thấy 2 thanh niên điều khiển xe máy bất ngờ nằm dài trên yên và phóng với tốc độ cao. Xuất hiện trong khung hình còn có một chiếc ô tô màu xanh cùng một người đi xe máy mặc áo xanh khác. Có 2 vòng tròn màu đỏ xuất hiện để khoanh vùng vị trí 2 thanh niên này.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L22_V024",
+        "valid_intervals": [
+          {
+            "start": 20400,
+            "end": 21195
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 20400,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "traffic behavior",
+            "terms": ["xe máy", "tốc độ cao"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The clip may come from narrated traffic or news footage, making the short traffic terms weak but potentially useful ASR signals; the red circles themselves are only visual annotations."
+      }
+    },
+    {
+      "id": "p2-7",
+      "ordinal": 7,
+      "task_type": "QA",
+      "query_vi": "Đoạn clip được quay từ bên trong một chiếc xe ô tô tự lái, có thể thấy rõ vô lăng được xoay để chiếc xe rẽ sang phải. Sau đó, góc quay chuyển ra ngoài, bắt trọn cảnh chiếc xe màu trắng rẽ trái, và ở góc trên khung hình có một dưới một biển hiệu đỏ gồm 6 ký tự chữ Hán. Con số được viết trên phần hông xe màu trắng là số mấy?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L21_V009",
+        "valid_intervals": [
+          {
+            "start": 20998,
+            "end": 21338
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 20998,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "1204",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "autonomous vehicle",
+            "terms": ["tự lái", "ô tô tự lái"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "signage",
+            "terms": ["chữ Hán"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The unknown car number is excluded, but the autonomous-driving topic and Chinese-character sign remain usable contextual signals."
+      }
+    },
+    {
+      "id": "p2-8",
+      "ordinal": 8,
+      "task_type": "TRAKE",
+      "query_vi": "Video về một khu vườn cây ăn trái ở miền Tây Nam Bộ. Đây là chuỗi liên tiếp các cảnh quay về 4 loại trái cây trong vườn. E1: Cảnh đầu tiên có trái sầu riêng. E2: Cảnh đầu tiên có trái măng cụt. E3: Cảnh đầu tiên có trái bưởi. E4: Cảnh đầu tiên có trái dâu bòn bon.",
+      "submitted_count": 99,
+      "reference": {
+        "video_id": "L27_V011",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round2_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Cảnh đầu tiên có trái sầu riêng.",
+          "reference_frame_idx": 3799,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Cảnh đầu tiên có trái măng cụt.",
+          "reference_frame_idx": 3868,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Cảnh đầu tiên có trái bưởi.",
+          "reference_frame_idx": 4012,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Cảnh đầu tiên có trái dâu bòn bon.",
+          "reference_frame_idx": 4096,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "fruit garden",
+            "terms": ["sầu riêng", "măng cụt", "bưởi", "bòn bon"]
+          },
+          {
+            "concept": "region",
+            "terms": ["miền Tây", "Tây Nam Bộ"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The named fruits and regional context are central topical vocabulary for a fruit-garden video and are plausible documentary narration terms."
+      }
+    },
+    {
+      "id": "p2-9",
+      "ordinal": 9,
+      "task_type": "QA",
+      "query_vi": "Trong video hướng dẫn nấu ăn, người đầu bếp lần lượt cho các loại hương liệu gồm tiêu xanh, lá chanh và sả vào bên trong bụng của tổng cộng 4 con cá. Đây là loài cá gì?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V161",
+        "valid_intervals": [
+          {
+            "start": 2567,
+            "end": 3294
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 2567,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "Cá sòng",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "seasonings",
+            "terms": ["tiêu xanh", "lá chanh", "sả"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The query explicitly describes a cooking tutorial and names three distinctive seasonings that are plausible recipe narration terms; the fish species itself is the unknown and is excluded."
+      }
+    },
+    {
+      "id": "p2-10",
+      "ordinal": 10,
+      "task_type": "KIS",
+      "query_vi": "Một đầu bếp chế biến món ăn trong chảo, với các miếng dồi trường màu trắng và rau xanh. Đầu bếp cho bông hẹ vào chảo đang có dồi trường rồi dùng dụng cụ đảo các nguyên liệu. Các đoạn bông hẹ dài màu xanh được trộn cùng những miếng dồi trường trắng trong chảo. Máy quay chuyển sang cận cảnh chảo khi đầu bếp tiếp tục xào và trộn hai nguyên liệu.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V120",
+        "valid_intervals": [
+          {
+            "start": 5300,
+            "end": 5468
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5300,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["dồi trường", "bông hẹ"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Both named ingredients are specific cooking vocabulary and much more discriminative than generic action terms such as xào or chảo."
+      }
+    },
+    {
+      "id": "p2-11",
+      "ordinal": 11,
+      "task_type": "KIS",
+      "query_vi": "Trong video, người đầu bếp cầm một nguyên liệu dài đã được xiên que và lăn qua hỗn hợp màu xanh lá cây và màu đỏ đã băm nhỏ. Nguyên liệu sau đó được chuyển sang một đĩa chứa bột trắng để phủ bên ngoài. Người đầu bếp cầm que xiên và xoay nguyên liệu qua lại nhiều lần trên lớp bột. Cuối cùng, nguyên liệu đã được phủ kín một lớp bột trắng và đặt riêng sang một chiếc đĩa.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V392",
+        "valid_intervals": [
+          {
+            "start": 3609,
+            "end": 4291
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 3609,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "preparation",
+            "terms": ["xiên que", "bột trắng"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The actual ingredient is unnamed, but the skewer-and-coating preparation provides a small amount of independently searchable cooking vocabulary."
+      }
+    },
+    {
+      "id": "p2-12",
+      "ordinal": 12,
+      "task_type": "QA",
+      "query_vi": "Đoạn video mô tả quá trình làm bánh, bánh được tạo ra có màu tím, nguyên liệu bên trong có giá, cà rốt, và bên trong mỗi bánh đều có 1 hạt sen. Mỗi lần khuôn này làm được bao nhiêu cái bánh?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V192",
+        "valid_intervals": [
+          {
+            "start": 4625,
+            "end": 5910
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 4625,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "7",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "filling",
+            "terms": ["cà rốt", "hạt sen", "giá"]
+          },
+          {
+            "concept": "baking",
+            "terms": ["làm bánh"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The ingredients are individually generic but together are meaningful recipe vocabulary; the requested number of cakes per mold is excluded."
+      }
+    },
+    {
+      "id": "p2-13",
+      "ordinal": 13,
+      "task_type": "KIS",
+      "query_vi": "Người đầu bếp đảo đều một hỗn hợp các nguyên liệu trong chảo, nhìn bằng mắt thường có thể thấy một số nguyên liệu như thịt gà, ớt đỏ, ớt xanh, đậu phộng và hành tím. Sau đó cô ấy tắt lửa, cho thêm vỏ chanh và nước cốt chanh vào chảo trước khi trút hỗn hợp thức ăn này ra đĩa.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V422",
+        "valid_intervals": [
+          {
+            "start": 4260,
+            "end": 4676
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 4260,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "main ingredients",
+            "terms": ["thịt gà", "đậu phộng", "hành tím"]
+          },
+          {
+            "concept": "peppers",
+            "terms": ["ớt đỏ", "ớt xanh"]
+          },
+          {
+            "concept": "lime",
+            "terms": ["vỏ chanh", "nước cốt"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "Under the broader rule, the explicitly named ingredients are valid cooking-topic signals even though the query says they are visually recognizable."
+      }
+    },
+    {
+      "id": "p2-14",
+      "ordinal": 14,
+      "task_type": "KIS",
+      "query_vi": "Cận cảnh một nhóm 3 vận động viên đua xe đạp đang di chuyển sát nhau, hai tay đua mặc áo xanh biển đội mũ bảo hiểm đỏ và trắng, bên cạnh có một tay đua mặc áo vàng đang đua cùng. Bên dưới quai mũ của tay đua nón đỏ có một sợi dây màu trắng treo lủng xuống gần cổ.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V010",
+        "valid_intervals": [
+          {
+            "start": 520,
+            "end": 726
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 520,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "After considering the cycling vocabulary, the query still contains only generic race action, clothing and equipment details with no event, location or other distinctive topical anchor."
+      }
+    },
+    {
+      "id": "p2-15",
+      "ordinal": 15,
+      "task_type": "KIS",
+      "query_vi": "Cảnh phim lần lượt giới thiệu các nguyên liệu của món ăn qua 3 chuyển cảnh: máy quay chéo lên và kết thúc ở nguyên liệu hải sản đầu tiên; quay từ trên xuống cận cảnh nguyên liệu hải sản thứ hai rồi chuyển sang các nguyên liệu nhiều màu sắc; cuối cùng là cú máy tĩnh toàn cảnh toàn bộ nguyên liệu.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V093",
+        "valid_intervals": [
+          {
+            "start": 2798,
+            "end": 3078
+          },
+          {
+            "start": 3257,
+            "end": 3816
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 2798,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "food category",
+            "terms": ["hải sản"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The seafood types are deliberately unnamed, leaving only the broad but still potentially useful cooking-topic term 'hải sản'."
+      }
+    },
+    {
+      "id": "p2-16",
+      "ordinal": 16,
+      "task_type": "KIS",
+      "query_vi": "Trong một ngôi nhà nông thôn có cửa sổ lớn, hai người phụ nữ đang làm thủ công trên một bộ ván ngựa, phía sau là một dãy khoảng 10 thớt gỗ được treo thành một hàng ngang.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L29_V014",
+        "valid_intervals": [
+          {
+            "start": 12519,
+            "end": 12932
+          },
+          {
+            "start": 13185,
+            "end": 13215
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 12519,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "rural craft",
+            "terms": ["ván ngựa", "thớt gỗ", "thủ công"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The distinctive rural furniture and craft nouns are plausible narration vocabulary in documentary or craft-oriented footage even though narration is not explicitly stated."
+      }
+    },
+    {
+      "id": "p2-17",
+      "ordinal": 17,
+      "task_type": "KIS",
+      "query_vi": "Sân khấu với dòng chữ nổi 3D to, ánh kim phủ kim tuyến có nội dung: “SẮC CỔ ...” đặt ở mép trước sân khấu.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V026",
+        "valid_intervals": [
+          {
+            "start": 2264,
+            "end": 2336
+          },
+          {
+            "start": 2391,
+            "end": 2529
+          }
+        ],
+        "interval_count": 2,
+        "reference_frame_idx": 2264,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (2) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [
+          {
+            "concept": "stage text",
+            "terms": ["SẮC CỔ"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query directly supplies the visible stage wording, making 'SẮC CỔ' a strong OCR term."
+      }
+    },
+    {
+      "id": "p2-18",
+      "ordinal": 18,
+      "task_type": "KIS",
+      "query_vi": "Đoạn phim quay từ phía sau nhóm dẫn đầu, gồm 1 tay đua dẫn trước và 3 tay đua bám phía sau, khi cả nhóm rẽ phải vào đường Hồ Tùng Mậu tại giao lộ có đèn xanh đang đếm ngược đến 13 giây.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V017",
+        "valid_intervals": [
+          {
+            "start": 2401,
+            "end": 2577
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 2401,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "location",
+            "terms": ["Hồ Tùng Mậu"]
+          },
+          {
+            "concept": "cycling",
+            "terms": ["đua xe đạp", "nhóm dẫn đầu"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "street",
+            "terms": ["Hồ Tùng Mậu"]
+          },
+          {
+            "concept": "countdown",
+            "terms": ["13", "13 giây"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "The named street is a strong topical location term and may occur in commentary or roadside text; 13 is retained only as a weaker OCR countdown signal."
+      }
+    },
+    {
+      "id": "p2-19",
+      "ordinal": 19,
+      "task_type": "QA",
+      "query_vi": "Đoạn phim ghi lại cảnh mạnh thường quân hỗ trợ một quán trọ dành cho người cao tuổi, sau đó chuyển sang cảnh một cụ ông trò chuyện với nhóm người nước ngoài. Hỏi quán trọ được nhắc đến trong đoạn phim nằm trên đường nào?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L30_V043",
+        "valid_intervals": [
+          {
+            "start": 3485,
+            "end": 3770
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 3485,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "Lý Thường Kiệt",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "charity",
+            "terms": ["mạnh thường quân", "hỗ trợ"]
+          },
+          {
+            "concept": "elderly lodging",
+            "terms": ["quán trọ", "người cao tuổi"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The unknown street name is excluded, but the charity report's subject matter provides several plausible narration terms."
+      }
+    },
+    {
+      "id": "p2-20",
+      "ordinal": 20,
+      "task_type": "KIS",
+      "query_vi": "Clip bài giảng môn Địa lí, có 1 bảng số liệu về mạng lưới đô thị ở Việt Nam. Bảng này thể hiện sự khác nhau về phân bố đô thị giữa các vùng bằng màu sắc: 3 vùng có nhiều đô thị nhất thì con số thể hiện số lượng đô thị được in màu đỏ, còn 2 vùng có ít đô thị nhất thì con số này được in màu xanh. Từ bảng số liệu ta còn có thể thấy rằng vùng có ít đô thị nhất lại là vùng có dân số đô thi cao nhất.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V060",
+        "valid_intervals": [
+          {
+            "start": 33299,
+            "end": 34396
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 33299,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Địa lí"]
+          },
+          {
+            "concept": "urban network",
+            "terms": ["mạng lưới", "đô thị"]
+          },
+          {
+            "concept": "urban distribution",
+            "terms": ["phân bố", "phân bố đô thị"]
+          },
+          {
+            "concept": "population",
+            "terms": ["dân số", "dân số đô thị"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "subject",
+            "terms": ["Địa lí"]
+          },
+          {
+            "concept": "urban network",
+            "terms": ["mạng lưới", "đô thị"]
+          },
+          {
+            "concept": "urban distribution",
+            "terms": ["phân bố", "phân bố đô thị"]
+          },
+          {
+            "concept": "population",
+            "terms": ["dân số", "dân số đô thị"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query explicitly describes a lecture table, so its short urban-geography terms are strongly plausible in both speech and slide text."
+      }
+    },
+    {
+      "id": "p2-21",
+      "ordinal": 21,
+      "task_type": "TRAKE",
+      "query_vi": "4 cảnh này xảy ra liên tiếp nhau. Cảnh 1: Hai người phụ nữ cùng nhau dán niêm phong một thùng carton. Cảnh 2: Các thùng mì tôm và bọc bánh mì được sắp xếp ngay ngắn. Cảnh 3: Một người đàn ông nhấc thùng mì tôm lên và xếp lên trên chồng thùng mì. Cảnh 4: Cảnh quay cận cảnh các thùng mì được xếp chồng trên xe tải.",
+      "submitted_count": 99,
+      "reference": {
+        "video_id": "L30_V031",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "manual_submission",
+        "provenance": "team_round2_submission_docx"
+      },
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Hai người phụ nữ cùng nhau dán niêm phong một thùng carton.",
+          "reference_frame_idx": 2100,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Các thùng mì tôm và bọc bánh mì được sắp xếp ngay ngắn.",
+          "reference_frame_idx": 2146,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Một người đàn ông nhấc thùng mì tôm lên và xếp lên trên chồng thùng mì.",
+          "reference_frame_idx": 2195,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Cảnh quay cận cảnh các thùng mì được xếp chồng trên xe tải.",
+          "reference_frame_idx": 2250,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "TRAKE query. Scored on target-video ranking only (Tier 0); per-event frames are descriptive/display only, not used in scoring.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "packing",
+            "terms": ["niêm phong", "thùng carton"]
+          },
+          {
+            "concept": "food boxes",
+            "terms": ["mì tôm", "bánh mì"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The sequence is mostly visual, but the packing and food-item nouns provide weak topical vocabulary that could plausibly occur in narration."
+      }
+    },
+    {
+      "id": "p2-22",
+      "ordinal": 22,
+      "task_type": "KIS",
+      "query_vi": "Trong video nấu ăn, một loại nguyên liệu hải sản màu trắng được khứa theo những đường thẳng vuông góc nhau, trên cả 2 bề mặt của nguyên liệu này. Nguyên liệu sau đó được cắt thành từng que và cho vào tô, trước khi được trộn đều với các gia vị gồm rượu, tiêu và hạt nêm.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V470",
+        "valid_intervals": [
+          {
+            "start": 1945,
+            "end": 2219
+          },
+          {
+            "start": 2330,
+            "end": 2564
+          },
+          {
+            "start": 3115,
+            "end": 3283
+          }
+        ],
+        "interval_count": 3,
+        "reference_frame_idx": 1945,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (3) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "seafood",
+            "terms": ["hải sản"]
+          },
+          {
+            "concept": "seasonings",
+            "terms": ["rượu", "tiêu", "hạt nêm"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "medium",
+        "reasoning": "The seafood itself is unnamed, but the cooking query explicitly names three seasonings that are plausible instructional narration terms."
+      }
+    },
+    {
+      "id": "p2-23",
+      "ordinal": 23,
+      "task_type": "QA",
+      "query_vi": "Câu hỏi môn Sinh học nằm ở số thứ tự 11 trong đề thi THPTQG 2022. Trong câu hỏi có một biểu đồ đưa ra sự so sánh tốc độ sinh trưởng của các loài thực vật trong các hệ sinh thái ven biển. Hãy cho biết loài cây (II) đạt được tốc độ sinh trưởng tốt nhất khi môi trường sống có độ mặn là bao nhiêu phần nghìn?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V012",
+        "valid_intervals": [
+          {
+            "start": 17900,
+            "end": 22291
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 17900,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "20",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2022", "THPT 2022", "2022"]
+          },
+          {
+            "concept": "biology",
+            "terms": ["Sinh học", "thực vật"]
+          },
+          {
+            "concept": "growth",
+            "terms": ["sinh trưởng"]
+          },
+          {
+            "concept": "environment",
+            "terms": ["ven biển", "độ mặn"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "exam",
+            "terms": ["THPTQG 2022", "THPT 2022", "2022"]
+          },
+          {
+            "concept": "question",
+            "terms": ["câu 11", "11"]
+          },
+          {
+            "concept": "biology",
+            "terms": ["Sinh học", "sinh trưởng", "thực vật", "độ mặn"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The exam identifier and Biology terminology are directly grounded in the query and are highly plausible in both the lesson audio and displayed exam material; the unknown salinity value is excluded."
+      }
+    },
+    {
+      "id": "p2-24",
+      "ordinal": 24,
+      "task_type": "KIS",
+      "query_vi": "Đoạn clip ghi lại khoảnh khắc về đích của một chặng đua xe đạp diễn ra tại thành phố thuộc tỉnh Quảng Nam (cũ, trước ngày 01/7/2025). Vận động viên người Estonia mặc áo xanh nước biển dẫn đầu đoàn. Khi chỉ còn cách đích một đoạn ngắn, anh buông cả hai tay khỏi ghi-đông, giang hai tay lên cao ăn mừng chiến thắng trong khi xe vẫn tiến về phía trước. Ngay phía sau anh là một vận động viên mặc áo vàng và một vận động viên mặc áo cam đang lần lượt lao về đích.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L23_V013",
+        "valid_intervals": [
+          {
+            "start": 6722,
+            "end": 6962
+          },
+          {
+            "start": 7183,
+            "end": 7325
+          },
+          {
+            "start": 7520,
+            "end": 7655
+          },
+          {
+            "start": 7925,
+            "end": 8015
+          },
+          {
+            "start": 8072,
+            "end": 8192
+          }
+        ],
+        "interval_count": 5,
+        "reference_frame_idx": 6722,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Multiple valid frame intervals (5) for this reference -- any candidate frame for the correct video landing in ANY listed interval counts as a match.",
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "location",
+            "terms": ["Quảng Nam"]
+          },
+          {
+            "concept": "nationality",
+            "terms": ["Estonia"]
+          },
+          {
+            "concept": "sport",
+            "terms": ["đua xe đạp", "về đích"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "race metadata",
+            "terms": ["Quảng Nam", "Estonia"]
+          }
+        ],
+        "confidence": "medium",
+        "reasoning": "Under the broader extraction rule, the explicit location and athlete nationality are valuable named-entity signals and are plausible in race commentary or broadcast graphics."
+      }
+    },
+    {
+      "id": "p2-25",
+      "ordinal": 25,
+      "task_type": "KIS",
+      "query_vi": "Cảnh giáo viên nam đeo kính, mặc áo sơ mi kẻ sọc ngắn tay, xuất hiện ở góc dưới bên trái và dùng hai tay làm cử chỉ minh họa khi đang giảng bài. Khung hình chứa một bức ảnh minh họa cô gái trẻ đeo kính, mặc áo sơ mi trắng, ngồi khoanh chân trên ghế sofa màu xám vừa cầm cốc nước vừa nhìn vào laptop mở trên đùi.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V045",
+        "valid_intervals": [
+          {
+            "start": 15585,
+            "end": 16854
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 15585,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [],
+        "ocr_terms": [],
+        "confidence": "none",
+        "reasoning": "A lecture setting is present, but the actual lecture topic is never stated; the remaining laptop, sofa, clothing and gesture details are visual rather than meaningful subject vocabulary."
+      }
+    },
+    {
+      "id": "p2-26",
+      "ordinal": 26,
+      "task_type": "KIS",
+      "query_vi": "Đây là một đoạn trong bài giảng. Trên slide bao gồm: - Một nhóm nhân vật người 3D màu trắng vây quanh một nhân vật màu đỏ ở chính giữa. - Hai nhân vật hoạt hình nam đang trong tư thế thi đấu kéo co, đối đầu nhau với sợi dây thừng.",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L25_V062",
+        "valid_intervals": [
+          {
+            "start": 13720,
+            "end": 14020
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 13720,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": null,
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "competition",
+            "terms": ["kéo co", "đối đầu"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "competition",
+            "terms": ["kéo co", "đối đầu"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The actual lecture topic is unstated, but the repeated competition imagery makes 'kéo co' and 'đối đầu' weak thematic terms that may accompany the slide."
+      }
+    },
+    {
+      "id": "p2-28",
+      "ordinal": 28,
+      "task_type": "QA",
+      "query_vi": "Cảnh quay một tô cháo đã được nấu và trang trí hoàn chỉnh (đã xong các giai đoạn trang trí). Kế bên tô cháo có 1 chén nhỏ màu đen, để chứa 1 loại topping màu cam kết cấu hơi giống những sợi nhỏ. Loại topping này trước đó đã được rắc lên tô cháo. Xung quanh topping là các loại rau, hành,... Hỏi topping trong video là thịt của con gì?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V450",
+        "valid_intervals": [
+          {
+            "start": 6290,
+            "end": 6338
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6290,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "Cá hồi",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "dish",
+            "terms": ["cháo"]
+          },
+          {
+            "concept": "garnish",
+            "terms": ["rau", "hành"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "dish",
+            "terms": ["topping"]
+          }
+        ],
+        "confidence": "low",
+        "reasoning": "The topping's animal identity is the unknown and is excluded, but the dish and garnish vocabulary remain usable weak cooking signals. 'topping' moved to OCR-only: it does not appear in the real ASR BM25 vocabulary (artifacts/asr/releases/aic2026-full-20260817-r01/bm25/vocabulary.json), consistent with CLAUDE.md's rule to treat English filter terms as OCR-only absent specific evidence the ASR caught them."
+      }
+    },
+    {
+      "id": "p2-29",
+      "ordinal": 29,
+      "task_type": "QA",
+      "query_vi": "Cảnh quay liệt kê các nguyên liệu để nấu một món ăn. Ảnh nền bao gồm dĩa thịt, bó lá tươi xanh đặt ở góc bên trái, một gói hạt nêm, hũ thủy tinh nhỏ đựng nước cốt dừa, bột cà ri, nấm mèo (mộc nhĩ) khô đặt phía dưới chén gia vị, sả cây và ớt hiểm đỏ đặt ở góc trái phía dưới. Bảng nguyên liệu hiện lên gồm 9 thành phần cụ thể. Hỏi phần thịt có trọng lượng bao nhiêu trong bảng nguyên liệu (số và đơn vị được ghi trong bảng)?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V439",
+        "valid_intervals": [
+          {
+            "start": 1443,
+            "end": 1557
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1443,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "300g",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["nước cốt dừa", "bột cà ri", "nấm mèo", "mộc nhĩ", "sả", "ớt hiểm", "hạt nêm"]
+          }
+        ],
+        "ocr_terms": [
+          {
+            "concept": "ingredients",
+            "terms": ["nước cốt dừa", "bột cà ri", "nấm mèo", "mộc nhĩ", "sả", "ớt hiểm", "hạt nêm"]
+          },
+          {
+            "concept": "ingredient board",
+            "terms": ["nguyên liệu", "9 thành phần"]
+          }
+        ],
+        "confidence": "high",
+        "reasoning": "The query explicitly says an ingredient table appears and names its food items, making them strong OCR terms and plausible cooking narration terms; the unknown meat weight is excluded."
+      }
+    },
+    {
+      "id": "p2-30",
+      "ordinal": 30,
+      "task_type": "QA",
+      "query_vi": "Một cô gái đeo tạp dề màu trắng, bên cạnh là một lọ hoa riềng tía. Sau đó cô gái này đặt lên 1 dĩa trắng 4 con X, được biết X là nguyên liệu cho món ăn trong tập này. Sau đó người này lại cầm lên 2 con X. Sau đó người này đối thoại với một người đối diện để xem hôm nay nấu món gì. Hỏi X là con gì?",
+      "submitted_count": 100,
+      "reference": {
+        "video_id": "L26_V254",
+        "valid_intervals": [
+          {
+            "start": 299,
+            "end": 1223
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 299,
+        "status": "manual_reference",
+        "confidence": "manual_review_interval",
+        "provenance": "team_round2_manual_interval_review"
+      },
+      "qa_answer": "Nghêu",
+      "trake_events": null,
+      "filter_terms": {
+        "asr_terms": [
+          {
+            "concept": "plant",
+            "terms": ["hoa riềng"]
+          },
+          {
+            "concept": "cooking",
+            "terms": ["món ăn"]
+          }
+        ],
+        "ocr_terms": [],
+        "confidence": "low",
+        "reasoning": "The identity of X is excluded because it is the QA answer, while 'hoa riềng' is a comparatively distinctive contextual term that could still help locate the episode."
+      }
+    }
+  ]
+}

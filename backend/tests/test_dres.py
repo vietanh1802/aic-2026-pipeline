@@ -1,0 +1,444 @@
+# -*- coding: utf-8 -*-
+"""Nộp bài DRES: đề xuất → duyệt → gửi, chạy với một DRES giả.
+
+Mỗi lần nộp sai là −10 điểm, nên phần lớn test ở đây kiểm những đường KHÔNG
+được gửi: bấm đúp, đề xuất trùng, câu đã đổi, video không rõ fps.
+"""
+import json
+
+import pytest
+from fastapi import HTTPException
+
+from app import dres, preprocess
+from app.db.connection import utcnow_iso
+from app.routers import dres as router
+
+FPS = 29.97
+
+
+class FakeDres:
+    """Đủ năm endpoint client của DRES v2, theo doc/oas-client.json."""
+
+    def __init__(self):
+        self.password = "pw"
+        self.sessions: set[str] = set()
+        self.logins = 0
+        self.evaluations = [
+            {"id": "ev-1", "name": "Chung ket", "type": "SYNCHRONOUS", "status": "ACTIVE"},
+            {"id": "ev-0", "name": "Tap", "type": "SYNCHRONOUS", "status": "TERMINATED"},
+        ]
+        self.task: str | None = "q01"
+        self.verdict = "CORRECT"
+        self.submissions: list[dict] = []
+        self.network_down = False
+        # Đồng hồ của /evaluation/{id}/state. None = BTC tắt participantCanView → 403.
+        self.clock: dict | None = {"timeLeft": 200, "timeElapsed": 100}
+
+    def expire_sessions(self):
+        self.sessions.clear()
+
+    def __call__(self, method, url, params=None, body=None):
+        if self.network_down:
+            raise dres.DresError("timed out")
+        path = url.split("://", 1)[1].split("/", 1)[1]
+        if path == "api/v2/login":
+            if body != {"username": "team07", "password": self.password}:
+                return 401, {"status": False, "description": "Invalid credentials"}
+            self.logins += 1
+            session = f"S{self.logins}"
+            self.sessions.add(session)
+            return 200, {"id": "u1", "username": "team07", "role": "PARTICIPANT",
+                         "sessionId": session}
+        if (params or {}).get("session") not in self.sessions:
+            return 401, {"status": False, "description": "Unauthorized"}
+        if path == "api/v2/client/evaluation/list":
+            return 200, self.evaluations
+        if path.startswith("api/v2/client/evaluation/currentTask/"):
+            if self.task is None:
+                return 404, {"status": False, "description": "No active task"}
+            return 200, {"templateId": f"tpl-{self.task}", "name": self.task,
+                         "taskGroup": "KIS", "taskType": "KIS", "duration": 300}
+        if path.startswith("api/v2/evaluation/") and path.endswith("/state"):
+            if self.clock is None:
+                return 403, {"status": False, "description": "Access Denied"}
+            return 200, {"evaluationId": "ev-1", "evaluationStatus": "ACTIVE",
+                         "taskTemplateId": f"tpl-{self.task}", "taskStatus": "RUNNING", **self.clock}
+        if path.startswith("api/v2/submit/"):
+            if body in [s["body"] for s in self.submissions]:
+                return 412, {"status": False, "description": "Duplicate submission"}
+            self.submissions.append({"evaluation": path.rsplit("/", 1)[1], "body": body})
+            return 200, {"status": True, "submission": self.verdict, "description": "ok"}
+        return 404, {"status": False, "description": "no route"}
+
+
+@pytest.fixture()
+def fake(monkeypatch):
+    server = FakeDres()
+    monkeypatch.setattr(dres, "_http", server)
+    # Không để _load_meta() nạp keyframe_metadata.json thật đè lên bảng giả.
+    monkeypatch.setattr(preprocess, "_meta_loaded", True)
+    # Mốc "lần đầu thấy câu" là trạng thái cấp module — không để lọt giữa các test.
+    monkeypatch.setattr(router, "_task_first_seen", {})
+    monkeypatch.setattr(preprocess, "_video_frames", {
+        "L21_V001": [{"name": "L21_V001-0001-3000.jpg", "fps": FPS, "frame_idx": 3000}],
+        "N001-V001": [{"name": "N001-V001-0001-10.jpg", "fps": 25.0, "frame_idx": 10}],
+    })
+    return server
+
+
+def _user(conn, username, role):
+    return conn.execute(
+        "INSERT INTO users (username, display_name, role, password_hash, "
+        "must_change_password, disabled, created_at) VALUES (?, ?, ?, 'x', 0, 0, ?)",
+        (username, username, role, utcnow_iso()),
+    ).lastrowid
+
+
+@pytest.fixture()
+def people(conn):
+    admin = _user(conn, "admin", "admin")
+    member = _user(conn, "vanh", "member")
+    row = lambda uid: conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()  # noqa: E731
+    return row(admin), row(member)
+
+
+@pytest.fixture()
+def configured(conn, fake, people):
+    router.put_config(router.ConfigIn(username="team07", password="pw"), people[0], conn)
+    return people
+
+
+def _propose(conn, user, **kw):
+    kw.setdefault("task_type", "kis")
+    kw.setdefault("video_id", "L21_V001")
+    return router.propose(router.ProposalIn(**kw), user, conn)
+
+
+def _status_code(fn, *args, **kwargs):
+    with pytest.raises(HTTPException) as e:
+        fn(*args, **kwargs)
+    return e.value.status_code
+
+
+# ── tài khoản ────────────────────────────────────────────────────────────────
+
+
+def test_wrong_password_saves_nothing(conn, fake, people):
+    bad = router.ConfigIn(username="team07", password="sai")
+    assert _status_code(router.put_config, bad, people[0], conn) == 400
+    assert router._config(conn) is None
+
+
+def test_config_logs_in_picks_the_active_evaluation_and_hides_the_password(conn, configured):
+    status = router.get_status(configured[1], conn)
+    assert status["logged_in"] is True
+    assert status["evaluation_id"] == "ev-1"
+    assert "pw" not in json.dumps(status)
+
+
+def test_blank_password_keeps_the_stored_one(conn, fake, configured):
+    router.put_config(router.ConfigIn(username="team07", password=""), configured[0], conn)
+    assert router._config(conn)["password"] == "pw"
+
+
+def test_two_active_evaluations_are_not_guessed(conn, fake, people):
+    fake.evaluations[1]["status"] = "ACTIVE"
+    router.put_config(router.ConfigIn(username="team07", password="pw"), people[0], conn)
+    assert router._config(conn)["evaluation_id"] is None
+    assert _status_code(_propose, conn, people[1], frames=[3000]) == 409
+
+
+# ── định dạng chuỗi nộp ──────────────────────────────────────────────────────
+
+
+def test_payload_formats_follow_the_btc_document():
+    kis = dres.build_payload("kis", "L21_V001", [100100], [3000], None)
+    assert kis == {"answerSets": [{"answers": [
+        {"mediaItemName": "L21_V001", "start": 100100, "end": 100100}]}]}
+    qa = dres.build_payload("qa", "L21_V001", [100100], [3000], "mau xanh")
+    assert qa["answerSets"][0]["answers"][0]["text"] == "QA-mau xanh-L21_V001-100100"
+    tr = dres.build_payload("trake", "L21_V001", [1, 2, 3], [30, 60, 90], None)
+    assert tr["answerSets"][0]["answers"][0]["text"] == "TR-L21_V001-30,60,90"
+
+
+def test_hyphenated_video_ids_are_flagged():
+    assert any("N001-V001" in w for w in dres.warnings_for("qa", "N001-V001", "x"))
+    assert dres.warnings_for("kis", "N001-V001", None) == []
+
+
+# ── đề xuất ──────────────────────────────────────────────────────────────────
+
+
+def test_frame_and_time_are_converted_with_the_btc_fps(conn, configured):
+    row = _propose(conn, configured[1], frames=[3000])
+    assert row["times_ms"] == [round(3000 / FPS * 1000)] == [100100]
+    assert row["payload"]["answerSets"][0]["answers"][0]["start"] == 100100
+    assert row["status"] == "proposed" and row["dres_task_name"] == "q01"
+    row = _propose(conn, configured[1], task_type="trake", times_ms=[1000, 2000])
+    assert row["frames"] == [30, 60]
+
+
+def test_unknown_video_is_refused_instead_of_guessing_fps(conn, configured):
+    assert _status_code(_propose, conn, configured[1], video_id="L99_V999", frames=[1]) == 400
+
+
+@pytest.mark.parametrize("kw", [
+    {"frames": [1, 2]},                               # KIS chỉ một mốc
+    {"frames": [1], "times_ms": [1]},                 # gửi cả hai
+    {},                                               # không gửi gì
+    {"task_type": "qa", "frames": [1]},               # QA thiếu đáp án
+    {"task_type": "qa", "frames": [1], "answer": "a\nb"},
+    {"task_type": "trake", "frames": [30, 30]},       # TRAKE trùng mốc
+    {"frames": [-1]},
+    {"video_id": "L21 V001", "frames": [1]},
+])
+def test_malformed_proposals_are_refused(conn, configured, kw):
+    assert _status_code(_propose, conn, configured[1], **kw) == 400
+
+
+def test_the_same_answer_cannot_be_proposed_twice_for_one_task(conn, fake, configured):
+    admin, member = configured
+    first = _propose(conn, member, frames=[3000])
+    assert _status_code(_propose, conn, admin, frames=[3000]) == 409
+    router.reject(first["id"], admin, conn)
+    _propose(conn, member, frames=[3000])            # bị từ chối rồi thì đề xuất lại được
+    fake.task = "q02"
+    _propose(conn, member, frames=[3000])            # câu khác thì không phải trùng
+
+
+# ── duyệt và gửi ─────────────────────────────────────────────────────────────
+
+
+def test_approve_sends_exactly_the_stored_payload(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, task_type="qa", frames=[3000], answer="mau xanh")
+    sent = router.approve(row["id"], admin, conn, force=False)
+    assert sent["status"] == "sent" and sent["verdict"] == "CORRECT"
+    assert sent["reviewed_by_name"] == "admin" and sent["proposed_by_name"] == "vanh"
+    assert fake.submissions == [{"evaluation": "ev-1", "body": row["payload"]}]
+
+
+def test_double_approve_sends_once(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, frames=[3000])
+    router.approve(row["id"], admin, conn, force=False)
+    assert _status_code(router.approve, row["id"], admin, conn, force=False) == 409
+    assert _status_code(router.reject, row["id"], admin, conn) == 409
+    assert len(fake.submissions) == 1
+
+
+def test_a_proposal_for_the_previous_task_is_not_sent(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, frames=[3000])
+    fake.task = "q02"
+    assert _status_code(router.approve, row["id"], admin, conn, force=False) == 409
+    fake.task = None
+    assert _status_code(router.approve, row["id"], admin, conn, force=False) == 409
+    assert fake.submissions == []
+    assert router.approve(row["id"], admin, conn, force=True)["status"] == "sent"
+
+
+def test_expired_session_logs_in_again_once(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, frames=[3000])
+    fake.expire_sessions()
+    logins = fake.logins
+    assert router.approve(row["id"], admin, conn, force=False)["status"] == "sent"
+    assert fake.logins == logins + 1
+
+
+def test_network_failure_is_recorded_and_can_be_retried(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, frames=[3000])
+    fake.network_down = True
+    failed = router.approve(row["id"], admin, conn, force=False)
+    assert failed["status"] == "failed" and "timed out" in failed["error"]
+    fake.network_down = False
+    assert router.approve(row["id"], admin, conn, force=False)["status"] == "sent"
+    assert len(fake.submissions) == 1
+
+
+def test_dres_refusal_keeps_its_description(conn, fake, configured):
+    admin, member = configured
+    row = _propose(conn, member, frames=[3000])
+    fake.submissions.append({"evaluation": "ev-1", "body": row["payload"]})  # DRES đã có bài này
+    refused = router.approve(row["id"], admin, conn, force=False)
+    assert refused["status"] == "failed" and refused["http_status"] == 412
+    # assert refused["error"] == "Duplicate submission"
+    # Câu gốc của DRES vẫn còn, nhưng đứng sau nghĩa tiếng Việt của mã 412.
+    assert refused["error"].startswith("HTTP 412: Trùng với một lần nộp trước")
+    assert "Duplicate submission" in refused["error"]
+
+
+def test_wrong_verdict_is_stored(conn, fake, configured):
+    admin, member = configured
+    fake.verdict = "WRONG"
+    row = _propose(conn, member, frames=[3000])
+    assert router.approve(row["id"], admin, conn, force=False)["verdict"] == "WRONG"
+    listed = router.list_submissions(member, conn, limit=50)["submissions"]
+    assert [s["id"] for s in listed] == [row["id"]]
+
+
+def test_account_evaluation_and_mode_are_admin_only():
+    # Duyệt/từ chối không còn nằm ở đây: quyền của chúng tuỳ submit_mode, xem
+    # các test chế độ nộp bên dưới.
+    from app.auth.deps import require_admin
+    for route in router.router.routes:
+        if route.path.endswith(("/config", "/evaluation", "/evaluations", "/submit-mode")):
+            deps = [d.call for d in route.dependant.dependencies]
+            assert require_admin in deps, route.path
+
+
+# ── chế độ nộp ───────────────────────────────────────────────────────────────
+
+
+def _mode(conn, admin, mode):
+    return router.put_submit_mode(router.SubmitModeIn(mode=mode), admin, conn)
+
+
+def test_default_mode_is_admin_only_and_members_cannot_send(conn, fake, configured):
+    admin, member = configured
+    assert router.get_status(member, conn)["submit_mode"] == "admin_only"
+    row = _propose(conn, member, frames=[3000])
+    assert _status_code(router.approve, row["id"], member, conn, force=False) == 403
+    assert _status_code(router.reject, row["id"], member, conn) == 403
+    assert fake.submissions == []
+    assert router._load_row(conn, row["id"])["status"] == "proposed"  # 403 không chiếm dòng
+
+
+def test_everyone_mode_lets_a_member_send_their_own_find(conn, fake, configured):
+    admin, member = configured
+    assert _mode(conn, admin, "everyone")["submit_mode"] == "everyone"
+    row = _propose(conn, member, frames=[3000])
+    sent = router.approve(row["id"], member, conn, force=False)
+    assert sent["status"] == "sent" and sent["reviewed_by_name"] == "vanh"
+    other = _propose(conn, member, task_type="qa", frames=[3000], answer="x")
+    assert router.reject(other["id"], member, conn)["status"] == "rejected"
+    # Các lớp chặn vẫn giữ nguyên ở chế độ này.
+    assert _status_code(router.approve, row["id"], member, conn, force=False) == 409
+    assert len(fake.submissions) == 1
+
+
+def test_switching_back_to_admin_only_takes_effect_at_once(conn, fake, configured):
+    admin, member = configured
+    _mode(conn, admin, "everyone")
+    row = _propose(conn, member, frames=[3000])
+    _mode(conn, admin, "admin_only")
+    assert _status_code(router.approve, row["id"], member, conn, force=False) == 403
+    assert fake.submissions == []
+
+
+def test_mode_changes_are_audited_once(conn, fake, configured):
+    admin, _ = configured
+    _mode(conn, admin, "everyone")
+    _mode(conn, admin, "everyone")  # không đổi gì thì không ghi
+    _mode(conn, admin, "admin_only")
+    rows = conn.execute("SELECT summary, detail FROM audit_log WHERE action = 'dres.submit_mode' "
+                        "ORDER BY id").fetchall()
+    assert [json.loads(r["detail"])["to"] for r in rows] == ["everyone", "admin_only"]
+    assert "mọi người nộp được" in rows[0]["summary"]
+
+
+def test_mode_needs_an_account_first(conn, fake, people):
+    assert _status_code(_mode, conn, people[0], "everyone") == 409
+
+
+# ── đồng hồ, số lần sai, tên video, câu báo lỗi ──────────────────────────────
+
+
+def test_current_task_carries_the_dres_clock(conn, fake, configured):
+    out = router.get_current_task(configured[1], conn)
+    assert out["task"]["name"] == "q01"
+    assert out["clock"] == {"time_left": 200, "time_elapsed": 100, "source": "dres"}
+    assert out["tally"] == {"wrong": 0, "indeterminate": 0, "correct": False}
+
+
+def test_forbidden_clock_falls_back_to_an_estimate(conn, fake, configured, monkeypatch):
+    fake.clock = None
+    now = [1000.0]
+    monkeypatch.setattr(router.time, "time", lambda: now[0])
+    assert router.get_current_task(configured[1], conn)["clock"] ==         {"time_left": 300, "time_elapsed": 0, "source": "estimate"}
+    now[0] += 42
+    assert router.get_current_task(configured[1], conn)["clock"] ==         {"time_left": 258, "time_elapsed": 42, "source": "estimate"}
+    now[0] += 1000                                   # quá giờ thì dừng ở 0, không âm
+    assert router.get_current_task(configured[1], conn)["clock"]["time_left"] == 0
+
+
+def test_no_task_means_no_clock(conn, fake, configured):
+    fake.task = None
+    out = router.get_current_task(configured[1], conn)
+    assert out["task"] is None and out["clock"] is None and out["tally"] is None
+
+
+def test_tally_counts_only_sent_verdicts_of_the_current_task(conn, fake, configured):
+    admin, member = configured
+    fake.verdict = "WRONG"
+    for frame in (3000, 3001):
+        router.approve(_propose(conn, member, frames=[frame])["id"], admin, conn, force=False)
+    _propose(conn, member, frames=[3002])            # chưa gửi thì chưa mất điểm
+    fake.verdict = "INDETERMINATE"
+    router.approve(_propose(conn, member, frames=[3003])["id"], admin, conn, force=False)
+    assert router.get_current_task(member, conn)["tally"] ==         {"wrong": 2, "indeterminate": 1, "correct": False}
+    fake.task = "q02"                                # câu mới đếm lại từ đầu
+    assert router.get_current_task(member, conn)["tally"]["wrong"] == 0
+
+
+def test_video_extension_is_dropped(conn, configured):
+    row = _propose(conn, configured[1], video_id="L21_V001.MP4", frames=[3000])
+    assert row["video_id"] == "L21_V001"
+    assert row["payload"]["answerSets"][0]["answers"][0]["mediaItemName"] == "L21_V001"
+
+
+@pytest.mark.parametrize("code, starts", [
+    (401, "HTTP 401: Phiên DRES hết hạn"),
+    (404, "HTTP 404: Sai evaluation ID"),
+    (412, "HTTP 412: Trùng với một lần nộp trước, hoặc câu đã hết giờ"),
+    (500, "DRES trả HTTP 500"),
+])
+def test_http_codes_are_explained(code, starts):
+    assert dres.explain_http(code, "raw").startswith(starts)
+    assert dres.explain_http(code, "raw").endswith("“raw”")
+    assert "DRES:" not in dres.explain_http(code, None)   # không có câu gốc thì không nối
+
+
+# ── truy vấn đã gõ cho câu đang chạy ─────────────────────────────────────────
+
+
+def _query(conn, user, text, search_type="ensemble"):
+    return router.record_query(router.QueryIn(query_text=text, search_type=search_type), user, conn)
+
+
+def test_queries_are_kept_per_dres_task_for_the_whole_team(conn, fake, configured):
+    admin, member = configured
+    assert _query(conn, member, "người đàn ông áo đỏ")["saved"] is True
+    assert _query(conn, admin, "  người đàn ông áo đỏ trên cầu ")["saved"] is True
+    listed = router.list_queries(admin, conn)
+    assert listed["task_name"] == "q01"
+    assert [(q["display_name"], q["query_text"]) for q in listed["queries"]] == [
+        ("vanh", "người đàn ông áo đỏ"), ("admin", "người đàn ông áo đỏ trên cầu")]
+    fake.task = "q02"                                # câu mới: danh sách mới
+    assert router.list_queries(member, conn)["queries"] == []
+    fake.task = "q01"                                # quay lại câu cũ thì còn nguyên
+    assert len(router.list_queries(member, conn)["queries"]) == 2
+
+
+def test_repeating_a_query_does_not_add_a_row(conn, fake, configured):
+    admin, member = configured
+    _query(conn, member, "cầu vàng")
+    assert _query(conn, admin, "cầu vàng")["saved"] is False
+    assert _query(conn, admin, "cầu vàng", "temporal")["saved"] is True   # loại search khác là ý khác
+    assert len(router.list_queries(member, conn)["queries"]) == 2
+
+
+def test_no_running_task_saves_nothing_and_does_not_fail(conn, fake, people):
+    member = people[1]
+    out = _query(conn, member, "x")                  # chưa cấu hình DRES
+    assert out == {"saved": False, "reason": "Chưa có tài khoản DRES"}
+    router.put_config(router.ConfigIn(username="team07", password="pw"), people[0], conn)
+    fake.task = None
+    assert _query(conn, member, "x")["saved"] is False
+    assert router.list_queries(member, conn) == {
+        "task_name": None, "queries": [], "reason": "DRES chưa có câu nào đang chạy"}
+    fake.network_down = True
+    assert _query(conn, member, "x")["saved"] is False
+    assert conn.execute("SELECT COUNT(*) FROM dres_queries").fetchone()[0] == 0

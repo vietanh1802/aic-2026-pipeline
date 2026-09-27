@@ -12,16 +12,16 @@
   --color-secondary: #006fff;
   --color-hover: #d8e7fa;
 
-  --color-proto-canvas: #faf9f5;
-  --color-proto-soft: #f5f0e8;
-  --color-proto-card: #efe9de;
-  --color-proto-cream-strong: #e8e0d2;
-  --color-proto-line: #e6dfd8;
-  --color-proto-ink: #141413;
-  --color-proto-body: #3d3d3a;
-  --color-proto-muted: #6c6a64;
-  --color-proto-primary: #cc785c;
-  --color-proto-primary-active: #a9583e;
+  --color-proto-canvas: #f3f8fd;
+  --color-proto-soft: #e8f1fa;
+  --color-proto-card: #dde9f6;
+  --color-proto-cream-strong: #cfe0f3;
+  --color-proto-line: #d3e2f1;
+  --color-proto-ink: #12151a;
+  --color-proto-body: #3a3f47;
+  --color-proto-muted: #69707c;
+  --color-proto-primary: #2f6fb5;
+  --color-proto-primary-active: #245a96;
   --color-proto-dark: #181715;
   --color-proto-teal: #5db8a6;
   --color-proto-amber: #e8a55a;
@@ -52,20 +52,35 @@
 }
 
 /* Design tokens, from DESIGN.md by way of dev's App.css.
-   A warm cream canvas with a coral primary. The one hard rule: keyframe images
-   always sit on --proto-dark, because a warm ground shifts how the eye reads
-   two frames a few dozen frames apart, and comparing those frames is the job. */
+
+   Nền xanh dương nhạt, nút và điểm nhấn cũng xanh dương đậm hơn. Trước đây
+   là nền kem ấm với nút màu san hô. Đổi --proto-primary là đủ cho MỌI nút:
+   component Button dùng nó cho cả bốn kiểu primary/secondary/outline/ghost,
+   nên không phải sửa từng chỗ gọi. Riêng kiểu "danger" giữ màu đỏ — đó là màu
+   có nghĩa, không phải màu thương hiệu.
+
+   Trước đây là nền kem ấm; đã
+   đổi cả năm màu bề mặt cùng lúc chứ không riêng --proto-canvas, vì đổi mỗi
+   nền trang sẽ để lại thẻ và đường kẻ màu kem nổi trên nền xanh — trông như
+   hỏng. Độ sáng giữ nguyên như bộ cũ nên tương phản chữ/nền không đổi.
+
+   Tên --proto-cream-strong là dấu vết của bộ kem cũ. Giữ tên vì đổi thì phải
+   sửa hơn mười file mà không được thêm gì.
+
+   Luật cứng duy nhất: ảnh keyframe LUÔN nằm trên --proto-dark, vì một nền có
+   sắc sẽ làm mắt đọc lệch hai khung hình cách nhau vài chục frame — mà so đúng
+   hai khung đó mới là việc chính. --proto-dark vì thế không đổi. */
 :root {
-  --proto-canvas: #faf9f5;
-  --proto-soft: #f5f0e8;
-  --proto-card: #efe9de;
-  --proto-cream-strong: #e8e0d2;
-  --proto-line: #e6dfd8;
-  --proto-ink: #141413;
-  --proto-body: #3d3d3a;
-  --proto-muted: #6c6a64;
-  --proto-primary: #cc785c;
-  --proto-primary-active: #a9583e;
+  --proto-canvas: #f3f8fd;
+  --proto-soft: #e8f1fa;
+  --proto-card: #dde9f6;
+  --proto-cream-strong: #cfe0f3;
+  --proto-line: #d3e2f1;
+  --proto-ink: #12151a;
+  --proto-body: #3a3f47;
+  --proto-muted: #69707c;
+  --proto-primary: #2f6fb5;
+  --proto-primary-active: #245a96;
   --proto-dark: #181715;
   --proto-teal: #5db8a6;
   --proto-amber: #e8a55a;
@@ -73,6 +88,14 @@
   --proto-success: #5db872;
   --proto-warning: #d4a017;
   --proto-error: #c64545;
+
+  /* Chiều cao thanh điều hướng, để những khối dính khác đậu ngay dưới nó thay
+     vì chui xuống gầm.
+
+     AppNav tự đo mình rồi ghi đè giá trị này mỗi khi kích thước đổi — thanh đó
+     có flex-wrap nên trên màn hẹp nó xuống hai dòng và cao gấp đôi. Con số ở
+     đây chỉ là giá trị đỡ cho khoảnh khắc trước lần đo đầu tiên. */
+  --nav-h: 40px;
 }
 
 body {
