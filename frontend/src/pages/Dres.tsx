@@ -76,7 +76,10 @@ export default function DresPage({
     try {
       const [nextStatus, list] = await Promise.all([
         getDresStatus(),
-        listDresSubmissions(100),
+        // Was: listDresSubmissions(100). Chung kết 2026 có 139 lần nộp, nên
+        // khi xem lại lịch sử thì #1–#39 bị cắt mất. 500 là mức tối đa server
+        // cho (routers/dres.py, le=500) — đủ cho cả một buổi thi.
+        listDresSubmissions(500),
       ]);
       setStatus(nextStatus);
       setSubmissions(list.submissions);

@@ -172,6 +172,13 @@ class EnsembleSearchRequest(BaseModel):
         description="Tập con bất kỳ của beit3/clip/siglip2 (1, 2 hoặc cả 3). "
                     "None = dùng mọi model đang active trên server.",
     )
+    # Chỉ tìm trong một số nhóm video, theo chữ cái đầu mã video: "N" = camera
+    # giao thông, "M" = tin tức, "S" = đua xe đạp, "L" = batch 1. None/rỗng =
+    # mọi video, đúng hành vi cũ. Xem _scoped_search() vì sao lọc ở đây.
+    video_groups: Optional[List[str]] = Field(
+        default=None,
+        description="Chỉ giữ video có mã bắt đầu bằng một trong các chữ này (vd [\"N\"]).",
+    )
 
     class Config:
         json_schema_extra = {"example": {
@@ -617,6 +624,35 @@ def _make_response(results: list[dict], query_type: str, t0: datetime) -> Search
 #fix async def
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tìm trong một nhóm video (vd chỉ camera giao thông)
+#
+#  FAISS nằm trong preprocess.py (lõi truy xuất, INV-1 — không sửa) và chỉ tìm
+#  trên cả 983.931 khung. Nên khi có video_groups thì lấy RỘNG hơn nhiều — top-M
+#  mỗi model 2000 thay vì 50 — rồi mới lọc theo mã video. Nhóm N chiếm ~20% kho,
+#  nên 2000 ứng viên mỗi model thường còn vài trăm khung N, dư cho 100 dòng. Chi
+#  phí thêm nhỏ: FAISS flat vốn quét cả kho dù M lớn hay nhỏ; chỉ phần rerank
+#  (vài dot product mỗi ứng viên) lớn theo M.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VIDEO_GROUPS = ("K", "L", "M", "N", "S")
+_SCOPED_TOP_M = 2000
+
+
+def _clean_groups(groups: Optional[List[str]]) -> tuple[str, ...]:
+    cleaned = tuple(sorted({g.strip().upper() for g in (groups or []) if g and g.strip()}))
+    bad = [g for g in cleaned if g not in _VIDEO_GROUPS]
+    if bad:
+        raise HTTPException(400, f"video_groups không hợp lệ: {bad} — chỉ nhận {list(_VIDEO_GROUPS)}")
+    return cleaned
+
+
+def _keep_groups(results: list, groups: tuple[str, ...], limit: int) -> list:
+    """Giữ kết quả thuộc các nhóm, đúng thứ tự xếp hạng, cắt còn `limit`."""
+    return [r for r in results
+            if str(r.get("video") or r.get("name") or "").startswith(groups)][:limit]
+
+
 @app.post("/ensemble-search", response_model=SearchResponseEx,
           summary="Alg.3 — search → rerank từng model → ensemble")
 def ensemble_search_endpoint(req: EnsembleSearchRequest):
@@ -650,11 +686,19 @@ def ensemble_search_endpoint(req: EnsembleSearchRequest):
                 503, f"Các model được chọn {req.models} đều chưa nạp được index. "
                      f"Số vector hiện có: { {m: vec.get(m, 0) for m in req.models} }. "
                      f"Kiểm tra file .index trong AIC_INDEX_DIR.")
+    groups = _clean_groups(req.video_groups)
     t0 = datetime.now()
     try:
-        results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
-                                  use_rerank=req.use_rerank,
-                                  models=req.models or None)
+        if groups:
+            pool = ensemble_search(req.query, top_k=_SCOPED_TOP_M * 3,
+                                   top_m=max(req.top_m, _SCOPED_TOP_M),
+                                   use_rerank=req.use_rerank,
+                                   models=req.models or None)
+            results = _keep_groups(pool, groups, req.limit)
+        else:
+            results = ensemble_search(req.query, top_k=req.limit, top_m=req.top_m,
+                                      use_rerank=req.use_rerank,
+                                      models=req.models or None)
 
         response = _make_response(results, "ensemble", t0)
 
@@ -725,10 +769,17 @@ def single_search_endpoint(req: SingleSearchRequest):
     """
     if req.model not in MODEL_NAMES:
         raise HTTPException(400, f"model phải là một trong {list(MODEL_NAMES)}")
+    groups = _clean_groups(req.video_groups)
     t0 = datetime.now()
     try:
-        results = single_model_search(req.query, req.model, top_k=req.limit,
-                                      top_m=req.top_m, use_rerank=req.use_rerank)
+        if groups:
+            pool = single_model_search(req.query, req.model, top_k=_SCOPED_TOP_M,
+                                       top_m=max(req.top_m, _SCOPED_TOP_M),
+                                       use_rerank=req.use_rerank)
+            results = _keep_groups(pool, groups, req.limit)
+        else:
+            results = single_model_search(req.query, req.model, top_k=req.limit,
+                                          top_m=req.top_m, use_rerank=req.use_rerank)
         return _make_response(results, f"single:{req.model}", t0)
     except Exception as e:
         raise HTTPException(500, f"Single search error: {e}")

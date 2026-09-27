@@ -445,7 +445,10 @@ function App({
       asrFilterMode,
       ocrFilter,
       ocrFilterMode,
+      trafficOnly,
     } = useQueryStore.getState();
+    // Ô "Chỉ video giao thông": lọc ở server (lấy rộng rồi lọc) — xem main.py.
+    const videoGroups = trafficOnly ? ["N"] : undefined;
     // The two text filters (ASR and OCR) are sent only with the ensemble search
     // and only when at least one has text, from this snapshot like every other
     // parameter, so editing a field while the search runs cannot change it.
@@ -541,7 +544,8 @@ function App({
               singleModel,
               Number(resultLimit),
               topM,
-              useRerank
+              useRerank,
+              videoGroups
             )
           : await videoSearchApi.ensembleSearch(
               queryText,
@@ -553,7 +557,8 @@ function App({
                 : undefined,
               // [siglip2] Checkbox tổ hợp model. Backend validate là tập con
               // của beit3/clip/siglip2 rồi tự chuẩn hoá trọng số ensemble.
-              ensembleModels
+              ensembleModels,
+              videoGroups
             );
       useSearchStore.getState().setTotalTime(response.processing_time);
       useSearchStore.getState().setResults(response.results);

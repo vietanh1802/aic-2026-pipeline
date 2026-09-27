@@ -399,3 +399,46 @@ def test_http_codes_are_explained(code, starts):
     assert dres.explain_http(code, "raw").startswith(starts)
     assert dres.explain_http(code, "raw").endswith("“raw”")
     assert "DRES:" not in dres.explain_http(code, None)   # không có câu gốc thì không nối
+
+
+# ── truy vấn đã gõ cho câu đang chạy ─────────────────────────────────────────
+
+
+def _query(conn, user, text, search_type="ensemble"):
+    return router.record_query(router.QueryIn(query_text=text, search_type=search_type), user, conn)
+
+
+def test_queries_are_kept_per_dres_task_for_the_whole_team(conn, fake, configured):
+    admin, member = configured
+    assert _query(conn, member, "người đàn ông áo đỏ")["saved"] is True
+    assert _query(conn, admin, "  người đàn ông áo đỏ trên cầu ")["saved"] is True
+    listed = router.list_queries(admin, conn)
+    assert listed["task_name"] == "q01"
+    assert [(q["display_name"], q["query_text"]) for q in listed["queries"]] == [
+        ("vanh", "người đàn ông áo đỏ"), ("admin", "người đàn ông áo đỏ trên cầu")]
+    fake.task = "q02"                                # câu mới: danh sách mới
+    assert router.list_queries(member, conn)["queries"] == []
+    fake.task = "q01"                                # quay lại câu cũ thì còn nguyên
+    assert len(router.list_queries(member, conn)["queries"]) == 2
+
+
+def test_repeating_a_query_does_not_add_a_row(conn, fake, configured):
+    admin, member = configured
+    _query(conn, member, "cầu vàng")
+    assert _query(conn, admin, "cầu vàng")["saved"] is False
+    assert _query(conn, admin, "cầu vàng", "temporal")["saved"] is True   # loại search khác là ý khác
+    assert len(router.list_queries(member, conn)["queries"]) == 2
+
+
+def test_no_running_task_saves_nothing_and_does_not_fail(conn, fake, people):
+    member = people[1]
+    out = _query(conn, member, "x")                  # chưa cấu hình DRES
+    assert out == {"saved": False, "reason": "Chưa có tài khoản DRES"}
+    router.put_config(router.ConfigIn(username="team07", password="pw"), people[0], conn)
+    fake.task = None
+    assert _query(conn, member, "x")["saved"] is False
+    assert router.list_queries(member, conn) == {
+        "task_name": None, "queries": [], "reason": "DRES chưa có câu nào đang chạy"}
+    fake.network_down = True
+    assert _query(conn, member, "x")["saved"] is False
+    assert conn.execute("SELECT COUNT(*) FROM dres_queries").fetchone()[0] == 0

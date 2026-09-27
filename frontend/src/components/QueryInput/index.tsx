@@ -103,6 +103,8 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
     (state) => state.toggleEnsembleModel
   );
   const setSingleModel = useQueryStore((state) => state.setSingleModel);
+  const trafficOnly = useQueryStore((state) => state.trafficOnly);
+  const setTrafficOnly = useQueryStore((state) => state.setTrafficOnly);
 
   const topM = useQueryStore((state) => state.topM);
   const setTopM = useQueryStore((state) => state.setTopM);
@@ -404,6 +406,26 @@ export default function QueryInput({ doSearch, disabled = false }: QueryInputPro
                 dropDirection="down"
               />
             </div>
+          )}
+
+          {/* Chỉ tìm trong video camera giao thông (N). Chỉ route ảnh có lọc
+              này (ensemble / 1 model); temporal, TRAKE, OCR tìm như cũ. */}
+          {(searchType === "ensemble" || searchType === "single") && (
+            <label
+              className={`flex items-center gap-x-1.5 cursor-pointer px-2 py-1 rounded-[7px] border text-sm ${
+                trafficOnly
+                  ? "border-[#c47a1f] bg-[#c47a1f]/10 font-bold text-[#8a5a15]"
+                  : "border-proto-line"
+              }`}
+              title="Chỉ trả kết quả từ các video N (camera giao thông)"
+            >
+              <input
+                type="checkbox"
+                checked={trafficOnly}
+                onChange={(e) => setTrafficOnly(e.target.checked)}
+              />
+              Chỉ video giao thông (N)
+            </label>
           )}
 
           {/* [siglip2] Tổ hợp model cho ensemble — tick bất kỳ 1-3 cái.

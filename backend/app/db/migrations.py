@@ -370,6 +370,28 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ON dres_submissions(created_at DESC, id DESC)",
         ),
     ),
+    (
+        10,
+        (
+            # Truy vấn cả đội đã gõ cho từng câu DRES (routers/dres.py).
+            #
+            # Chung kết đọc đề từ DRES và gợi ý hiện dần; không có gói đề nào
+            # được import, nên search_states (khoá theo tasks.id) không ghi được
+            # gì. Bảng này khoá theo (evaluation_id, task_name) của DRES: gợi ý
+            # thứ hai tới thì câu đã gõ ở gợi ý thứ nhất vẫn còn để nạp lại.
+            "CREATE TABLE dres_queries ("
+            "  id               INTEGER PRIMARY KEY,"
+            "  created_at       TEXT NOT NULL,"
+            "  user_id          INTEGER NOT NULL REFERENCES users(id),"
+            "  evaluation_id    TEXT NOT NULL,"
+            "  task_name        TEXT NOT NULL,"
+            "  query_text       TEXT NOT NULL,"
+            "  search_type      TEXT NOT NULL"
+            ")",
+            "CREATE INDEX idx_dres_queries_task "
+            "ON dres_queries(evaluation_id, task_name, id)",
+        ),
+    ),
 )
 
 

@@ -54,6 +54,10 @@ export interface QueryStore {
   setTopM: (topM: number) => void;
   useRerank: boolean; // bật Alg.2 rerank lân cận từng model trước ensemble
   setUseRerank: (value: boolean) => void;
+  // Chỉ tìm trong video camera giao thông (mã N…). Gửi video_groups=["N"];
+  // backend lấy rộng rồi lọc, nên vẫn đủ kết quả dù N chỉ ~20% kho.
+  trafficOnly: boolean;
+  setTrafficOnly: (value: boolean) => void;
 
   // ── OCR route ────────────────────────────────────────────────────────────
   // Strip diacritics from both the query and the corpus before comparing. ON
@@ -119,6 +123,8 @@ export const useQueryStore = create<QueryStore>((set) => ({
   setTopM: (topM) => set({ topM }),
   useRerank: true,
   setUseRerank: (value) => set({ useRerank: value }),
+  trafficOnly: false,
+  setTrafficOnly: (value) => set({ trafficOnly: value }),
 
   ocrStripDiacritics: true,
   setOcrStripDiacritics: (value) => set({ ocrStripDiacritics: value }),

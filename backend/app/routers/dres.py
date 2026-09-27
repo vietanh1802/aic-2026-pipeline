@@ -363,6 +363,94 @@ def get_current_task(
             "tally": _tally(conn, evaluation_id, task["name"])}
 
 
+# ── truy vấn đã gõ cho câu đang chạy ──────────────────────────────────────────
+# Chung kết: đề hiện dần trên DRES. Gõ theo gợi ý thứ nhất không thấy, tới gợi ý
+# thứ hai người ta sửa đè lên ô tìm kiếm và mất câu cũ. Lưu mọi câu đã Search
+# theo câu DRES đang chạy, cả đội thấy, bấm để nạp lại.
+
+# Như search_state.MAX_QUERY_CHARS: đủ cho một đề bài chép nguyên vào ô search.
+MAX_QUERY_CHARS = 4000
+
+
+class QueryIn(BaseModel):
+    query_text: str = Field(min_length=1, max_length=MAX_QUERY_CHARS)
+    search_type: str = Field(default="ensemble", max_length=32)
+
+
+def _running_task(conn: sqlite3.Connection) -> tuple[str, str] | str:
+    """(evaluation_id, tên câu) đang chạy, hoặc một câu giải thích vì sao không có.
+
+    Tên câu hỏi thẳng DRES ở server, không nhận từ trình duyệt: sáu máy phải
+    ghi vào cùng một câu, kể cả máy chưa mở tab DRES lần nào.
+    """
+    cfg = _config(conn)
+    if cfg is None:
+        return "Chưa có tài khoản DRES"
+    try:
+        evaluation_id = _evaluation_id(conn, cfg)
+        task = _current_task(conn, _config(conn), evaluation_id)
+    except HTTPException as e:
+        return str(e.detail)
+    except dres.DresError as e:
+        return str(e)
+    if task is None:
+        return "DRES chưa có câu nào đang chạy"
+    return evaluation_id, task["name"]
+
+
+def _queries_of(conn: sqlite3.Connection, evaluation_id: str, task_name: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT q.id, q.created_at, q.query_text, q.search_type, u.display_name "
+        "FROM dres_queries q JOIN users u ON u.id = q.user_id "
+        "WHERE q.evaluation_id = ? AND q.task_name = ? ORDER BY q.id",
+        (evaluation_id, task_name),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/queries")
+def list_queries(
+    _: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    running = _running_task(conn)
+    if isinstance(running, str):
+        return {"task_name": None, "queries": [], "reason": running}
+    evaluation_id, task_name = running
+    return {"task_name": task_name, "queries": _queries_of(conn, evaluation_id, task_name),
+            "reason": None}
+
+
+@router.post("/queries")
+def record_query(
+    payload: QueryIn,
+    user: Annotated[sqlite3.Row, Depends(active_user)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """Ghi một lần Search. Không có câu DRES nào đang chạy thì không ghi, và
+    không báo lỗi: ngoài giờ thi, Search vẫn phải chạy bình thường."""
+    text = payload.query_text.strip()
+    running = _running_task(conn)
+    if not text or isinstance(running, str):
+        return {"saved": False, "reason": running if isinstance(running, str) else "Truy vấn rỗng"}
+    evaluation_id, task_name = running
+    # Cùng một câu chữ + cùng loại search cho cùng một câu thi thì chỉ giữ lần
+    # đầu: bấm Search lại (đổi tham số, lật trang) không phải một ý mới, và
+    # danh sách dài ra vì nó thì câu thật sự khác bị đẩy khuất.
+    exists = conn.execute(
+        "SELECT 1 FROM dres_queries WHERE evaluation_id = ? AND task_name = ? "
+        "AND query_text = ? AND search_type = ?",
+        (evaluation_id, task_name, text, payload.search_type),
+    ).fetchone()
+    if exists is None:
+        conn.execute(
+            "INSERT INTO dres_queries (created_at, user_id, evaluation_id, task_name, "
+            "query_text, search_type) VALUES (?, ?, ?, ?, ?, ?)",
+            (utcnow_iso(), user["id"], evaluation_id, task_name, text, payload.search_type),
+        )
+    return {"saved": exists is None, "reason": None}
+
+
 # ── đề xuất và duyệt ──────────────────────────────────────────────────────────
 
 

@@ -372,7 +372,10 @@ class VideoSearchApi {
     textFilter?: TextFilterRequestFields,
     // [siglip2] Tổ hợp model tick trên UI. Bỏ trống / undefined -> KHÔNG gửi
     // field `models`, backend chạy mọi model active như cũ.
-    models?: ModelName[]
+    models?: ModelName[],
+    // Chỉ giữ video thuộc các nhóm này (["N"] = camera giao thông). Bỏ trống
+    // thì KHÔNG gửi field, backend tìm trên mọi video như cũ.
+    videoGroups?: string[]
   ): Promise<SearchResponse> {
     // The text filter is sent as the four asr_filter / ocr_filter fields, and
     // only when at least one is set (the caller passes undefined otherwise).
@@ -387,6 +390,7 @@ class VideoSearchApi {
       use_rerank: useRerank,
       ...(textFilter ?? {}),
       ...(models && models.length > 0 ? { models } : {}),
+      ...(videoGroups && videoGroups.length > 0 ? { video_groups: videoGroups } : {}),
     });
   }
 
@@ -399,7 +403,8 @@ class VideoSearchApi {
     model: ModelName,
     limit = 100,
     topM = 50,
-    useRerank = true
+    useRerank = true,
+    videoGroups?: string[]
   ): Promise<SearchResponse> {
     return this.post<SearchResponse>("/single-search", {
       query,
@@ -407,6 +412,7 @@ class VideoSearchApi {
       limit,
       top_m: topM,
       use_rerank: useRerank,
+      ...(videoGroups && videoGroups.length > 0 ? { video_groups: videoGroups } : {}),
     });
   }
 

@@ -75,7 +75,12 @@ export default function DresPropose({
   const [status, setStatus] = useState<DresStatus | null>(null);
   const [type, setType] = useState<DresTaskType>(defaultType ?? "kis");
   const [answer, setAnswer] = useState("");
-  const [marks, setMarks] = useState<number[]>([]);
+  // Was: const [marks, setMarks] = useState<number[]>([]);
+  // Mốc nối đuôi theo thứ tự bấm, nên buộc phải tìm E1 trước rồi mới tới E2 —
+  // trong khi thường cảnh E2 lại là cảnh dễ tìm nhất. Giờ là N ô cố định (ms,
+  // null = chưa điền), điền ô nào trước cũng được; nộp theo thứ tự E1..EN.
+  const [eventCount, setEventCount] = useState(3);
+  const [slots, setSlots] = useState<(number | null)[]>([null, null, null]);
   // TRAKE điền tay: gõ/dán thẳng số frame. Gửi `frames` thay cho `times_ms`,
   // nên số trong ô chính là số nằm trong chuỗi TR- — không qua quy đổi ms.
   const [trakeManual, setTrakeManual] = useState(false);
@@ -92,7 +97,7 @@ export default function DresPropose({
 
   // Mốc TRAKE thuộc về một video; trỏ popup sang video khác thì bỏ.
   useEffect(() => {
-    setMarks([]);
+    setSlots((s) => s.map(() => null));
     setManualText("");
     setPointText("");
     setResult(null);
@@ -149,7 +154,7 @@ export default function DresPropose({
       ? { frames: manual.frames }
       : {
           times_ms:
-            type === "trake" ? marks : [useManualPoint ? (point.ms as number) : nowMs()],
+            type === "trake" ? (slots as number[]) : [useManualPoint ? (point.ms as number) : nowMs()],
         };
     const created = await proposeDresSubmission({
       task_type: type,
@@ -158,11 +163,9 @@ export default function DresPropose({
       answer: type === "qa" ? answer : undefined,
     });
     setResult(created);
-    // Ô điền tay giữ nguyên: nộp sai một mốc thì sửa đúng mốc đó rồi nộp lại,
-    // khỏi gõ lại cả dãy. Mốc bấm "tại đây" thì vẫn xoá như cũ.
-    if (type === "trake" && !useManual) {
-      setMarks([]);
-    }
+    // Cả ô điền tay lẫn các ô E1..EN đều GIỮ nguyên sau khi nộp: TRAKE được
+    // điểm một phần, nên nộp sai một mốc thì sửa đúng ô đó rồi nộp lại, khỏi
+    // tìm lại cả dãy. (Trước đây danh sách mốc bị xoá sau mỗi lần nộp.)
     return created;
   };
 
@@ -212,18 +215,33 @@ export default function DresPropose({
   };
 
   const pointReady = !useManualPoint || (point.error === null && point.ms !== null);
+  // Các ô E1..EN: đủ hết mới nộp được, và hai ô không được trùng frame (server
+  // cũng từ chối). Frame tính như server: round(ms / 1000 * fps).
+  const filledCount = slots.filter((v) => v !== null).length;
+  const slotFrames = slots.map((ms) => (ms === null ? null : frameOfMs(ms)));
+  const dupSlot = slotFrames.findIndex(
+    (f, i) => f !== null && slotFrames.indexOf(f) !== i
+  );
+  const slotsReady = filledCount === eventCount && dupSlot < 0;
+  const setSlot = (index: number, value: number | null) =>
+    setSlots((s) => s.map((v, i) => (i === index ? value : v)));
+  const changeCount = (n: number) => {
+    setEventCount(n);
+    // Giữ các ô đã điền khi đổi số hành động; ô thừa thì bỏ.
+    setSlots((s) => Array.from({ length: n }, (_, i) => s[i] ?? null));
+  };
   const ready =
     !busy &&
     ((type === "kis" && pointReady) ||
       (type === "qa" && answer.trim().length > 0 && pointReady) ||
       (type === "trake" &&
-        (useManual ? manual.error === null && manual.frames.length > 0 : marks.length > 0)));
+        (useManual ? manual.error === null && manual.frames.length > 0 : slotsReady)));
   // Nhãn nút nói rõ nộp theo nguồn nào — hai nguồn cho hai con số khác nhau.
   const what =
     type === "trake"
       ? useManual
         ? `TRAKE (${manual.frames.length} frame điền tay)`
-        : `TRAKE (${marks.length} mốc)`
+        : `TRAKE (${filledCount}/${eventCount} mốc)`
       : `${type === "qa" ? "Q&A" : "KIS"} ${
           useManualPoint
             ? `tại frame ${point.frame ?? "?"} (điền tay)`
@@ -378,6 +396,26 @@ export default function DresPropose({
           )}
 
           {type === "trake" && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[12px] text-proto-muted">Số hành động:</span>
+              {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => changeCount(n)}
+                  className={`w-7 text-[12px] py-0.5 rounded-[6px] border font-mono ${
+                    eventCount === n
+                      ? "bg-[#7b1fa2] border-[#7b1fa2] text-white font-bold"
+                      : "bg-white border-proto-line text-proto-ink"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {type === "trake" && (
             <div className="flex items-center gap-1">
               {(
                 [
@@ -429,36 +467,59 @@ export default function DresPropose({
               {manual.warnings.map((w) => (
                 <span key={w} className="text-[11.5px] text-[#8a6a0f]">⚠ {w}</span>
               ))}
+              {!manual.error && manual.frames.length > 0 && manual.frames.length !== eventCount && (
+                <span className="text-[11.5px] text-[#8a6a0f]">
+                  ⚠ Đã điền {manual.frames.length} frame nhưng chọn {eventCount} hành động.
+                </span>
+              )}
             </div>
           )}
 
           {type === "trake" && !trakeManual && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setMarks((m) => [...m, nowMs()])}
-              >
-                + Mốc E{marks.length + 1} tại đây
-              </Button>
-              {marks.map((ms, i) => (
-                <span
-                  key={`${i}-${ms}`}
-                  className="flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-white border border-proto-line"
+            <div className="flex flex-col gap-1.5">
+              {/* Was: một nút "+ Mốc E{n} tại đây" nối đuôi danh sách mốc, nên
+                  bắt buộc đi E1 → E2 → E3. Giờ mỗi ô có nút riêng. */}
+              {slots.map((ms, i) => (
+                <div
+                  key={i}
+                  className={`flex items-center gap-2 px-2 py-1 rounded-[8px] border text-[12px] ${
+                    ms === null
+                      ? "bg-white/60 border-dashed border-proto-line"
+                      : dupSlot >= 0 && slotFrames[i] === slotFrames[dupSlot]
+                        ? "bg-white border-[#c64545]"
+                        : "bg-white border-[#7b1fa2]/50"
+                  }`}
                 >
-                  {/* Was: E{i + 1} {formatMs(ms)} — chỉ có đồng hồ, không có
-                      frame, trong khi mọi chỗ khác nói bằng số frame. */}
-                  E{i + 1} {formatMs(ms)}{" "}
-                  <span className="font-mono text-proto-muted">({withFrame(ms)})</span>
-                  <button
-                    type="button"
-                    className="text-proto-muted hover:text-[#c64545]"
-                    onClick={() => setMarks((m) => m.filter((_, j) => j !== i))}
-                  >
-                    ×
-                  </button>
-                </span>
+                  <b className="font-mono text-[#7b1fa2] w-7">E{i + 1}</b>
+                  {ms === null ? (
+                    <span className="text-proto-muted">chưa chọn</span>
+                  ) : (
+                    <span className="font-mono">
+                      {formatMs(ms)} <span className="text-proto-muted">({withFrame(ms)})</span>
+                    </span>
+                  )}
+                  <span className="ml-auto flex items-center gap-1.5">
+                    <Button size="xs" variant="outline" onClick={() => setSlot(i, nowMs())}>
+                      {ms === null ? "Đặt tại đây" : "Đặt lại"}
+                    </Button>
+                    {ms !== null && (
+                      <button
+                        type="button"
+                        className="text-proto-muted hover:text-[#c64545] px-1"
+                        onClick={() => setSlot(i, null)}
+                        title={`Xoá E${i + 1}`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                </div>
               ))}
+              {dupSlot >= 0 && (
+                <span className="text-[12px] text-[#c64545]">
+                  Hai mốc trùng frame {slotFrames[dupSlot]} — đặt lại một trong hai.
+                </span>
+              )}
             </div>
           )}
 
