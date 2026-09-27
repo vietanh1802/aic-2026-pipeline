@@ -139,6 +139,61 @@ data_raw/SOTUYEN2-bo-de-thi/
 # thư mục gốc thì benchmark vẫn chạy; chỉ không dựng lại nhãn từ đầu được nữa.
 data_raw/ans_aic2026_sotuyen/
 
+# Manifest cảnh quay cho caption đa khung (43 MB). Sinh lại bằng notebook 91
+# từ beit3_mapping.json trong vài giây — không phải nguồn của repo.
+data_raw/shots_manifest.jsonl
+
+# Bản tải về của các lần chạy benchmark, kèm cả danh sách khung đã xếp hạng.
+# Sinh lại được bất cứ lúc nào bằng notebook 90 — máy chủ mới là nơi giữ bản gốc.
+data_raw/benchmark_runs/
+
+# ===== Dữ liệu cục bộ gom một chỗ =====
+# Index, zip, shard, bản sao lưu... tải về máy để làm việc. Gom vào _local/ để
+# thư mục gốc chỉ còn mã nguồn. Các dòng /… bên dưới giữ lại phòng khi có người
+# tải lại ra thư mục gốc theo thói quen cũ.
+/_local/
+
+# ===== Artifact index / checkpoint tải về máy (batch 2, SigLIP2) =====
+# Mỗi file vài trăm MB tới vài GB (index, index2 ~800 MB mỗi cái), sinh lại
+# được từ notebook và bản gốc nằm trên Drive/S3 — không phải nguồn của repo.
+# Khối này đặt giữa file (không ở cuối) để không đụng phần staging thêm vào
+# cuối .gitignore — hai bên cùng nối đuôi là git pull/stash pop báo conflict.
+/checkpoint/
+/data_raw_batch/
+/index
+/index2
+/index_shards_S_v001/
+/index_shards_S_v001.zip
+/index_shards_v001/
+/index_shards_v001-*.zip
+/siglip2_shard_*.index
+/upload_siglip2_phan*/
+# indexes/ 545 MB (bản tải dở metadata/index nhóm M), siglip2_LMN_v001/ 1,8 GB.
+/indexes/
+/siglip2_LMN_v001/
+
+# Dữ liệu BTC phát cho batch 2 (media-info, map-keyframes kèm cột fps). Đã
+# dùng để dựng data_raw/fps_map.json; tải lại từ BTC khi cần.
+/aic26-b2-map-keyframes/
+/aic26-b2-map-keyframes.zip
+/aic26-b2-media-info/
+/aic26-b2-media-info.zip
+# Bản sao lưu lịch sử vòng chung kết (SQLite + log). Có mật khẩu DRES của đội
+# và hash mật khẩu thành viên — không bao giờ commit.
+/contest-backup/
+# Media-info batch 1 (873 video L, link YouTube) — cùng loại dữ liệu BTC như trên.
+/media-info-aic25-b1/
+/media-info-aic25-b1.zip
+
+# Hướng dẫn chung kết 2026 của BTC — tài liệu tham khảo, tải lại từ BTC khi cần.
+docs/HD-ChungKet-2026.pdf
+# Kỷ yếu SoICT 2024 phần 4 (158 MB — vượt giới hạn 100 MB/file của GitHub), tài
+# liệu tham khảo khi viết bài; và bản zip của docs/soict2026/ để upload Overleaf.
+docs/soict2024_part4.pdf
+docs/soict2026.zip
+# Slide Beamer họp với thầy — giữ trên máy / Overleaf, không phải tài liệu của repo.
+docs/soict2026/
+
 # ===== Kết quả ASR (206 MB) =====
 # e5_embeddings.npy 103 MB · windows.jsonl 74 MB · bm25/ 29 MB — lời thoại đã
 # tách cửa sổ, nhúng E5 và dựng chỉ mục BM25 cho 873 video.

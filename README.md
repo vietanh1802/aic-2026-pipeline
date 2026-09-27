@@ -1,176 +1,218 @@
-# Scavenger — Video Query Finder (AIC 2026)
+# Bquerium — Interactive Video Moment Retrieval
 
-A text-to-video **keyframe retrieval** system built for the **AI Challenge (AIC) 2026**.
-You describe a scene in natural language and the system finds the matching moments
-across a large video archive, then lets you jump straight to that point in the
-original video.
+Bquerium is an interactive system for finding specific moments in a large video
+collection from a natural-language description (Vietnamese or English). It was
+built for the **Ho Chi Minh City AI Challenge 2026** and supports the three task
+types of the challenge:
 
-The project is a monorepo with three independent parts:
+| Task | Input | Output |
+| --- | --- | --- |
+| **KIS** (Known-Item Search) | a description of one moment | `video, frame` |
+| **Q&A** | a description + a question | `video, frame, answer` |
+| **TRAKE** | a sequence of *N* events | `video, frame_1, …, frame_N` in temporal order |
 
-| Component            | Stack                              | Port  | Role                                                            |
-| -------------------- | ---------------------------------- | ----- | -------------------------------------------------------------- |
-| `backend/`           | Python · FastAPI · FAISS · PyTorch | 8000  | Search API over pre-extracted keyframes and embeddings.        |
-| `frontend/`          | React · TypeScript · Vite · Tailwind | 5173  | Web UI: query, browse results, preview the clip.               |
-| `drive-video-proxy/` | Node.js · Express                  | 5000  | Streams the source videos from Google Drive (with HTTP Range). |
+The machine proposes candidates; people pick the final answer. Several team
+members work on the same system at the same time, sharing queries, candidate
+lists and answers.
+
+Dataset scale handled by the deployed system: **1,480 videos, 983,931 keyframes**
+(news, traffic cameras, cycling races).
 
 ---
 
-## How it works
+## System overview
 
-1. **Keyframes** are extracted from the video archive ahead of time. For each frame the
-   pipeline stores its text/visual embedding plus metadata (OCR text, detected objects,
-   colors, actions) in a keyframe database.
-2. The **frontend** sends a query to the **backend**, which offers several search modes
-   (see [Search modes](#search-modes)).
-3. Results come back as ranked keyframes with a similarity score and an image URL.
-4. Clicking a result opens a **video popup**; the frontend asks the **drive-video-proxy**
-   to stream the correct video from Google Drive and seeks to the frame's timestamp.
+```
+            OFFLINE (Colab notebooks)                          ONLINE
+ ┌────────────────────────────────────────────┐   ┌──────────────────────────────────┐
+ │ video ─ TransNetV2 shots ─ keyframe sampling│   │  React frontend                  │
+ │           │                                 │   │   query · browse · verify in     │
+ │           ├─ BEiT-3 / CLIP ViT-bigG /       │   │   video · rank answers · submit  │
+ │           │  SigLIP2 image embeddings       │   │            ▲  REST               │
+ │           ├─ OCR (Vintern-1B-v3.5)          │──▶│  FastAPI backend                 │
+ │           └─ ASR (Whisper large-v3)         │   │   search · collaboration ·       │
+ │                                             │   │   evaluation   (SQLite)          │
+ │ ⇒ 3 FAISS indexes · OCR/ASR text · metadata │   │   indexes loaded in RAM, CPU only│
+ └────────────────────────────────────────────┘   └──────────────────────────────────┘
+```
 
-### Search modes
+### Offline indexing
 
-All are exposed by the backend and selectable from the query bar in the UI.
+1. **Shot detection** with TransNetV2.
+2. **Keyframe sampling** proportional to shot length: 2 frames for shots up to
+   1.67 s, then one more frame per extra 2 s, clamped to [2, 40].
+   Keyframes are named `L26_V041-0047-3798.jpg` (`video-shot-frame`); this name is
+   the join key between images, OCR, ASR and metadata. Frame indices follow the
+   official fps table of the dataset, not `ffprobe`.
+3. **Image embeddings** from three vision–language encoders, each in its own
+   exact-search FAISS index (`IndexFlatIP`, cosine on L2-normalised vectors):
+   BEiT-3 Large (1024-d), OpenCLIP ViT-bigG-14 (1280-d), SigLIP2-giant (1536-d).
+4. **OCR** of on-screen text with Vintern-1B-v3.5 (Vietnamese VLM).
+5. **ASR** with Whisper large-v3, split into overlapping 60 s windows.
 
-| Endpoint                  | Mode              | Description                                                                    |
-| ------------------------- | ----------------- | ------------------------------------------------------------------------------ |
-| `POST /text-search`       | Text + agent      | An LLM (GitHub Models, `gpt-4.1`) expands the query into synonyms / keywords from a classified vocabulary before matching against keyframe metadata. |
-| `POST /text-no-agent-search` | Text (plain)   | Keyword matching without the LLM expansion step.                               |
-| `POST /faiss-search`      | Semantic (FAISS)  | Encodes the query with `all-mpnet-base-v2` and does nearest-neighbor search over the FAISS embedding index. |
-| `POST /ocr-search`        | OCR               | Matches against text detected inside the frames.                               |
-| `POST /combined-search`   | Combined          | Mixes text and OCR signals.                                                    |
-| `POST /filter-search`     | Filter            | Filters by `object` / `color` / `action` / `ocr` tags.                         |
-| `GET /status`, `GET /`    | Health            | Service status and endpoint listing.                                           |
+### Retrieval methods
 
-Interactive API docs are available at `http://localhost:8000/docs` once the backend runs.
+**Query processing.** Text encoders read only 64–77 tokens, while descriptions are
+often 100–150 words. An LLM translates the query to English and compresses it,
+keeping visible details (objects, colours, actions, on-screen text).
+
+**Semantic search.** For each encoder *m*: retrieve the top-*M* keyframes, then
+re-score each frame *f* by its temporal neighbourhood, since a moment usually
+spans several consecutive keyframes:
+
+$$ s'_m(f) = \sum_{g \in \mathcal{N}(f)} \langle \mathbf{q}_m, \mathbf{v}_m(g) \rangle $$
+
+Scores of different encoders live on different scales, so each is normalised by
+its maximum before a weighted sum (equal weights by default):
+
+$$ S(f) = \sum_m w_m \frac{s'_m(f)}{\max_g s'_m(g)}, \qquad \sum_m w_m = 1 $$
+
+Re-ranking is done **per model, before** the ensemble, so each neighbourhood
+score is computed with that model's own embeddings.
+
+**TRAKE (event sequences).** Given events *e₁ … e_N*, choose frames
+*f₁ < … < f_N* in one video that maximise Σ sim(eᵢ, fᵢ) subject to
+*f₍ᵢ₊₁₎ − fᵢ ≤ Δ* (60 s). Solved by dynamic programming in O(N·F²). When the
+video is unknown, videos are ranked by how many events have a matching frame and
+the DP runs on the top candidates.
+
+**Temporal pairs.** From an anchor frame, search left for the "before"
+description and right for the "after" description, within 20 s.
+
+**Text signals (OCR / ASR).** Accent-insensitive substring matching over OCR text
+(several phrases at once); substring, regex or BM25 over ASR windows. Text hits
+**annotate** the visual results ("matched here" / "matched elsewhere in this
+video", with the snippet) instead of re-ranking them — the user decides.
 
 ---
 
 ## Repository layout
 
 ```
-AIC-pipeline-2025/
-├── backend/
-│   ├── app/
-│   │   ├── main.py            # FastAPI app + search endpoints
-│   │   ├── models.py          # Pydantic request/response models
-│   │   ├── preprocess.py      # FAISS semantic search (all-mpnet-base-v2)
-│   │   ├── agent.py           # LLM keyword expansion (GitHub Models)
-│   │   ├── data/              # Data & model artifacts (NOT in git — see below)
-│   │   │   ├── temp.json              # keyframe database
-│   │   │   ├── classified_vocab.json
-│   │   │   ├── decode_files/          # id→path / name→URL maps
-│   │   │   └── faiss/                 # FAISS indexes (data.index, image.index)
-│   │   └── static/images/     # keyframe images (NOT in git — served at /static/images)
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── .gitignore
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # UI components (query bar, results, video popup, …)
-│   │   ├── store/            # Zustand state stores
-│   │   ├── helpers/          # formatting / mapping helpers
-│   │   ├── mapping/          # frame ↔ video ↔ fps ↔ Drive-file-id maps
-│   │   ├── types/            # API client and shared types
-│   │   ├── Animations/       # ReactBits UI animation components
-│   │   └── TextAnimations/
-│   ├── .env.example
-│   └── package.json
-└── drive-video-proxy/
-    ├── server.js
-    ├── .env.example
-    └── package.json          # service-account key stays local, never committed
+backend/            FastAPI service: search, collaboration, evaluation
+  app/main.py         search endpoints (ensemble, single, temporal, TRAKE, OCR)
+  app/preprocess.py   retrieval core: encoders, FAISS, re-rank, ensemble, temporal
+  app/routers/        auth, board, answers, packs, rounds, search state, export, DRES, evaluation
+  app/db/             SQLite schema + numbered migrations
+  app/evaluation/     benchmark runner and scoring (Hit@k, MRR, R@k)
+  tests/              pytest
+frontend/           React 19 + TypeScript + Vite + Tailwind + Zustand
+drive-video-proxy/  Node/Express service streaming source videos (HTTP Range)
+notebooks/          offline pipeline (keyframes, embeddings, OCR, ASR) — run on Colab
+scripts/            helper scripts (frontend mappings, ASR text index, zip sync)
+data_raw/           small reference data (official fps table)
+deploy/             Caddy config and SSM deploy scripts for EC2
+docs/               design notes and specs (docs/superpowers/specs/ is authoritative)
+Dockerfile, docker-compose*.yml   container build for the backend + proxy
+VERSION             semver; CI refuses a push that does not bump it
 ```
 
-### Data & model artifacts (provided out of band)
-
-The keyframe database, FAISS indexes, id-maps and the ~294k keyframe images are **too
-large for git** (the FAISS index alone is ~900 MB) and are therefore **git-ignored**.
-Before running the backend, obtain these files and place them exactly as documented in
-[`backend/app/data/README.md`](backend/app/data/README.md), and put the keyframe images
-under `backend/app/static/images/`.
+Large artifacts (indexes, keyframes, model weights) are **not** in git; see
+[Artifacts](#artifacts).
 
 ---
 
-## Prerequisites
+## Getting started
 
-- **Python** 3.10+
-- **Node.js** 18+ (Express 5 and the Vite toolchain expect a modern runtime)
-- A **GitHub token** with access to GitHub Models (for the agent-based text search)
-- A **Google Cloud service account** key with read access to the Drive videos (for the proxy)
+Requirements: Python 3.11, Node.js 20+, and the index artifacts below.
 
----
-
-## Setup & run
-
-Run each component in its own terminal.
-
-### 1. Backend (API — port 8000)
+### Backend (port 8000)
 
 ```bash
 cd backend
-python -m venv venv
-venv\Scripts\activate            # Windows;  source venv/bin/activate on macOS/Linux
 pip install -r requirements.txt
-
-cp .env.example .env             # then edit .env and set GITHUB_TOKEN
-# ensure app/data/* and app/static/images/* are in place (see note above)
-
+python -m scripts.seed_team          # create team accounts (idempotent)
 uvicorn app.main:app --reload
 ```
 
-Backend env vars (`backend/.env`):
-
-| Variable                 | Required | Default                                | Purpose                             |
-| ------------------------ | -------- | -------------------------------------- | ----------------------------------- |
-| `GITHUB_TOKEN`           | yes      | —                                      | Auth for GitHub Models (`gpt-4.1`). |
-| `GITHUB_MODELS_ENDPOINT` | no       | `https://models.github.ai/inference`   | Models API endpoint.                |
-| `GITHUB_MODELS_MODEL`    | no       | `gpt-4.1`                              | Model used for keyword expansion.   |
-
-> The first request loads the `all-mpnet-base-v2` model and the FAISS index into memory,
-> so it can take a while to warm up.
-
-### 2. Drive video proxy (port 5000)
+Tests and lint:
 
 ```bash
-cd drive-video-proxy
-npm install
-# place the Google service account key here as service-account2.json
-#   (or set GOOGLE_APPLICATION_CREDENTIALS to its path)
-node server.js
+cd backend
+mkdir -p .tmp                                # pytest does not create the parent of --basetemp
+python -m pytest -q --basetemp=.tmp/pytest   # --basetemp avoids Windows temp-dir permission errors
+python -m ruff check app
 ```
 
-Proxy env vars (`drive-video-proxy/.env`, optional):
-
-| Variable                         | Default                   | Purpose                             |
-| -------------------------------- | ------------------------- | ----------------------------------- |
-| `PORT`                           | `5000`                    | Port to listen on.                  |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `./service-account2.json` | Path to the Drive service-account key. |
-
-### 3. Frontend (UI — port 5173)
+### Frontend (port 5173)
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env             # optional; adjust if you use env vars
 npm run dev
 ```
 
-Then open the URL Vite prints (default `http://localhost:5173`). The backend CORS config
-already allows this origin, and the video popup expects the proxy at
-`http://localhost:5000`.
+Checks: `npx tsc -b && npm run lint && npm test && npm run build`.
+
+### Video proxy (port 5000)
+
+```bash
+cd drive-video-proxy
+npm install
+node server.js
+```
+
+See [drive-video-proxy/README.md](drive-video-proxy/README.md) for the Google
+service-account setup.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AIC_INDEX_DIR` | `backend/app/indexes` | FAISS indexes, mappings, metadata, model weights |
+| `AIC_IMAGE_BASE_URL` | local `/static` | where keyframe images are served from |
+| `AIC_MODELS` | all | comma list of `beit3,clip,siglip2` to load |
+| `AIC_DB_PATH` | `backend/app/data/app.db` | SQLite database |
+| `AIC_WARMUP` | `1` | `0` skips loading indexes/models at startup |
+| `AIC_CORS_ORIGINS` | any | comma list of allowed origins |
+| `VITE_API_BASE_URL` | — | backend URL used by the frontend |
+| `VITE_IMAGE_BASE_URL` | `${VITE_API_BASE_URL}/static` | keyframe image host for the frontend |
+
+Copy `frontend/.env.example` to `frontend/.env` to start.
 
 ---
 
-## Security notes
+## Artifacts
 
-- **Never commit secrets.** `.env` files and `service-account*.json` are git-ignored.
-  Use the `.env.example` templates as a starting point.
-- If a token or key was ever committed in the past, treat it as compromised and
-  **rotate it** — removing it from the working tree does not remove it from old history.
-- The Firebase web config in `frontend/src/firebase.js` uses a public client `apiKey`
-  (this is expected for Firebase); protect data with Firebase Security Rules instead.
+The backend expects in `AIC_INDEX_DIR`:
+
+```
+beit3.index, clip.index, siglip2_giant.index   FAISS IndexFlatIP
+*_mapping.json                                 {"0": ".../static/images/<name>.jpg", ...}
+keyframe_metadata.json                         a LIST of per-keyframe records (not a dict)
+beit3_large_patch16_384_coco_retrieval.pth, beit3.spm, CLIP / SigLIP2 weights
+ocr_clean.json, ocr_clean_nodau.json           OCR text (with / without diacritics)
+```
+
+They are produced by the notebooks in `notebooks/` on Colab and synced to the
+server from S3 (`deploy/p6/ssm-sync-indexes.sh`, `docs/updating-indexes.md`).
+
+---
+
+## Evaluation
+
+`backend/app/evaluation/` replays a benchmark of queries with known answers
+(`seeds/round{1,2,3}-*.json`) against the live search and scores it:
+
+- video level: Hit@1, Recall@{3,5,10}, MRR
+- frame-interval level (official scoring): R@{1,5,20,50,100}
+
+Runs are started and inspected from the **Evaluation** page of the frontend.
+Repeated runs of the same configuration can differ by up to ~0.05 MRR, so compare
+averages over several runs.
+
+---
+
+## Deployment
+
+Pushing to `staging` runs `.github/workflows/deploy.yml`: version guard →
+frontend checks (lint, tsc, tests, build) and backend checks (ruff, import,
+pytest) → frontend to Cloudflare Pages, backend image to GHCR and to EC2 via SSM →
+smoke test with automatic rollback. The server is CPU-only (8 vCPU, 64 GiB);
+all query-time encoding and FAISS search run on CPU.
 
 ---
 
 ## License
 
-See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
