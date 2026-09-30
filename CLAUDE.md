@@ -59,7 +59,6 @@ frontend/         React 19 + TS + Vite + Tailwind v4 + Zustand
   src/pages/        Board, Evaluation, Export, ImportPack, Login, ChangePassword
   src/store/        useSearchStore, queryStore, authStore, popupStore, healthStore,
                     pickedFrameStore
-drive-video-proxy/ Node/Express, phát video từ Google Drive (HTTP Range)
 notebooks/        pipeline offline: cắt keyframe, OCR, dựng index
   thanhbangcao/     notebook của cả nhóm, có INDEX.md
 scripts/          script phụ: mapping frontend, index ASR, sync_and_unzip.py (+ drive_zips.json)

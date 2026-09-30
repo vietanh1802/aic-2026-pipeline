@@ -11,7 +11,7 @@ services:
       - .env.deploy
     depends_on:
       - api
-      - drive-proxy
+      # - drive-proxy  # gỡ 2026-09-29, xem ghi chú ở dịch vụ drive-proxy bên dưới
     environment:
       AIC_API_HOSTNAME: ${AIC_API_HOSTNAME:-aic-api.umaga.fun}
       AIC_TLS_SNIPPET: ${AIC_TLS_SNIPPET:-tls_cloudflare}
@@ -101,34 +101,37 @@ services:
       # Warm-up reads ~16 GB and takes 90-145s; below this it is starting, not sick.
       start_period: 240s
 
-  drive-proxy:
-    build:
-      context: .
-      target: drive-proxy
-    image: aic2026-drive-proxy:local
-    restart: unless-stopped
-    env_file:
-      - .env.deploy
-    environment:
-      PORT: 5000
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-AIzaSyAWUVtVvwOTA52orDVhTU9b9xrBwx7pWH0}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
-    expose:
-      - "5000"
-    volumes:
-      - ./secrets:/run/secrets/aic:ro
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+  # Bỏ 2026-09-29: frontend phát video thẳng từ S3 (VITE_VIDEO_BASE_URL), không
+  # còn gọi /video/* nên proxy Drive đứng không. Key Google mặc định cũ đã thay
+  # bằng <redacted> — nó từng nằm lộ ở đây, đừng dán lại key thật vào repo.
+  # drive-proxy:
+  #   build:
+  #     context: .
+  #     target: drive-proxy
+  #   image: aic2026-drive-proxy:local
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env.deploy
+  #   environment:
+  #     PORT: 5000
+  #     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-<redacted>}
+  #     GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+  #   expose:
+  #     - "5000"
+  #   volumes:
+  #     - ./secrets:/run/secrets/aic:ro
+  #   healthcheck:
+  #     test:
+  #       [
+  #         "CMD",
+  #         "node",
+  #         "-e",
+  #         "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+  #       ]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 10s
 
 volumes:
   caddy_data:

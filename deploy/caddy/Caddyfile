@@ -10,8 +10,9 @@
 {$AIC_API_HOSTNAME::8080} {
 	encode zstd gzip
 
-	@drive path /video/*
-	reverse_proxy @drive drive-proxy:5000
+	# Bỏ 2026-09-29: video đi thẳng từ S3, dịch vụ drive-proxy đã gỡ.
+	# @drive path /video/*
+	# reverse_proxy @drive drive-proxy:5000
 
 	reverse_proxy api:8000
 

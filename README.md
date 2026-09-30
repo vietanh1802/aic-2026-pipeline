@@ -97,13 +97,12 @@ backend/            FastAPI service: search, collaboration, evaluation
   app/evaluation/     benchmark runner and scoring (Hit@k, MRR, R@k)
   tests/              pytest
 frontend/           React 19 + TypeScript + Vite + Tailwind + Zustand
-drive-video-proxy/  Node/Express service streaming source videos (HTTP Range)
 notebooks/          offline pipeline (keyframes, embeddings, OCR, ASR) — run on Colab
 scripts/            helper scripts (frontend mappings, ASR text index, zip sync)
 data_raw/           small reference data (official fps table)
 deploy/             Caddy config and SSM deploy scripts for EC2
 docs/               design notes and specs (docs/superpowers/specs/ is authoritative)
-Dockerfile, docker-compose*.yml   container build for the backend + proxy
+Dockerfile, docker-compose*.yml   container build for the backend + Caddy
 VERSION             semver; CI refuses a push that does not bump it
 ```
 
@@ -143,17 +142,6 @@ npm run dev
 ```
 
 Checks: `npx tsc -b && npm run lint && npm test && npm run build`.
-
-### Video proxy (port 5000)
-
-```bash
-cd drive-video-proxy
-npm install
-node server.js
-```
-
-See [drive-video-proxy/README.md](drive-video-proxy/README.md) for the Google
-service-account setup.
 
 ### Configuration
 

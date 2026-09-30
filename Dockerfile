@@ -41,20 +41,23 @@ EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
-FROM node:22-alpine AS drive-proxy
-
-ENV NODE_ENV=production \
-    PORT=5000
-
-WORKDIR /srv/drive-video-proxy
-
-COPY drive-video-proxy/package*.json ./
-RUN npm ci --omit=dev
-
-COPY drive-video-proxy/server.js ./
-
-EXPOSE 5000
-CMD ["node", "server.js"]
+# Bỏ 2026-09-29: frontend phát video thẳng từ S3 (VITE_VIDEO_BASE_URL →
+# helpers/videoSource.ts), không còn gọi /video/* nên proxy Drive đứng không.
+# Thư mục drive-video-proxy/ đã xoá; bản cũ nằm trong git history.
+# FROM node:22-alpine AS drive-proxy
+#
+# ENV NODE_ENV=production \
+#     PORT=5000
+#
+# WORKDIR /srv/drive-video-proxy
+#
+# COPY drive-video-proxy/package*.json ./
+# RUN npm ci --omit=dev
+#
+# COPY drive-video-proxy/server.js ./
+#
+# EXPOSE 5000
+# CMD ["node", "server.js"]
 
 
 FROM caddy:2-builder-alpine AS caddy-builder
