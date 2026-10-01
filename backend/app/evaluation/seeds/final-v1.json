@@ -1,0 +1,771 @@
+{
+  "schema_version": 2,
+  "dataset": {
+    "slug": "final",
+    "display_name": "AI Challenge 2026 - Chung kết (phúc khảo)",
+    "version": "final-v1",
+    "query_count": 28,
+    "task_counts": {
+      "KIS": 14,
+      "QA": 11,
+      "TRAKE": 3
+    },
+    "source": {
+      "filename": "ĐỘI BQUERIUM - PHÚC KHẢO CHUNG KẾT AI CHALLENGE 2026 (1).docx",
+      "sha256": null,
+      "provenance": "team_final_appeal_document"
+    }
+  },
+  "reference_set": {
+    "version": "final-appeal-v1",
+    "label_semantics": "Đáp án đội gửi phúc khảo vòng chung kết (2 ca) — đáp án của đội, chưa phải đáp án BTC công nhận, và KHÔNG được duyệt tay thành khoảng như vòng 1–3.",
+    "interval_annotation": "kis_qa_derived_from_appeal_timestamps; trake_intentionally_not_interval_scored_tier0",
+    "notes": "Mốc ms đổi sang frame bằng data_raw/fps_map.json (fps BTC). KIS và QA chỉ có một mốc: khoảng hợp lệ = mốc ±5 s (vòng 1–3 duyệt tay, trung vị 10–26 s). QA có khoảng ms: dùng nguyên khoảng. qa-query-03 (CANTHO) khoảng 0–600000 ms = cả video. qa-query-14 (LONGTHUY) '11310-13140' được đọc là số frame: ở 30 fps là 377–438 s, khớp OCR 'cầu ngư' 333–385 s và cửa sổ ASR 360–405 s; đọc là ms thì rơi vào lời chào đầu chương trình. Video S viết lại theo tên trong bộ dữ liệu (S01_V011 → S01-V011). Bỏ: 5 câu vkis (truy vấn bằng ảnh, benchmark không chạy được); tkis-query-14 — tài liệu không có đáp án; qa-query-06 — đáp án trỏ tới M18_V021 — không có video này trong bộ dữ liệu (M chỉ có M01–M10); M08_V021 / M10_V021 ở 406–457 s nói chuyện khác, không đoán. TRAKE chấm theo hạng video (Tier 0); frame từng mốc chỉ để hiển thị."
+  },
+  "queries": [
+    {
+      "id": "f1-tkis-01",
+      "ordinal": 1,
+      "query_vi": "Cánh đồng lúa nghệ thuật rộng hơn 120 ha, nơi nông dân dùng các giống lúa nhiều màu để tạo thành những bức tranh khổng lồ nhằm thu hút du khách. Những ruộng lúa nhiều màu được gieo trồng thành các hình ảnh khổng lồ như trẻ em, cối xay gió, người đọc sách và chữ thư pháp, bất chấp nắng nóng và hạn hán khắc nghiệt. Đoạn video chứa hình ảnh bức tranh có những đứa trẻ đang chơi đùa. Một trong những đứa trẻ cầm một chiếc chong chóng trên tay. Phân cảnh có chính xác 3 đứa trẻ, trong đó 2 đứa trẻ mặc áo vàng, một đứa trẻ mặc áo màu xanh lá cây.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-01. Đáp án phúc khảo 'L22_V015 @ 657233 ms': một mốc 657233 ms → frame 19717 (fps_map 30.0), khoảng = mốc ±5 s. 8 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "L22_V015",
+        "valid_intervals": [
+          {
+            "start": 19567,
+            "end": 19867
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 19717,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-08",
+      "ordinal": 2,
+      "query_vi": "Đoạn clip giới thiệu nghệ nhân làm bánh cưới độc bản thủ công, không dùng AI để giữ tính nghệ thuật, phục vụ khách hàng Trung Đông và châu Âu với giá trên 10.000 euro. Nghệ thuật làm bánh cưới cao cấp tại Pháp, nơi những chiếc bánh được chế tác như các tác phẩm điêu khắc thời trang dành cho khách hàng quốc tế. Có cảnh hai người đầu bếp đang tỉ mỉ tạo hình những nụ hoa. Góc quay cận cho thấy nụ hoa này được đính trên một cái que màu trắng. Tiếp đó, người đầu bếp giới thiệu về những khuôn mẫu xanh dương để tạo hình chi tiết trang trí. Ta còn có thể thấy nhiều bản vẽ bánh kem được trưng bày trên tường trong cảnh quay sau đó.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-08. Đáp án phúc khảo 'M06_V008 @ 671320 ms': một mốc 671320 ms → frame 16783 (fps_map 25.0), khoảng = mốc ±5 s. 13 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M06_V008",
+        "valid_intervals": [
+          {
+            "start": 16658,
+            "end": 16908
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 16783,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-02",
+      "ordinal": 3,
+      "query_vi": "Phân cảnh này nằm trong một đoạn video giới thiệu về Rạch Giá, cụ thể hơn là giới thiệu về Đình Ông Nguyễn. Tiếp theo là bức tranh 1 chiếc tàu chiến bị đốt cháy trên sông Cuối cùng là cảnh hai câu thơ của nhà thơ Huỳnh Mẫn Đạt ở hai bên tượng đồng, nói lên những chiến công vang dội của Ông. “Hỏa hồng nhật tảo oanh thiên địa, kiếm bạt Kiên Giang khấp quỷ thần”. Ông là anh hùng dân tộc Nguyễn Trung Trực",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-02. Đáp án phúc khảo 'L27_V010 @ 181600 ms': một mốc 181600 ms → frame 4540 (fps_map 25.0), khoảng = mốc ±5 s. 11 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "L27_V010",
+        "valid_intervals": [
+          {
+            "start": 4415,
+            "end": 4665
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 4540,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-16",
+      "ordinal": 4,
+      "query_vi": "Lực lượng công an ứng cứu một phụ nữ trẻ bị cô lập tại nhà do nước lũ dâng cao và dòng chảy xiết. Người được hỗ trợ là một người phụ nữ đang mang thai, ngồi trên một chiếc xuồng hơi chuyên dụng. Có tổng cộng 6 cán bộ chiến sĩ công an hỗ trợ chị. Chị mang một chiếc áo mưa màu hồng, đeo khẩu trang màu đen và cầm chiếc ô màu xanh dương.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-16. Đáp án phúc khảo 'M01_V019 @ 760000 ms': một mốc 760000 ms → frame 19000 (fps_map 25.0), khoảng = mốc ±5 s. 9 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M01_V019",
+        "valid_intervals": [
+          {
+            "start": 18875,
+            "end": 19125
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 19000,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-21",
+      "ordinal": 5,
+      "query_vi": "Một lễ hội truyền thống thường niên ở 1 tỉnh của Châu Âu, nơi các tình nguyện viên cùng chuẩn bị một món ăn khổng lồ bằng chảo lớn và những mái chèo gỗ dài Một xô chứa nguyên liệu màu vàng được đổ vào xô to hơn, sau đó được đánh đều Phần nguyên liệu khác được chiên trên một chảo lớn và đảo đều Nguyên liệu màu vàng được đánh đều lúc này được đổ vào chảo Phần thức ăn sau đó được chia cho mọi người xung quanh",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-21. Đáp án phúc khảo 'M10_V014 @ 675440 ms': một mốc 675440 ms → frame 16886 (fps_map 25.0), khoảng = mốc ±5 s. 10 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M10_V014",
+        "valid_intervals": [
+          {
+            "start": 16761,
+            "end": 17011
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 16886,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-07",
+      "ordinal": 6,
+      "query_vi": "Chương trình nghệ thuật tái hiện hệ thống khoa cử xưa tại Việt Nam, được diễn ra ở gần hồ nước Có đèn lồng, cờ nghi lễ, ánh sáng và sương mù trong khuôn viên 1 di tích lịch sử ở miền Bắc Có cảnh hai người đàn ông ngồi trong lều chõng, một người đang giơ tờ giấy viết chữ “Nghĩa” bằng Hán tự. Sau đó là cảnh một người đàn ông trong bộ lễ phục đó trả lời phỏng vấn, xung quanh ông là hai lá cờ ngũ sắc.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-07. Đáp án phúc khảo 'M03_V013 @ 327800 ms': một mốc 327800 ms → frame 8195 (fps_map 25.0), khoảng = mốc ±5 s. 11 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M03_V013",
+        "valid_intervals": [
+          {
+            "start": 8070,
+            "end": 8320
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 8195,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-10",
+      "ordinal": 7,
+      "query_vi": "Các tay đua xe đạp rẽ trái vào một cây cầu bắc qua sông. Trên cầu, ở bên trái đường đua, có người đang cầm 4-5 bong bóng trắng và các du khách mặc áo trắng đang chụp hình/quay phim. Sau đó một cảnh quay trực diện từ phía trước cho thấy sáu tay đua xe đạp đang chạy trên cầu, và trên vỉa hè đang có hai người đang đi bộ. Cuối cùng là cảnh flycam ghi lại toàn cây cầu bắc qua sông rộng, với các phương tiện di chuyển trên cầu, và thuyền chạy trên mặt nước. Phía xa ta còn thấy được cầu Trường Tiền của thành phố Huế.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-10. Đáp án phúc khảo 'S01-V009 @ 4561433 ms': một mốc 4561433 ms → frame 136843 (fps_map 30.0), khoảng = mốc ±5 s. 8 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "S01-V009",
+        "valid_intervals": [
+          {
+            "start": 136693,
+            "end": 136993
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 136843,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-15",
+      "ordinal": 8,
+      "query_vi": "Đoạn video cho thấy một cậu bé hướng dẫn cách sử dụng nhạc cụ truyền thống làm từ tre và gỗ trong một hoạt động ngoài trời ở sân trường, nơi kỹ thuật thủ công truyền thống được kết hợp với công nghệ hiện đại. Trong đoạn phim này, cậu bé ngồi xổm và giới thiệu 2 loại nhạc cụ khác nhau. Kế cậu bé này là một cô bé. Cả 2 người đều là người dân tộc Êđê.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-15. Đáp án phúc khảo 'L30_V065 @ 59880 ms': một mốc 59880 ms → frame 1497 (fps_map 25.0), khoảng = mốc ±5 s. 7 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "L30_V065",
+        "valid_intervals": [
+          {
+            "start": 1372,
+            "end": 1622
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1497,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-22",
+      "ordinal": 9,
+      "query_vi": "Cảnh cần tìm bắt đầu với hình ảnh một bàn tay đang nhẹ nhàng đặt những lá bạc hà xanh vào bên cạnh các tầng pancake đặt trên đĩa màu đỏ. Bánh được xếp thành nhiều tầng, xen giữa các lớp bánh là phần kem màu vàng, socola, các loại hạt và trái cây. Sau đó một miếng pancake được nhấc lên bằng nĩa, để lộ rõ cấu trúc xen kẽ giữa lớp bánh socola mềm và phần nhân kem bên trong; Bên cạnh còn có một ly đồ uống và chén kem dùng kèm.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-22. Đáp án phúc khảo 'L26_V400 @ 248560 ms': một mốc 248560 ms → frame 6214 (fps_map 25.0), khoảng = mốc ±5 s. 11 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "L26_V400",
+        "valid_intervals": [
+          {
+            "start": 6089,
+            "end": 6339
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6214,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-18",
+      "ordinal": 10,
+      "query_vi": "Nguyên liệu có kích thước to khoảng gấp 4 lần cọng hành lá được cho vào chảo, sau đó đến hai loại nguyên liệu khác được cắt hạt lựu cũng lần lượt được cho vào. Nguyên liệu hình bầu dục, màu vàng, cũng được cho vào cùng Sau khi nấu xong, tất cả được cho vào trong những quả đã được hấp từ trước. Những quả này tiếp tục được đưa vào nồi hấp. Có tổng cộng 4 quả. Đây là món “BÍ ĐỎ HẤP HẠT SEN”",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-18. Đáp án phúc khảo 'L26_V379 @ 203840 ms': một mốc 203840 ms → frame 5096 (fps_map 25.0), khoảng = mốc ±5 s. 14 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "L26_V379",
+        "valid_intervals": [
+          {
+            "start": 4971,
+            "end": 5221
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 5096,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-17",
+      "ordinal": 11,
+      "query_vi": "Lễ ra quân chiến dịch tình nguyện hè hỗ trợ người dân nâng cao kỹ năng số và sử dụng các dịch vụ trực tuyến an toàn. 8 người đứng trước 1 màn hình lớn, trong đó có 4 người đặt tay lên 1 vật hình cầu. Trong số 8 người trên sân khấu, có 5 người mặc áo màu xanh dương và 3 người mặc áo màu trắng Một vài bạn áo đỏ ngồi giữa nhóm mặc áo xanh lá và xanh dương. Cuối clip là cảnh người đàn ông trung niên đeo kính trong lúc được người thanh niên hướng dẫn thao tác trên điện thoại",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-17. Đáp án phúc khảo 'M07_V001 @ 69520 ms': một mốc 69520 ms → frame 1738 (fps_map 25.0), khoảng = mốc ±5 s. 12 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M07_V001",
+        "valid_intervals": [
+          {
+            "start": 1613,
+            "end": 1863
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1738,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-tkis-03",
+      "ordinal": 12,
+      "query_vi": "Đoạn clip giới thiệu văn hóa ăn sáng đa dạng, từ những bữa ăn cao cấp được chế biến cầu kỳ đến các suất ăn bình dân, giá rẻ dành cho người lao động. Có cảnh trải nghiệm bữa sáng đa giác quan ở Luân Đôn với các món được chế biến cầu kỳ như cá hồi hun khói ăn cùng trứng chần. Có cảnh bếp ăn có một lò nướng than lớn, nằm trong chuỗi quán pub Wetherspoons, ở Luân Đôn, nước Anh. Một trong các phân cảnh có ghi hình một người đàn ông đang xếp các miếng thịt lên trên lò nướng. Trên lò nướng có tổng cộng 5 miếng thịt.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 1, tkis-query-03. Đáp án phúc khảo 'M03_V009 @ 515080 ms': một mốc 515080 ms → frame 12877 (fps_map 25.0), khoảng = mốc ±5 s. 12 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "M03_V009",
+        "valid_intervals": [
+          {
+            "start": 12752,
+            "end": 13002
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 12877,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-qa-04",
+      "ordinal": 13,
+      "query_vi": "Tên người xuất hiện trong phân cảnh này? Đoạn clip có cảnh một nhà thiết kế thời trang rất trẻ nhắc đến những nguồn cảm hứng khác thường như một loại rau củ màu xanh và những chiếc thìa, xen kẽ cảnh trình diễn bộ sưu tập thời trang Có hình ảnh một cậu bé tóc xoăn đang cầm một cây thước dây và một tấm vải nhỏ, bên cạnh là các cuộn chỉ được treo đầy màu sắc Các sản phẩm được cậu bé thiết kế và trình diễn tại tuần lễ thời trang Paris 2026 - 2027. Theo kỷ lục Thế giới Guinness, cậu bé là nhà thiết kế thời trang trẻ tuổi nhất. Cậu bé có một thương hiệu thời trang tên “Max Alexander”, thương hiệu thời trang dành cho nam, nữ và trẻ em",
+      "submitted_count": null,
+      "qa_answer": "MAXALEXANDER",
+      "trake_events": null,
+      "notes": "Chung kết ca 1, qa-query-04. Đáp án phúc khảo 'QA-MAXALEXANDER-M08_V019-673100': một mốc 673100 ms → frame 20193 (fps_map 30.0), khoảng = mốc ±5 s. 9 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M08_V019",
+        "valid_intervals": [
+          {
+            "start": 20043,
+            "end": 20343
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 20193,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-qa-05",
+      "ordinal": 14,
+      "query_vi": "Hoạt động trong cảnh quay được tổ chức tại tỉnh nào? Cảnh nhiều người lớn đang hướng dẫn các bạn nhỏ làm tranh kim tuyến trong một phòng học. Một nhóm tình nguyện viên mặc áo có màu đỏ hoặc xanh dương đang chuẩn bị các vật dụng ở góc phòng. Chuyển ra khỏi không gian phòng học, ta tiếp tục thấy các tình nguyện viên chuẩn bị những phần quà để trao tặng cho người dân ở địa phương này. Đây là cảnh quay về hoạt động tình nguyện của thanh niên Thành phố Hồ Chí Minh tại nước bạn Lào.",
+      "submitted_count": null,
+      "qa_answer": "ATTAPEU",
+      "trake_events": null,
+      "notes": "Chung kết ca 1, qa-query-05. Đáp án phúc khảo 'QA-ATTAPEU-M08_V016-198000-243000': khoảng 198000–243000 ms → frame (fps_map 25.0). 45 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M08_V016",
+        "valid_intervals": [
+          {
+            "start": 4950,
+            "end": 6075
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 4950,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f1-trake-01",
+      "ordinal": 15,
+      "query_vi": "Cảnh quay bắt đầu khi camera đang focus một tay đua xe đạp (1) mặc áo có ba màu chủ đạo là vàng, xanh dương, đỏ, và bắt đầu zoom ra xa. E1: Một tay đua (2) tương tác và chào camera. Chọn khoảnh khắc lòng bàn tay anh này lộ rõ hoàn toàn cùng năm ngón tay trước ống kính E2: Tay đua đó (2) và tay đua (1) cùng nhau tạo hình trái tim bằng tay. Chọn khoảnh khắc tay hai anh vừa chạm nhau. E3: Một tay đua trong trang phục xanh lá cây (3) vượt qua tay đua (2). Chọn khoảnh khắc đầu tiên xe của (3) vượt hoàn toàn xe của (2). E4: Nhóm tay đua này vượt qua một bảng hiệu tên trường học. Chọn khoảnh khắc bảng tên này vừa thoát ra khỏi ống kính.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Một tay đua (2) tương tác và chào camera. Chọn khoảnh khắc lòng bàn tay anh này lộ rõ hoàn toàn cùng năm ngón tay trước ống kính",
+          "reference_frame_idx": 381199,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Tay đua đó (2) và tay đua (1) cùng nhau tạo hình trái tim bằng tay. Chọn khoảnh khắc tay hai anh vừa chạm nhau.",
+          "reference_frame_idx": 381570,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Một tay đua trong trang phục xanh lá cây (3) vượt qua tay đua (2). Chọn khoảnh khắc đầu tiên xe của (3) vượt hoàn toàn xe của (2).",
+          "reference_frame_idx": 381995,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Nhóm tay đua này vượt qua một bảng hiệu tên trường học. Chọn khoảnh khắc bảng tên này vừa thoát ra khỏi ống kính.",
+          "reference_frame_idx": 382561,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "Chung kết ca 1, trake-query-01. TRAKE: chấm theo hạng video (Tier 0); frame từng mốc lấy nguyên đáp án phúc khảo 'TR-S01_V011-381199,381570,381995,382561', chỉ để hiển thị.",
+      "task_type": "TRAKE",
+      "reference": {
+        "video_id": "S01-V011",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-tkis-23",
+      "ordinal": 16,
+      "query_vi": "Đoạn video camera giao thông từ trên cao tại một giao lộ, một công nhân vệ sinh chạy xe máy kéo theo một thùng rác vô tình làm một túi màu trắng rơi xuống đường. Chiếc túi nằm dưới đường cho đến một lúc sau có một phụ nữ mặc áo xanh dương, đội nón lá tới nhặt. Có một chiếc xe cứu thương chạy qua giao lộ trong khoảng thời gian này. Đây là camera giao thông tại giao lộ NKKN - Trần Quốc Toản",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 2, tkis-query-23. Đáp án phúc khảo 'N061-V002 @ 399200 ms': một mốc 399200 ms → frame 9980 (fps_map 25.0), khoảng = mốc ±5 s. 11 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "N061-V002",
+        "valid_intervals": [
+          {
+            "start": 9855,
+            "end": 10105
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 9980,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-tkis-24",
+      "ordinal": 17,
+      "query_vi": "Đoạn video camera giao thông từ trên cao tại một giao lộ, một chiếc xe buýt màu đỏ 2 tầng mui trần đang di chuyển ở nửa bên phải khung hình, tiến tới giao lộ và dừng đèn đỏ. Trên tầng 2 hiện đang có 4 hành khách. Ở góc giao lộ, bên trái khung hình, có một trạm xăng dầu petrolimex.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": null,
+      "notes": "Chung kết ca 2, tkis-query-24. Đáp án phúc khảo 'N025-V002 @ 482840 ms': một mốc 482840 ms → frame 12071 (fps_map 25.0), khoảng = mốc ±5 s. 10 khung index nằm trong khoảng.",
+      "task_type": "KIS",
+      "reference": {
+        "video_id": "N025-V002",
+        "valid_intervals": [
+          {
+            "start": 11946,
+            "end": 12196
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 12071,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-03",
+      "ordinal": 18,
+      "query_vi": "Hỏi đây là địa danh thuộc Tỉnh/Thành phố nào (hiện nay)? (Đáp án viết không dấu và không có khoảng trắng). Trong phân cảnh này là hình ảnh ở một làng quê có truyền thống 1 loại lá có liên quan đến một thức ăn thuộc tập tục văn hóa của người dân gian xưa. Phân cảnh này nằm trong chương trình Việt Nam đi là ghiền. Trong phân cảnh, có nhiều đoạn hình ảnh người phụ nữ mặc áo màu vàng đang hái lá. Từ Thành phố đi theo hướng Quốc lộ 61 đến ngôi làng này cách 13km Hình ảnh địa danh này có tên là Làng trầu Vị Thủy",
+      "submitted_count": null,
+      "qa_answer": "CANTHO",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-03. Đáp án phúc khảo 'QA-CANTHO-L27_V012-0-600000': khoảng 0–600000 ms → frame (fps_map 25.0). 566 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "L27_V012",
+        "valid_intervals": [
+          {
+            "start": 0,
+            "end": 15000
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 0,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-01",
+      "ordinal": 19,
+      "query_vi": "Địa danh này có tên là gì (tiếng Anh)? Trong video có cảnh cần cẩu lắp đặt một mô-đun đá cao hơn 15 mét lên công trình tôn giáo có kiến trúc đá chạm khắc tinh xảo, xen kẽ với nghi lễ được tổ chức bên trong. Trong phân cảnh có một mảnh ghép cao 17m và rộng 13,5m được hạ xuống đỉnh tháp. Phân cảnh này miêu tả hình ảnh một nhà thờ đang được xây dựng Đây là công trình kiến trúc được tham quan nhiều nhất tại Tây Ban Nha với 4 triệu vé được bán ra năm 2024 Sau khi lắp mảnh ghép cuối cùng, Địa danh này trở thành nhà thờ cao nhất thế giới với chiều cao tổng cộng 172,5m",
+      "submitted_count": null,
+      "qa_answer": "SAGRADAFAMILIA",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-01. Đáp án phúc khảo 'QA-SAGRADAFAMILIA-M04_V008-776000-832000': khoảng 776000–832000 ms → frame (fps_map 25.0). 59 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M04_V008",
+        "valid_intervals": [
+          {
+            "start": 19400,
+            "end": 20800
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 19400,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-07",
+      "ordinal": 20,
+      "query_vi": "Tốc độ lớn nhất người này đạt được (thể hiện trên chú thích) là bao nhiêu km/h? Cảnh quay liên tục từ trên cao, bắt đầu khi 1 nhóm các tay đua xe đạp đang tiến về 500m cuối cùng của chặng đua. Có thể thấy các tay đua gần như tạo thành 1 đường thẳng, người này nối đuôi người kia. Tay đua duy nhất mặc áo xanh lá giữ vững vị trí thứ nhì, và trên màn hình có một chú thích dạng văn bản gắn với người này, cho biết mã số, tốc độ và tên của anh ấy. Nhóm này có tổng cộng 7 tay đua xe đạp. Thông tin trong Chặng 4 Cúp Truyền hình Tp Hồ Chí Minh năm 2024 của tay đua R. Maikin",
+      "submitted_count": null,
+      "qa_answer": "46.0",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-07. Đáp án phúc khảo 'QA-46.0-L23_V004-71000-104000': khoảng 71000–104000 ms → frame (fps_map 25.0). 17 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "L23_V004",
+        "valid_intervals": [
+          {
+            "start": 1775,
+            "end": 2600
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1775,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-08",
+      "ordinal": 21,
+      "query_vi": "Đây là lễ hội thuộc tỉnh nào (hiện nay) của Việt Nam? (Đáp án viết không dấu và không có khoảng trắng) Bắt đầu với cảnh các loại trái cây được sắp xếp thành hình bản đồ Việt Nam. Tiếp theo, nhiều người đàn ông mặc áo trắng ngồi phía trước một tháp trái cây lớn. Sau đó xuất hiện một loại trái cây màu đỏ xen kẽ với một số loại trái cây có gai. Cuối cùng, hai cô gái mặc áo dài đang trang trí một tháp trái cây.",
+      "submitted_count": null,
+      "qa_answer": "DONGTHAP",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-08. Đáp án phúc khảo 'QA-DONGTHAP-M08_V025-267000-289000': khoảng 267000–289000 ms → frame (fps_map 25.0). 23 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M08_V025",
+        "valid_intervals": [
+          {
+            "start": 6675,
+            "end": 7225
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 6675,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-09",
+      "ordinal": 22,
+      "query_vi": "Đây là con vật gì? Một nhóm 5 người đang ngồi xung quanh một vật có chiều dài gần bằng chiều dài của một người trưởng thành, vật này dính đất xung quanh Người đàn ông mặc áo đỏ nằm bên cạnh để so sánh với chiều dài của vật này Vật này là xương đùi của một loại động vật Tên khoa học của loài động vật này là Dasosaurus tocantinensis.",
+      "submitted_count": null,
+      "qa_answer": "KHUNGLONG",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-09. Đáp án phúc khảo 'QA-KHUNGLONG-M05_V018-502000-540000': khoảng 502000–540000 ms → frame (fps_map 25.0). 45 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M05_V018",
+        "valid_intervals": [
+          {
+            "start": 12550,
+            "end": 13500
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 12550,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-10",
+      "ordinal": 23,
+      "query_vi": "Đây là bánh gì? Người đàn ông đổ bột để làm bánh, loại bánh này có màu nâu vàng, bột được đổ thành hình tròn, sau đó được rắc một ít nguyên liệu được làm từ thịt lên trên Phô mai và xúc xích cũng được cho lên trên bánh này Bánh được cuộn tròn bọc xúc xích lại Loại bánh này được một nhân vật mèo máy rất thích ăn",
+      "submitted_count": null,
+      "qa_answer": "BANHRAN",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-10. Đáp án phúc khảo 'QA-BANHRAN-L26_V331-108000-182000': khoảng 108000–182000 ms → frame (fps_map 25.0). 68 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "L26_V331",
+        "valid_intervals": [
+          {
+            "start": 2700,
+            "end": 4550
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 2700,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-13",
+      "ordinal": 24,
+      "query_vi": "Đây là làng hoa nào? Những chậu hoa đủ màu sắc được trồng trong chậu trên những chiếc giàn kim loại, bên dưới là mặt nước. Có 2 người đang ngồi trên một chiếc ghe di chuyển trong vườn hoa này, 1 người có vẻ đang cầm điện thoại để chụp ảnh/quay phim người còn lại. Trước đó ta còn thấy cảnh những khách du lịch khác đang đi bộ tham quan vườn hoa. Các chậu hoa được sắp xếp thành hình quốc kỳ Việt Nam và hình trái tim rất lớn.",
+      "submitted_count": null,
+      "qa_answer": "SADEC",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-13. Đáp án phúc khảo 'QA-SADEC-M02_V008-423000-463000': khoảng 423000–463000 ms → frame (fps_map 25.0). 42 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M02_V008",
+        "valid_intervals": [
+          {
+            "start": 10575,
+            "end": 11575
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 10575,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-12",
+      "ordinal": 25,
+      "query_vi": "Có bao nhiêu cái cánh gà đã được sử dụng trong quá trình chế biến món ăn này? Đầu tiên, người đầu bếp cắt bỏ phần chóp cánh gà. Tiếp theo ông ấy cắt mỗi cái cánh gà thành 2 miếng, tạo hình chúng như những chiếc đùi gà. Khi trộn xong xốt ướp, người đầu bếp nhúng từng miếng gà vào đó. Nước cốt dừa là một thành phần của hỗn hợp này. Sau đó, ông ấy còn cho gà vào tô dừa khô bào sợi để nó áo đều miếng gà trước khi chiên gà trong chảo dầu.",
+      "submitted_count": null,
+      "qa_answer": "4",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-12. Đáp án phúc khảo 'QA-4-L26_V234-46000-187000': khoảng 46000–187000 ms → frame (fps_map 25.0). 170 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "L26_V234",
+        "valid_intervals": [
+          {
+            "start": 1150,
+            "end": 4675
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 1150,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-qa-14",
+      "ordinal": 26,
+      "query_vi": "Đây là làng nào? Hoạt động có sự tham gia của giáo viên và sinh viên vẽ trang trí các mô hình thuyền thúng bằng những hình ảnh văn hóa địa phương cũng như nghề làm nước mắm, để chuẩn bị cho một lễ hội. Phân cảnh miêu tả một người giáo viên đang cầm bảng màu vẽ cảnh biển và các loại hải sản Phân cảnh nằm trong hoạt động Lễ hội diễn ra vào cuối Tháng 7 tại tỉnh Daklak. Hoạt động chuẩn bị cho Lễ hội Cầu ngư . Cô giáo mặc màu áo xanh cổ vịt là giáo viên Trường Tiểu học Nguyễn Chí Thanh, Phường Bình Kiến",
+      "submitted_count": null,
+      "qa_answer": "LONGTHUY",
+      "trake_events": null,
+      "notes": "Chung kết ca 2, qa-query-14. Đáp án phúc khảo 'QA-LONGTHUY-M09_V014-11310-13140': khoảng ghi trong đáp án là số frame (xem ghi chú bộ). 56 khung index nằm trong khoảng.",
+      "task_type": "QA",
+      "reference": {
+        "video_id": "M09_V014",
+        "valid_intervals": [
+          {
+            "start": 11310,
+            "end": 13140
+          }
+        ],
+        "interval_count": 1,
+        "reference_frame_idx": 11310,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-trake-02",
+      "ordinal": 27,
+      "query_vi": "Hướng dẫn chế biến một món ăn từ một loại trái cây và một loại hải sản. E1: Khoảnh khắc nhân vật nam tách thành công hạt khỏi phần thịt trắng của trái cây. E2: Khoảnh khắc nhân vật nữ đặt phần thịt trái cây cuối cùng đã được tách hạt lên đĩa màu xanh dương. E3: Khoảnh khắc nhân vật nam bắt đầu chuyển nguyên liệu hải sản từ đĩa trắng sang tô trong suốt. E4: Khoảnh khắc gia vị cuối cùng được cho vào tô thủy tinh trước khi bắt đầu trộn các nguyên liệu.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Khoảnh khắc nhân vật nam tách thành công hạt khỏi phần thịt trắng của trái cây.",
+          "reference_frame_idx": 2324,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Khoảnh khắc nhân vật nữ đặt phần thịt trái cây cuối cùng đã được tách hạt lên đĩa màu xanh dương.",
+          "reference_frame_idx": 2600,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Khoảnh khắc nhân vật nam bắt đầu chuyển nguyên liệu hải sản từ đĩa trắng sang tô trong suốt.",
+          "reference_frame_idx": 2833,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Khoảnh khắc gia vị cuối cùng được cho vào tô thủy tinh trước khi bắt đầu trộn các nguyên liệu.",
+          "reference_frame_idx": 3248,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "Chung kết ca 2, trake-query-02. TRAKE: chấm theo hạng video (Tier 0); frame từng mốc lấy nguyên đáp án phúc khảo 'TR-L26_V104-2324,2600,2833,3248', chỉ để hiển thị.",
+      "task_type": "TRAKE",
+      "reference": {
+        "video_id": "L26_V104",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    },
+    {
+      "id": "f2-trake-04",
+      "ordinal": 28,
+      "query_vi": "Đoạn video hướng dẫn cách nấu một món ăn với cá. E1: Đầu bếp cho gia vị nêm sẵn vào cá. Chọn khoảnh khắc đầu tiên gia vị chạm vào bề mặt cá. E2: Đầu bếp xào cá với sả. Chọn khoảnh khắc đầu tiên đầu bếp dùng đũa để lật mặt cá. E3: Đầu bếp nấu nước lẩu. Chọn khoảnh khắc đầu tiên miếng ớt cuối cùng nằm hoàn toàn trong nồi lẩu. E4: Đầu bếp cho các loại rau vào lẩu. Chọn khoảnh khắc đầu tiên bông so đũa được gắp vào chạm mặt nước.",
+      "submitted_count": null,
+      "qa_answer": null,
+      "trake_events": [
+        {
+          "event_id": "E1",
+          "description_vi": "Đầu bếp cho gia vị nêm sẵn vào cá. Chọn khoảnh khắc đầu tiên gia vị chạm vào bề mặt cá.",
+          "reference_frame_idx": 2276,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E2",
+          "description_vi": "Đầu bếp xào cá với sả. Chọn khoảnh khắc đầu tiên đầu bếp dùng đũa để lật mặt cá.",
+          "reference_frame_idx": 3500,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E3",
+          "description_vi": "Đầu bếp nấu nước lẩu. Chọn khoảnh khắc đầu tiên miếng ớt cuối cùng nằm hoàn toàn trong nồi lẩu.",
+          "reference_frame_idx": 4724,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        },
+        {
+          "event_id": "E4",
+          "description_vi": "Đầu bếp cho các loại rau vào lẩu. Chọn khoảnh khắc đầu tiên bông so đũa được gắp vào chạm mặt nước.",
+          "reference_frame_idx": 5095,
+          "valid_start_frame": null,
+          "valid_end_frame": null
+        }
+      ],
+      "notes": "Chung kết ca 2, trake-query-04. TRAKE: chấm theo hạng video (Tier 0); frame từng mốc lấy nguyên đáp án phúc khảo 'TR-L26_V402-2276,3500,4724,5095', chỉ để hiển thị.",
+      "task_type": "TRAKE",
+      "reference": {
+        "video_id": "L26_V402",
+        "valid_intervals": null,
+        "interval_count": 0,
+        "reference_frame_idx": null,
+        "status": "manual_reference",
+        "confidence": "team_appeal_answer",
+        "provenance": "team_final_appeal_document"
+      }
+    }
+  ]
+}

@@ -9,10 +9,11 @@ from app.evaluation.seed import SEEDS_DIR, import_all_seeds, import_seed
 ROUND1 = SEEDS_DIR / "round1-v2.json"
 ROUND2 = SEEDS_DIR / "round2-v1.json"
 ROUND3 = SEEDS_DIR / "round3-v1.json"
+FINAL = SEEDS_DIR / "final-v1.json"
 
-# 24 + 29 + 33, the current (highest-version) seed per round: round1-v3,
-# round2-v2, round3-v2 -- see import_all_seeds()'s _discover_current_seed_files().
-TOTAL_QUERIES = 86
+# 24 + 29 + 33 + 28, the current (highest-version) seed per round: round1-v3,
+# round2-v2, round3-v2, final-v1 -- see import_all_seeds()'s _discover_current_seed_files().
+TOTAL_QUERIES = 114
 
 
 def _count(conn, table : str) -> int :
@@ -23,16 +24,17 @@ def test_seed_files_are_present() :
     assert ROUND1.exists()
     assert ROUND2.exists()
     assert ROUND3.exists()
+    assert FINAL.exists()
 
 
 def test_import_all_seeds_registers_every_round(conn) :
     results = import_all_seeds(conn)
     versions = {result["dataset_version"] for result in results}
-    assert versions == {"round1-v3", "round2-v2", "round3-v2"}
+    assert versions == {"round1-v3", "round2-v2", "round3-v2", "final-v1"}
 
-    assert _count(conn, "evaluation_datasets") == 3
+    assert _count(conn, "evaluation_datasets") == 4
     assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
-    assert _count(conn, "evaluation_reference_sets") == 3
+    assert _count(conn, "evaluation_reference_sets") == 4
     assert _count(conn, "evaluation_references") == TOTAL_QUERIES
 
 
@@ -40,7 +42,7 @@ def test_import_is_idempotent(conn) :
     first = import_all_seeds(conn)
     second = import_all_seeds(conn)
     assert [r["query_count"] for r in first] == [r["query_count"] for r in second]
-    assert _count(conn, "evaluation_datasets") == 3
+    assert _count(conn, "evaluation_datasets") == 4
     assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
     assert _count(conn, "evaluation_references") == TOTAL_QUERIES
 
@@ -65,6 +67,9 @@ def test_task_counts_match_the_declared_breakdown(conn) :
     assert counts[("round3-v2", "KIS")] == 25
     assert counts[("round3-v2", "QA")] == 6
     assert counts[("round3-v2", "TRAKE")] == 2
+    assert counts[("final-v1", "KIS")] == 14
+    assert counts[("final-v1", "QA")] == 11
+    assert counts[("final-v1", "TRAKE")] == 3
 
 
 # Round 3 keeps the original question numbers as ordinals, so 34 is simply
@@ -115,6 +120,31 @@ def test_round3_intervals_come_from_the_submitted_span(conn) :
     assert row["interval_count"] == len(intervals) == 1
     # Khung mỏ neo là dòng 1 của file nộp, và phải nằm trong khoảng suy ra.
     assert intervals[0]["start"] <= row["reference_frame_idx"] <= intervals[0]["end"]
+
+
+# Chung kết chỉ có mốc từ tài liệu phúc khảo (không duyệt tay thành khoảng như
+# vòng 1–3): mốc phải nằm trong khoảng suy ra, và qa-query-14 giữ nguyên số frame
+# 11310–13140 chứ không bị đổi như ms.
+def test_final_intervals_come_from_the_appeal_answers(conn) :
+    import_seed(conn, FINAL)
+    rows = conn.execute(
+        """
+        SELECT q.query_key, q.task_type, r.video_id, r.valid_intervals_json,
+               r.reference_frame_idx, r.qa_answer
+        FROM evaluation_references r
+        JOIN evaluation_queries q ON q.id = r.query_id
+        """
+    ).fetchall()
+    by_key = {row["query_key"] : row for row in rows}
+    for row in rows :
+        if row["task_type"] == "TRAKE" :
+            continue
+        (interval,) = json.loads(row["valid_intervals_json"])
+        assert interval["start"] <= row["reference_frame_idx"] <= interval["end"]
+    assert json.loads(by_key["f2-qa-14"]["valid_intervals_json"]) == [{"start" : 11310, "end" : 13140}]
+    assert by_key["f2-qa-14"]["qa_answer"] == "LONGTHUY"
+    assert by_key["f1-tkis-10"]["video_id"] == "S01-V009"   # tên video S giữ dấu gạch ngang
+    assert by_key["f1-trake-01"]["video_id"] == "S01-V011"  # đáp án ghi S01_V011
 
 
 def test_intervals_are_persisted_as_json_lists(conn) :
