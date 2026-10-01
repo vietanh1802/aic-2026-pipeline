@@ -114,7 +114,7 @@ jobs:
         if: inputs.action == 'sync-and-verify'
         env:
           AIC_INSTANCE_ID: ${{ vars.AIC_API_INSTANCE_ID }}
-          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes/' }}
+          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes_LMNS_v002/' }}
           AIC_REMOTE_INDEX_DIR: ${{ vars.AIC_REMOTE_INDEX_DIR || '/opt/aic/indexes' }}
           AIC_REMOTE_APP_DIR: ${{ vars.AIC_REMOTE_APP_DIR || '/opt/aic/app' }}
           AIC_SYNC_DELETE: ${{ inputs.delete_removed }}
@@ -125,5 +125,5 @@ jobs:
           AIC_EXPECT_KEYFRAMES: ${{ inputs.expect_keyframes }}
           # Turns the check from "the three files agree with each other" into
           # "the process is serving exactly what S3 publishes".
-          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes/' }}
+          AIC_INDEX_S3_URI: ${{ vars.AIC_INDEX_S3_URI || 's3://aic2026-artifacts/indexes_LMNS_v002/' }}
         run: bash deploy/p6/verify-indexes.sh
