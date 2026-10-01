@@ -125,7 +125,13 @@ docker compose ps api
 # Best effort: the API is still warming up (90-145s) and the accounts are not
 # needed until a human logs in, so a failure here must not roll back a
 # perfectly good image. The smoke test is what decides that.
-if ! docker compose exec -T api python -m scripts.seed_team; then
+#
+# `< /dev/null` is load-bearing. This whole script reaches bash on its stdin
+# (`bash -se <<'REMOTE'`), and `docker compose exec -T` forwards stdin into the
+# container, so without it seed_team swallowed every line after itself:
+# seed_evaluation below never ran on any deploy, and nothing logged a failure.
+# if ! docker compose exec -T api python -m scripts.seed_team; then
+if ! docker compose exec -T api python -m scripts.seed_team < /dev/null; then
   echo "WARNING: seeding failed; run 'docker compose exec api python -m scripts.seed_team' by hand" >&2
 fi
 
@@ -134,7 +140,7 @@ fi
 # guard), the tables were already created by migrate() when the container came
 # up, and the benchmark is an admin tool nobody needs in the first minutes after
 # a deploy — a failure here must not roll back a good image.
-if ! docker compose exec -T api python -m scripts.seed_evaluation; then
+if ! docker compose exec -T api python -m scripts.seed_evaluation < /dev/null; then
   echo "WARNING: evaluation seeding failed; run 'docker compose exec api python -m scripts.seed_evaluation' by hand" >&2
 fi
 REMOTE
