@@ -129,6 +129,11 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
+          # The workflow file is part of the key so the CPU-torch change below
+          # starts a fresh cache instead of restoring the multi-GB CUDA one.
+          cache-dependency-path: |
+            backend/requirements.txt
+            .github/workflows/deploy.yml
 
       - name: Ruff
         run: |
@@ -136,8 +141,17 @@ jobs:
           python -m pip install ruff
           ruff check backend
 
+      # Old step installed requirements.txt alone, whose unpinned `torch` pulls
+      # the CUDA build from PyPI: several GB of wheels, a pip cache too large to
+      # save (5.3.14's run failed in "Post Run actions/setup-python" after every
+      # check had passed), and a different torch from the one the image runs.
+      #     python -m pip install -r backend/requirements.txt
+      # Install the same CPU build the Dockerfile pins first; requirements.txt
+      # then finds torch/torchvision already satisfied.
       - name: Import app.main
         run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.13.0+cpu torchvision==0.28.0+cpu
           python -m pip install -r backend/requirements.txt
           PYTHONPATH=backend python -c "import app.main"
 
