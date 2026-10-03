@@ -189,6 +189,7 @@ def create_run(
     created_by_user_id : int | None,
     translation_policy : str = DEFAULT_TRANSLATION_POLICY,
     config : RunConfig | None = None,
+    extra_configuration : dict[str, Any] | None = None,
 ) -> dict[str, Any] :
     """config = None is the legacy run: one Gemini translation policy, fixed models. A RunConfig
     makes a configured run (shared search, cached text); its legacy flat keys are still written so
@@ -226,7 +227,7 @@ def create_run(
         }
         strategy = STRATEGY_NAME
     else :
-        configuration = to_configuration(config)
+        configuration = {**to_configuration(config), **(extra_configuration or {})}
         strategy = STRATEGY_SHARED
     now = utcnow_iso()
     conn.execute("BEGIN IMMEDIATE")

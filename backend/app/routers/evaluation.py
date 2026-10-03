@@ -12,6 +12,8 @@ from app.auth.deps import require_admin
 from app.db.connection import get_db
 from app.evaluation import text_cache
 from app.evaluation.config import RunConfig
+from app.evaluation.presets import DEFAULT_DATASETS, preset_configs
+from app.evaluation.suite import cancel_suite, create_suite, resume_suite, suite_runs, suite_status
 from app.evaluation.repository import (
     create_run,
     find_active_run,
@@ -260,3 +262,91 @@ def resume(
     )
     enqueue_run(run_id)
     return {"run" : run}
+
+
+class SuiteCreate(BaseModel) :
+    name : str = "core"
+    # A preset name ("core", "extras", "core,extras") or an explicit list of RunConfig dicts.
+    preset : str | None = "core"
+    configs : list[dict[str, Any]] | None = None
+    datasets : list[str] = list(DEFAULT_DATASETS)
+
+
+@router.post("/suites", status_code = status.HTTP_202_ACCEPTED)
+def start_suite(
+    payload : SuiteCreate,
+    user : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    """Create every run of a suite and queue them; the single worker executes them in order."""
+    active = find_active_run(conn)
+    if (active is not None) :
+        raise HTTPException(
+            status_code = status.HTTP_409_CONFLICT,
+            detail = f"Evaluation run {active['id']} is already {active['status']}",
+        )
+    try :
+        configs = [_parse_config(c) for c in payload.configs] if payload.configs else preset_configs(payload.preset or "core")
+    except ValueError as exc :
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = str(exc))
+
+    report = text_cache.preflight(conn, configs, payload.datasets)
+    try :
+        text_cache.ensure_ready(report)
+    except text_cache.PreflightBlocked as exc :
+        raise HTTPException(status_code = 422, detail = exc.report)
+    try :
+        created = create_suite(conn, payload.name, configs, payload.datasets, int(user["id"]))
+    except ValueError as exc :
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = str(exc))
+
+    audit.record(
+        conn, user["id"], audit.EVALUATION_RUN_START, f"evaluation_suite:{created['suite_id']}",
+        f"Chạy suite {payload.name}: {len(created['run_ids'])} run", {"datasets" : payload.datasets},
+    )
+    for run_id in created["run_ids"] :
+        enqueue_run(run_id)
+    return {"suite" : created, "preflight" : text_cache.public_report(report)}
+
+
+@router.get("/suites/{suite_id}")
+def suite_detail(
+    suite_id : str,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    if (not suite_runs(conn, suite_id)) :
+        raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Evaluation suite not found")
+    return {"suite" : suite_status(conn, suite_id), "runs" : suite_runs(conn, suite_id)}
+
+
+@router.post("/suites/{suite_id}/cancel")
+def suite_cancel(
+    suite_id : str,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    if (not suite_runs(conn, suite_id)) :
+        raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Evaluation suite not found")
+    return {"cancelled" : cancel_suite(conn, suite_id), "suite" : suite_status(conn, suite_id)}
+
+
+@router.post("/suites/{suite_id}/resume", status_code = status.HTTP_202_ACCEPTED)
+def suite_resume(
+    suite_id : str,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    if (not suite_runs(conn, suite_id)) :
+        raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Evaluation suite not found")
+    active = find_active_run(conn)
+    if (active is not None) :
+        raise HTTPException(
+            status_code = status.HTTP_409_CONFLICT,
+            detail = f"Evaluation run {active['id']} is already {active['status']}",
+        )
+    resumed = resume_suite(conn, suite_id)
+    for run in suite_runs(conn, suite_id) :
+        if (run["status"] == "queued") :
+            enqueue_run(run["id"])
+    return {"resumed" : resumed, "suite" : suite_status(conn, suite_id)}

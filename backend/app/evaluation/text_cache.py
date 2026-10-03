@@ -283,10 +283,12 @@ def prefetch(
     gtx_fn : Callable[[str], tuple[str, float]] | None = None,
     expand_fn : Callable[[str, str], dict[str, Any]] | None = None,
     on_progress : Callable[[int, int], None] | None = None,
+    failures : list[tuple[NeededText, str]] | None = None,
 ) -> int :
     """Call the production function for each missing pair and record it. Runs before any
     retrieval; the first failure stops it with the pair named, so a run is never left half
-    fed. The 4.5 s per-provider pacing lives inside the production functions."""
+    fed. Pass `failures` (a list) to collect every failure instead and keep going. The 4.5 s
+    per-provider pacing lives inside the production functions."""
     if (gtx_fn is None) :
         from app.translation import translate_vi_to_en
 
@@ -303,34 +305,46 @@ def prefetch(
         if (key.digest() in done or lookup(conn, key) is not None) :
             continue
         done.add(key.digest())
-        label = f"{item.policy} {item.dataset}/{item.query_key}"
-        if (item.policy == "translate_gtx") :
-            try :
-                translated, _ms = gtx_fn(item.text)
-            except Exception as exc :
-                raise PrefetchError(f"{label}: {type(exc).__name__}: {exc}") from exc
-            store(conn, key, item.text, {"text" : translated}, "google_gtx", run_id)
-        elif (item.policy == "expand_gemini") :
-            result = expand_fn(item.text, item.task_type or "KIS")
-            if (result.get("error")) :
-                raise PrefetchError(f"{label}: {result['error']}")
-            if (result.get("provider") != "gemini") :
-                raise PrefetchError(
-                    f"{label}: Expand answered through {result.get('provider')!r}; only Gemini "
-                    f"outputs are recorded because another provider would change the arm"
-                )
-            output = {
-                "eng_query"        : result["eng_query"],
-                "check_units"      : list(result.get("check_units") or []),
-                "translated_query" : result.get("translated_query"),
-            }
-            store(conn, key, item.text, output, "gemini", run_id)
-        else :
-            raise PrefetchError(f"{label}: policy has nothing to fetch")
+        try :
+            _fetch_one(conn, item, key, run_id, gtx_fn, expand_fn)
+        except PrefetchError as exc :
+            if (failures is None) :
+                raise
+            # A caller that asked for the failures wants to see all of them, not the first.
+            failures.append((item, str(exc)))
+            continue
         fetched += 1
         if (on_progress is not None) :
             on_progress(index, len(missing))
     return fetched
+
+
+def _fetch_one(conn, item : NeededText, key : TextKey, run_id : int | None, gtx_fn, expand_fn) -> None :
+    """Call the production function for one missing pair and record it, or raise PrefetchError."""
+    label = f"{item.policy} {item.dataset}/{item.query_key}"
+    if (item.policy == "translate_gtx") :
+        try :
+            translated, _ms = gtx_fn(item.text)
+        except Exception as exc :
+            raise PrefetchError(f"{label}: {type(exc).__name__}: {exc}") from exc
+        store(conn, key, item.text, {"text" : translated}, "google_gtx", run_id)
+    elif (item.policy == "expand_gemini") :
+        result = expand_fn(item.text, item.task_type or "KIS")
+        if (result.get("error")) :
+            raise PrefetchError(f"{label}: {result['error']}")
+        if (result.get("provider") != "gemini") :
+            raise PrefetchError(
+                f"{label}: Expand answered through {result.get('provider')!r}; only Gemini "
+                f"outputs are recorded because another provider would change the arm"
+            )
+        output = {
+            "eng_query"        : result["eng_query"],
+            "check_units"      : list(result.get("check_units") or []),
+            "translated_query" : result.get("translated_query"),
+        }
+        store(conn, key, item.text, output, "gemini", run_id)
+    else :
+        raise PrefetchError(f"{label}: policy has nothing to fetch")
 
 
 TEXT_CACHE_DIR = Path(__file__).resolve().parent / "seeds" / "text_cache"

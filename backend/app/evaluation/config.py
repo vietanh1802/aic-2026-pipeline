@@ -51,6 +51,9 @@ class TextFilterConfig(BaseModel) :
 class QuerySubset(BaseModel) :
     task_types    : list[Literal["KIS", "QA", "TRAKE"]] | None = None
     exclude_flags : list[str] = []
+    # The first N queries of each dataset, for smoke tests. Part of the config hash, so a smoke run
+    # can never be mistaken for a full one.
+    limit_queries : int | None = Field(None, ge = 1)
 
 
 class RunConfig(BaseModel) :

@@ -50,4 +50,4 @@ def select_rows(rows, config) -> list :
         if (subset.exclude_flags and set(subset.exclude_flags) & set(flags_for(row["dataset_version"], row["query_key"], row["video_id"]))) :
             continue
         chosen.append(row)
-    return chosen
+    return chosen[ : subset.limit_queries]
