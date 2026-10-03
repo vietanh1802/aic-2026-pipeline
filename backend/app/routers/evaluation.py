@@ -4,11 +4,14 @@ import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, ValidationError
 
 from app import audit
 from app.auth.deps import require_admin
 from app.db.connection import get_db
+from app.evaluation import text_cache
+from app.evaluation.config import RunConfig
 from app.evaluation.repository import (
     create_run,
     find_active_run,
@@ -32,6 +35,68 @@ class EvaluationRunCreate(BaseModel) :
     dataset_version : str = "round1-v2"
     reference_set_version : str = "r1-manual-v2"
     translation_policy : str = DEFAULT_TRANSLATION_POLICY
+    # A RunConfig as a dict makes a configured run (shared search, cached text). Absent = the
+    # legacy run, unchanged.
+    config : dict[str, Any] | None = None
+
+
+class PreflightRequest(BaseModel) :
+    config : dict[str, Any]
+    dataset_versions : list[str]
+
+
+class TextCacheImport(BaseModel) :
+    jsonl : str
+
+
+def _parse_config(raw : dict[str, Any]) -> RunConfig :
+    try :
+        return RunConfig.model_validate(raw)
+    except ValidationError as exc :
+        raise HTTPException(
+            status_code = 422,
+            detail = exc.errors(include_url = False, include_context = False, include_input = False),
+        )
+
+
+def _preflight_or_422(conn : sqlite3.Connection, config : RunConfig, dataset_versions : list[str]) -> dict[str, Any] :
+    """The cache check that runs before a run exists: a missing text that needs an unconfigured key
+    is a 422 listing what is missing, never a failure in the middle of a run."""
+    report = text_cache.preflight(conn, [config], dataset_versions)
+    try :
+        text_cache.ensure_ready(report)
+    except text_cache.PreflightBlocked as exc :
+        raise HTTPException(status_code = 422, detail = exc.report)
+    return text_cache.public_report(report)
+
+
+@router.post("/preflight")
+def preflight(
+    payload : PreflightRequest,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    return {"preflight" : _preflight_or_422(conn, _parse_config(payload.config), payload.dataset_versions)}
+
+
+@router.get("/text-cache/export", response_class = PlainTextResponse)
+def text_cache_export(
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> str :
+    return text_cache.export_jsonl(conn)
+
+
+@router.post("/text-cache/import")
+def text_cache_import(
+    payload : TextCacheImport,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, int] :
+    try :
+        return text_cache.import_jsonl(conn, payload.jsonl)
+    except (ValueError, KeyError) as exc :
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = str(exc))
 
 
 @router.get("/translation-policies")
@@ -76,6 +141,9 @@ def start_run(
             status_code = status.HTTP_409_CONFLICT,
             detail = f"Evaluation run {active['id']} is already {active['status']}",
         )
+    config = _parse_config(payload.config) if payload.config is not None else None
+    if (config is not None) :
+        _preflight_or_422(conn, config, [payload.dataset_version])
     try :
         run = create_run(
             conn,
@@ -83,6 +151,7 @@ def start_run(
             payload.reference_set_version,
             int(user["id"]),
             translation_policy = payload.translation_policy,
+            config = config,
         )
     except ValueError as exc :
         raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail = str(exc))

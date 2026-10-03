@@ -5,7 +5,9 @@ import sqlite3
 from typing import Any
 
 from app.db.connection import utcnow_iso
-from app.evaluation.ensemble import MODELS, STRATEGY_NAME, TOP_K, TOP_M, USE_RERANK
+from app.evaluation.config import RunConfig, to_configuration
+from app.evaluation.ensemble import MODELS, STRATEGY_NAME, STRATEGY_SHARED, TOP_K, TOP_M, USE_RERANK
+from app.evaluation.flags import flags_for, select_rows
 from app.evaluation.scoring import INTERVAL_SCORING_POLICY, VIDEO_RANKING_POLICY
 from app.translation import (
     DEFAULT_TRANSLATION_POLICY,
@@ -95,6 +97,7 @@ def _result_payload(row : sqlite3.Row) -> dict[str, Any] :
         "error"                  : row["error"],
         "started_at"             : row["started_at"],
         "finished_at"            : row["finished_at"],
+        "extra"                  : _loads(row["extra_json"]),
     }
 
 
@@ -185,9 +188,19 @@ def create_run(
     reference_set_version : str,
     created_by_user_id : int | None,
     translation_policy : str = DEFAULT_TRANSLATION_POLICY,
+    config : RunConfig | None = None,
 ) -> dict[str, Any] :
-    selected_policy = normalize_translation_policy(translation_policy)
-    translator_id = translator_id_for_policy(selected_policy)
+    """config = None is the legacy run: one Gemini translation policy, fixed models. A RunConfig
+    makes a configured run (shared search, cached text); its legacy flat keys are still written so
+    the existing Benchmark page reads it."""
+    if (config is None) :
+        selected_policy = normalize_translation_policy(translation_policy)
+        translator_id = translator_id_for_policy(selected_policy)
+    else :
+        if (config.task_mode != "ensemble") :
+            raise ValueError(f"task_mode {config.task_mode} is not available yet")
+        selected_policy = config.text_policy
+        translator_id = f"cache:{config.text_policy}"
 
     dataset = conn.execute(
         "SELECT * FROM evaluation_datasets WHERE version = ?",
@@ -203,13 +216,18 @@ def create_run(
     if (reference_set is None) :
         raise ValueError(f"Unknown evaluation reference set: {reference_set_version}")
 
-    configuration = {
-        "models"             : MODELS,
-        "top_k"              : TOP_K,
-        "top_m"              : TOP_M,
-        "use_rerank"         : USE_RERANK,
-        "translation_policy" : selected_policy,
-    }
+    if (config is None) :
+        configuration = {
+            "models"             : MODELS,
+            "top_k"              : TOP_K,
+            "top_m"              : TOP_M,
+            "use_rerank"         : USE_RERANK,
+            "translation_policy" : selected_policy,
+        }
+        strategy = STRATEGY_NAME
+    else :
+        configuration = to_configuration(config)
+        strategy = STRATEGY_SHARED
     now = utcnow_iso()
     conn.execute("BEGIN IMMEDIATE")
     try :
@@ -223,7 +241,7 @@ def create_run(
             ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?)
             """,
             (
-                dataset["id"], reference_set["id"], STRATEGY_NAME,
+                dataset["id"], reference_set["id"], strategy,
                 VIDEO_RANKING_POLICY, INTERVAL_SCORING_POLICY, translator_id,
                 dataset["query_count"], created_by_user_id,
                 json.dumps(configuration, ensure_ascii = False), now, now,
@@ -245,6 +263,17 @@ def create_run(
         if (len(rows) != int(dataset["query_count"])) :
             raise RuntimeError("Evaluation reference set does not cover every dataset query")
 
+        # A configured run may cover a subset (task types, excluded flags). The count the run
+        # reports is the number of queries it will actually score.
+        flags_by_key : dict[str, list[str]] = {}
+        if (config is not None) :
+            keyed = [{**dict(row), "dataset_version" : dataset_version, "video_id" : row["video_id"]} for row in rows]
+            keep = {r["query_key"] for r in select_rows(keyed, config)}
+            rows = [row for row in rows if row["query_key"] in keep]
+            conn.execute("UPDATE evaluation_runs SET query_count = ? WHERE id = ?", (len(rows), run_id))
+        for row in rows :
+            flags_by_key[row["query_key"]] = flags_for(dataset_version, row["query_key"], row["video_id"])
+
         # Freeze the intervals and note onto each result row so a later edit to
         # the reference set cannot change what this run was scored against.
         conn.executemany(
@@ -252,14 +281,15 @@ def create_run(
             INSERT INTO evaluation_query_results (
                 run_id, query_id, query_key, ordinal, task_type, status,
                 query_vi, translator, reference_video,
-                reference_intervals_json, reference_frame_idx, reference_notes
-            ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                reference_intervals_json, reference_frame_idx, reference_notes, extra_json
+            ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     run_id, row["id"], row["query_key"], row["ordinal"], row["task_type"],
                     row["query_vi"], translator_id, row["video_id"],
                     row["valid_intervals_json"], row["reference_frame_idx"], row["notes"] or "",
+                    json.dumps({"flags" : flags_by_key[row["query_key"]]}) if config is not None else None,
                 )
                 for row in rows
             ],

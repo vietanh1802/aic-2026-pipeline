@@ -1,0 +1,10 @@
+{
+ "flag": "whole_video_interval",
+ "source": "final-v1 seed note: qa-query-03 answer interval 0-600000 ms covers the whole video, so its interval-level result is trivially a hit",
+ "queries": [
+  {
+   "dataset": "final-v1",
+   "query_key": "f2-qa-03"
+  }
+ ]
+}

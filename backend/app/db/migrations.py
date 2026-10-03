@@ -392,6 +392,36 @@ STEPS: tuple[tuple[int, tuple[str, ...]], ...] = (
             "ON dres_queries(evaluation_id, task_name, id)",
         ),
     ),
+    (
+        11,
+        (
+            # Record-and-replay cache for the text a benchmark query is searched with
+            # (app/evaluation/text_cache.py). The first run that needs a (policy, query)
+            # pair calls the real production function and stores the output here; every
+            # later run replays it, so an ablation arm differs from the baseline only in the
+            # component under test and a missing key can never fail a query mid-run.
+            # The key carries the model name and a hash of the exact prompt, so editing a
+            # prompt invalidates its entries instead of silently serving old text.
+            "CREATE TABLE evaluation_text_cache ("
+            "  id             INTEGER PRIMARY KEY,"
+            "  policy_id      TEXT NOT NULL,"
+            "  model          TEXT NOT NULL,"
+            "  prompt_sha256  TEXT NOT NULL,"
+            "  text_sha256    TEXT NOT NULL,"
+            "  task_type      TEXT NOT NULL DEFAULT '',"
+            "  query_norm     TEXT NOT NULL,"
+            "  output_json    TEXT NOT NULL,"
+            "  provider       TEXT,"
+            "  source_run_id  INTEGER,"
+            "  created_at     TEXT NOT NULL,"
+            "  UNIQUE(policy_id, model, prompt_sha256, text_sha256, task_type)"
+            ")",
+            # Per-result side data: label flags, the text actually searched with and its
+            # cache key, annotation blocks, per-query coverage. JSON so a new field is not
+            # a new migration.
+            "ALTER TABLE evaluation_query_results ADD COLUMN extra_json TEXT",
+        ),
+    ),
 )
 
 

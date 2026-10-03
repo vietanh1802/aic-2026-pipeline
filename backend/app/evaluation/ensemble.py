@@ -25,6 +25,7 @@ from app.translation import (
 
 
 STRATEGY_NAME = "ensemble_search_en_v1"
+STRATEGY_SHARED = "shared_search_v1"
 TOP_K = 100
 TOP_M = 50
 USE_RERANK = True
@@ -104,6 +105,60 @@ def evaluate_translated_ensemble_query(
         "interval_metrics" : interval_metrics,
         "timings" : {
             "translation_ms" : round(translation_ms, 3),
+            "retrieval_ms"   : round(retrieval_ms, 3),
+            "aggregation_ms" : round(aggregation_ms, 3),
+            "total_ms"       : round(total_ms, 3),
+        },
+    }
+
+
+def evaluate_with_config(
+    query_vi : str,
+    query_text : str,
+    reference_video : str,
+    valid_intervals : list[dict[str, int]] | None,
+    config,
+    *,
+    text_ms : float = 0.0,
+    search_fn = None,
+) -> dict[str, Any] :
+    """One query of a configured run: the text is already resolved (cache replay, no network), the
+    search goes through the shared per-model memo, scoring is the unchanged scoring.py.
+
+    The result has the same shape as evaluate_translated_ensemble_query so the runner writes it
+    with the same code. search_fn exists for tests; the default is shared_search.search."""
+    if (config.task_mode != "ensemble") :
+        raise NotImplementedError(f"task_mode {config.task_mode} is not available yet")
+    if (search_fn is None) :
+        from app.evaluation.shared_search import search as search_fn
+
+    retrieval_started = time.monotonic()
+    frame_results = search_fn(
+        query_text, list(config.models), config.top_k, config.top_m, config.rerank_mode
+    )
+    retrieval_ms = (time.monotonic() - retrieval_started) * 1000.0
+
+    aggregation_started = time.monotonic()
+    ranked_videos = rank_visual_videos(frame_results)
+    video_metrics = score_video_ranking(ranked_videos, reference_video)
+    interval_metrics = score_frame_intervals(frame_results, reference_video, valid_intervals)
+    aggregation_ms = (time.monotonic() - aggregation_started) * 1000.0
+
+    total_ms = float(text_ms) + retrieval_ms + aggregation_ms
+    return {
+        "strategy"                : STRATEGY_SHARED,
+        "video_ranking_policy"    : VIDEO_RANKING_POLICY,
+        "interval_scoring_policy" : INTERVAL_SCORING_POLICY,
+        "translator"              : f"cache:{config.text_policy}",
+        "query_vi"                : query_vi,
+        "query_en"                : query_text,
+        "configuration"           : config.model_dump(),
+        "frame_results"           : frame_results,
+        "ranked_videos"           : ranked_videos,
+        "video_metrics"           : video_metrics,
+        "interval_metrics"        : interval_metrics,
+        "timings" : {
+            "translation_ms" : round(text_ms, 3),
             "retrieval_ms"   : round(retrieval_ms, 3),
             "aggregation_ms" : round(aggregation_ms, 3),
             "total_ms"       : round(total_ms, 3),

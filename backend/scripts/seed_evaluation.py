@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.db.connection import get_conn
 from app.db.migrate import migrate
 from app.evaluation.seed import import_all_seeds
+from app.evaluation.text_cache import import_seed_caches
 
 
 def main() -> None :
@@ -18,6 +19,7 @@ def main() -> None :
     try :
         migrate(conn)
         results = import_all_seeds(conn)
+        cache = import_seed_caches(conn)
     finally :
         conn.close()
 
@@ -26,6 +28,7 @@ def main() -> None :
             f"Seeded {result['dataset_version']} / {result['reference_set_version']} "
             f"with {result['query_count']} queries"
         )
+    print(f"Text cache: {cache['inserted']} entries added, {cache['skipped']} already present")
 
 
 if (__name__ == "__main__") :

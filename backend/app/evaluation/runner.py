@@ -8,14 +8,20 @@ crash mid-query can never leave a half-scored row.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sqlite3
 import threading
 import time
-from typing import Any, Callable
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 from app.db.connection import get_conn, utcnow_iso
-from app.evaluation.ensemble import evaluate_translated_ensemble_query
+from app.evaluation import text_cache
+from app.evaluation.config import config_from_configuration
+from app.evaluation.coverage import provenance, video_coverage
+from app.evaluation.ensemble import evaluate_translated_ensemble_query, evaluate_with_config
 from app.evaluation.repository import get_results, get_run, update_counts
 from app.evaluation.scoring import summarize_run
 from app.translation import DEFAULT_TRANSLATION_POLICY, translate_vi_to_en
@@ -94,6 +100,7 @@ def _write_completed_result(
     result_id : int,
     query_en : str,
     result : dict[str, Any],
+    extra : dict[str, Any] | None = None,
 ) -> None :
     video = result["video_metrics"]
     interval = result["interval_metrics"]
@@ -130,6 +137,14 @@ def _write_completed_result(
                 utcnow_iso(), result_id,
             ),
         )
+        if (extra) :
+            # Merge into what create_run froze (the label flags) instead of replacing it.
+            current = conn.execute("SELECT extra_json FROM evaluation_query_results WHERE id = ?", (result_id,)).fetchone()
+            merged = {**(json.loads(current["extra_json"]) if current["extra_json"] else {}), **extra}
+            conn.execute(
+                "UPDATE evaluation_query_results SET extra_json = ? WHERE id = ?",
+                (json.dumps(merged, ensure_ascii = False), result_id),
+            )
         conn.execute("COMMIT")
     except Exception :
         conn.execute("ROLLBACK")
@@ -195,14 +210,23 @@ def process_run(
             or DEFAULT_TRANSLATION_POLICY
         )
 
+        config = config_from_configuration(run.get("configuration"))
+
         try :
             runtime = runtime_snapshot_fn()
+            if (config is not None) :
+                runtime["provenance"] = provenance(
+                    conn, run, text_cache.planned_digests(conn, config, run["dataset_version"])
+                )
         except Exception as exc :
             runtime = {"error" : f"{type(exc).__name__}: {exc}"}
         conn.execute(
             "UPDATE evaluation_runs SET runtime_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(runtime, ensure_ascii = False), utcnow_iso(), run_id),
         )
+
+        if (config is not None and not _prefetch_texts(conn, run, config)) :
+            return
 
         rows = conn.execute(
             """
@@ -244,15 +268,33 @@ def process_run(
             attempt_started = time.monotonic()
             query_en = None
             translation_ms = None
+            extra = None
             try :
-                if (translate_fn is None) :
+                if (config is not None) :
+                    # Replay only: the text was recorded before the first query, so retrieval
+                    # never reaches an LLM or the network.
+                    cached = text_cache.get_text(conn, config.text_policy, row["query_vi"], row["task_type"])
+                    query_en, translation_ms = cached.text, 0.0
+                    extra = {
+                        "text_policy"  : config.text_policy,
+                        "cache_digest" : cached.digest,
+                        "check_units"  : cached.check_units,
+                        "text_provider": cached.provider,
+                        "video_coverage" : video_coverage(row["reference_video"]),
+                    }
+                elif (translate_fn is None) :
                     query_en, translation_ms = translate_vi_to_en(
                         row["query_vi"], policy = translation_policy
                     )
                 else :
                     query_en, translation_ms = translate_fn(row["query_vi"])
 
-                if (evaluate_fn is None) :
+                if (evaluate_fn is None and config is not None) :
+                    result = evaluate_with_config(
+                        row["query_vi"], query_en, row["reference_video"], valid_intervals,
+                        config, text_ms = 0.0,
+                    )
+                elif (evaluate_fn is None) :
                     result = evaluate_translated_ensemble_query(
                         row["query_vi"], query_en, row["reference_video"], valid_intervals,
                         translation_ms = float(translation_ms),
@@ -263,7 +305,7 @@ def process_run(
                         row["query_vi"], query_en, row["reference_video"], valid_intervals,
                         translation_ms = float(translation_ms),
                     )
-                _write_completed_result(conn, int(row["id"]), query_en, result)
+                _write_completed_result(conn, int(row["id"]), query_en, result, extra)
             except Exception as exc :
                 total_ms = (time.monotonic() - attempt_started) * 1000.0
                 _write_failed_result(
@@ -298,6 +340,24 @@ def process_run(
             raise
     finally :
         conn.close()
+
+
+def _prefetch_texts(conn : sqlite3.Connection, run : dict[str, Any], config) -> bool :
+    """Fill the text cache for a configured run before any retrieval. Returns False after marking
+    the run failed when that is impossible (missing key, provider error), so the failure is one
+    clear message on the run instead of one error per query."""
+    report = text_cache.preflight(conn, [config], [run["dataset_version"]])
+    try :
+        text_cache.ensure_ready(report)
+        text_cache.prefetch(conn, report["_missing_items"], run["id"])
+    except (text_cache.PreflightBlocked, text_cache.PrefetchError) as exc :
+        now = utcnow_iso()
+        conn.execute(
+            "UPDATE evaluation_runs SET status = 'failed', error = ?, finished_at = ?, updated_at = ? WHERE id = ?",
+            (f"{type(exc).__name__}: {exc}", now, now, run["id"]),
+        )
+        return False
+    return True
 
 
 def _finalize(conn : sqlite3.Connection, run_id : int, final_status : str) -> None :
@@ -341,3 +401,58 @@ def enqueue_run(run_id : int) -> None :
             )
             _worker_thread.start()
     _run_queue.put(int(run_id))
+
+
+@contextmanager
+def _db_path_env(db_path : str | Path) -> Iterator[None] :
+    """get_conn() reads the path from AIC_DB_PATH on every call; point it at one file for a block."""
+    previous = os.environ.get("AIC_DB_PATH")
+    os.environ["AIC_DB_PATH"] = str(db_path)
+    try :
+        yield
+    finally :
+        if (previous is None) :
+            os.environ.pop("AIC_DB_PATH", None)
+        else :
+            os.environ["AIC_DB_PATH"] = previous
+
+
+def run_config_inprocess(config, dataset_slug : str, db_path : str | Path) -> dict[str, Any] :
+    """Run one (configuration, dataset) pair to completion in this process and return the run row.
+
+    For the stage-2 script and for tests: no HTTP, no worker thread, the same process_run the API
+    uses. Migrates the database, seeds the benchmark files (idempotent) and takes the newest
+    dataset version of the slug. Raises PreflightBlocked when a needed text is not cached and
+    needs a key that is not configured; fetchable texts are fetched by process_run before the
+    first query."""
+    from app.db.connection import get_conn
+    from app.db.migrate import migrate
+    from app.evaluation.repository import create_run
+    from app.evaluation.seed import import_all_seeds
+
+    with _db_path_env(db_path) :
+        conn = get_conn()
+        try :
+            migrate(conn)
+            import_all_seeds(conn)
+            text_cache.import_seed_caches(conn)
+            dataset = conn.execute(
+                "SELECT id, version FROM evaluation_datasets WHERE slug = ? ORDER BY id DESC LIMIT 1",
+                (dataset_slug,),
+            ).fetchone()
+            if (dataset is None) :
+                raise ValueError(f"Unknown dataset slug: {dataset_slug}")
+            reference_set = conn.execute(
+                "SELECT version FROM evaluation_reference_sets WHERE dataset_id = ? ORDER BY id DESC LIMIT 1",
+                (dataset["id"],),
+            ).fetchone()
+            text_cache.ensure_ready(text_cache.preflight(conn, [config], [dataset["version"]]))
+            run = create_run(conn, dataset["version"], reference_set["version"], None, config = config)
+        finally :
+            conn.close()
+        process_run(run["id"])
+        conn = get_conn()
+        try :
+            return get_run(conn, run["id"])
+        finally :
+            conn.close()
