@@ -14,6 +14,7 @@ Everything lands in <out>/<timestamp>/:
     results_long.csv      every configuration x benchmark x flag mode x slice
     rank_matrix_A.csv, rank_matrix_B.csv        reference video rank per query and configuration, flips vs baseline
     table_A.tex, table_A_noflag.tex, table_B.tex, table_B_noflag.tex      Configuration & Hit@1 & R@5 & R@10 & MRR
+    text_signal.csv       OCR / ASR annotation measures (only when cues are labelled in seeds/cues/)
     bootstrap_A.csv, bootstrap_B.csv            paired bootstrap against the baseline
 
     python scripts/run_ablation_suite.py --preset core --out ablation_out
@@ -205,6 +206,9 @@ def write_outputs(run_dir : Path, rows : list, say) -> None :
         (run_dir / f"table_{benchmark}.tex").write_text(report.latex_table(table, benchmark, "all"), encoding = "utf-8")
         (run_dir / f"table_{benchmark}_noflag.tex").write_text(
             report.latex_table(table, benchmark, "exclude_flagged"), encoding = "utf-8")
+    signal = report.text_signal_table(rows)
+    if (signal) :
+        (run_dir / "text_signal.csv").write_text(report.text_signal_csv(signal), encoding = "utf-8")
     say(f"wrote results_long.csv, rank matrices, bootstrap and LaTeX tables for {len(configs)} configurations (baseline: {baseline})")
 
 

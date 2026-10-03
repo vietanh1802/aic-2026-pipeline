@@ -28,7 +28,8 @@ def _core() -> list[RunConfig] :
     pairs = [_config(f"C{5 + i:02d} {a}+{b}", models = [a, b]) for i, (a, b) in enumerate(_PAIRS)]
     singles_off = [_config(f"C{9 + i:02d} {m} only, rerank off", models = [m], rerank_mode = "off") for i, m in enumerate(_ALL)]
     return [
-        _config("C01 baseline"),
+        # The baseline also carries the OCR and ASR annotation measures (annotation only: no ranking effect).
+        _config("C01 baseline", text_filter = {"sources" : ["ocr", "asr"]}),
         *singles,
         *pairs,
         _config("C08 rerank off", rerank_mode = "off"),

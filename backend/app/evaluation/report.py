@@ -60,6 +60,8 @@ def load_rows(conn : sqlite3.Connection, run_ids : Iterable[int]) -> list[dict[s
                 "flags"     : list((result.get("extra") or {}).get("flags") or []),
                 # Per-event TRAKE accuracy of this query, None unless a TRAKE-N run could score it.
                 "event_accuracy" : (((result.get("extra") or {}).get("trake") or {}).get("events") or {}).get("accuracy"),
+                "text_signal"   : (result.get("extra") or {}).get("text_signal"),
+                "text_coverage" : (result.get("extra") or {}).get("text_coverage"),
             })
     return rows
 
@@ -268,3 +270,81 @@ def paired_bootstrap(
 
 def bootstrap_csv(records : list[dict[str, Any]]) -> str :
     return _csv(["config", "benchmark", "metric", "n", "delta", "ci_low", "ci_high"], records)
+
+
+# ─── OCR and ASR annotation measures ───────────────────────────────────────
+
+TEXT_SIGNAL_FIELDS = (
+    "config", "benchmark", "kind", "variant", "slice", "n", "n_flagged_ref", "flag_rate_ref", "here_rate",
+    "in_interval", "precision", "base_rate", "rescue_potential",
+)
+
+
+def _has_coverage(row : dict[str, Any], variant : str) -> bool :
+    coverage = row.get("text_coverage") or {}
+    return any((coverage.get(s) or 0) > 0 for s in (("ocr", "asr") if variant == "both" else (variant,)))
+
+
+def text_signal_table(rows : list[dict[str, Any]], benchmarks : Iterable[str] = BENCHMARKS) -> list[dict[str, Any]] :
+    """Annotation-level measures per configuration that carries them, benchmark, cue kind and variant.
+
+    kind     confirmed (reviewed cues) or legacy_leaky (the seed's old filter_terms, an upper bound)
+    variant  ocr, asr or both (annotation only: none of them changes a ranking)
+    slice    all             every query of the benchmark, flagged or not
+             cue             queries with at least one cue of this kind for the variant's sources
+             cue+coverage    cue, and the loaded OCR or ASR artifacts cover the reference video
+
+    flag_rate_ref     share of queries whose reference video is annotated as matched
+    here_rate         of those, share whose matched frame is one of the returned frames
+    in_interval       of the flagged KIS/QA queries, share with a matched frame inside a valid interval
+    precision         flagged reference videos / flagged videos, over the queries that flagged any
+    base_rate         mean share of the result list's videos that are flagged
+    rescue_potential  share of queries where the reference is flagged but not ranked first: what an
+                      injection could fix. It is NOT a ranking effect of anything that shipped.
+    """
+    table : list[dict[str, Any]] = []
+    for config in configs_in_order(rows) :
+        mine = [r for r in rows if r["config"] == config and r.get("text_signal") is not None]
+        for benchmark in benchmarks :
+            scoped = [r for r in mine if _in_benchmark(r, benchmark)]
+            for kind in ("confirmed", "legacy_leaky") :
+                for variant in ("ocr", "asr", "both") :
+                    # No query has a cue of this kind for this variant (no confirmed cues yet): nothing to measure.
+                    if (not any((r["text_signal"].get(kind) or {}).get(variant) for r in scoped)) :
+                        continue
+                    for slice_name in ("all", "cue", "cue+coverage") :
+                        picked = []
+                        for r in scoped :
+                            block = (r["text_signal"].get(kind) or {}).get(variant)
+                            if (slice_name == "all") :
+                                # A query without a cue still counts, as unflagged.
+                                picked.append(block)
+                            elif (block is not None and (slice_name == "cue" or _has_coverage(r, variant))) :
+                                picked.append(block)
+                        if (not picked or (slice_name != "all" and not any(picked))) :
+                            continue
+                        table.append({"config" : config, "benchmark" : benchmark, "kind" : kind, "variant" : variant,
+                                      "slice" : slice_name, **_text_signal_metrics(picked)})
+    return table
+
+
+def _text_signal_metrics(blocks : list[dict[str, Any] | None]) -> dict[str, Any] :
+    n = len(blocks)
+    flagged = [b for b in blocks if b and b["ref_flagged"]]
+    with_flags = [b for b in blocks if b and b["n_flagged"] > 0]
+    interval_scored = [b for b in flagged if b["ref_in_interval"] is not None]
+    seen = [b for b in blocks if b and b["n_videos"] > 0]
+    return {
+        "n"                : n,
+        "n_flagged_ref"    : len(flagged),
+        "flag_rate_ref"    : len(flagged) / n,
+        "here_rate"        : sum(1 for b in flagged if b["ref_location"] == "here") / len(flagged) if flagged else None,
+        "in_interval"      : sum(1 for b in interval_scored if b["ref_in_interval"]) / len(interval_scored) if interval_scored else None,
+        "precision"        : len(flagged) / sum(b["n_flagged"] for b in with_flags) if with_flags else None,
+        "base_rate"        : sum(b["n_flagged"] / b["n_videos"] for b in seen) / len(seen) if seen else None,
+        "rescue_potential" : sum(1 for b in flagged if b["ref_rank"] is None or b["ref_rank"] > 1) / n,
+    }
+
+
+def text_signal_csv(table : list[dict[str, Any]]) -> str :
+    return _csv(list(TEXT_SIGNAL_FIELDS), table)

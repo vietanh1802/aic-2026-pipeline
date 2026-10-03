@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from app.db.connection import get_conn, utcnow_iso
-from app.evaluation import text_cache, trake
+from app.evaluation import cues, text_cache, text_measures, trake
 from app.evaluation.config import config_from_configuration
 from app.evaluation.coverage import provenance, video_coverage
 from app.evaluation.ensemble import evaluate_translated_ensemble_query, evaluate_with_config
@@ -227,6 +227,8 @@ def process_run(
 
         if (config is not None and not _prefetch_texts(conn, run, config)) :
             return
+        cue_map = cues.load_cues(run["dataset_version"]) if (config is not None and config.text_filter.sources) else {}
+        announced_annotation_error = False
 
         rows = conn.execute(
             """
@@ -327,6 +329,24 @@ def process_run(
                         row["query_vi"], query_en, row["reference_video"], valid_intervals,
                         translation_ms = float(translation_ms),
                     )
+                if (config is not None and extra is not None) :
+                    # Per-video coverage of the loaded OCR and ASR artifacts, so a later run on refreshed
+                    # data is measured against what was loaded then.
+                    extra["text_coverage"] = text_measures.coverage_for_video(row["reference_video"])
+                if (config is not None and config.text_filter.sources and trake_events is None) :
+                    # Annotation is a side feature on top of the visual result: a failure here is recorded
+                    # and must not fail the query, whose ranking is already scored.
+                    try :
+                        extra["text_signal"] = text_measures.annotate_query(
+                            result["frame_results"], cue_map.get(row["query_key"], {}), row["reference_video"],
+                            valid_intervals, result["video_metrics"]["reference_video_rank"],
+                            config.text_filter.asr_mode,
+                        )
+                    except Exception as annotation_error :
+                        extra["text_signal_error"] = f"{type(annotation_error).__name__}: {annotation_error}"
+                        if (not announced_annotation_error) :
+                            announced_annotation_error = True
+                            print(f"[evaluation] text signal annotation failed: {extra['text_signal_error']}")
                 _write_completed_result(conn, int(row["id"]), query_en, result, extra)
             except Exception as exc :
                 total_ms = (time.monotonic() - attempt_started) * 1000.0
