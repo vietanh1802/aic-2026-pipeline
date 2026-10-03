@@ -33,16 +33,29 @@ def _frame_idx(name : str | None) -> int | None :
         return None
 
 
-def coverage_for_video(video_id : str) -> dict[str, Any] :
-    """Keyframes of one video that have OCR text and ASR text in the loaded artifacts."""
+def _error(part : str, exc : Exception, **where : Any) -> dict[str, Any] :
+    return {"part" : part, **where, "error_type" : type(exc).__name__, "message" : str(exc)[ : 300]}
+
+
+def coverage_for_video(video_id : str, errors : list[dict[str, Any]] | None = None) -> dict[str, Any] :
+    """Keyframes of one video that have OCR text and ASR text in the loaded artifacts.
+
+    Each source is counted on its own. A source whose artifact is missing or unreadable (the N and S
+    videos have no OCR or ASR at all) gives None for that source and, when `errors` is passed, an entry
+    there, instead of raising: coverage is a side measure and must not cost a query its result."""
     from app import asr_text, ocr_search, preprocess
 
     names = preprocess.frames_for_video(video_id)
-    return {
-        "keyframes" : len(names),
-        "ocr"       : sum(1 for n in names if ocr_search.get_text(n)),
-        "asr"       : sum(1 for n in names if asr_text.get_text(n)),
-    }
+    coverage : dict[str, Any] = {"keyframes" : len(names)}
+    for source, module in (("ocr", ocr_search), ("asr", asr_text)) :
+        try :
+            coverage[source] = sum(1 for n in names if module.get_text(n))
+        except Exception as exc :
+            if (errors is None) :
+                raise
+            coverage[source] = None
+            errors.append(_error("coverage", exc, source = source))
+    return coverage
 
 
 def annotate_block(
@@ -99,12 +112,52 @@ def annotate_query(
     valid_intervals : list[dict[str, int]] | None,
     reference_rank : int | None,
     asr_mode : str = "substring",
+    errors : list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] :
-    """{kind: {variant: block}} for every cue kind the query has (confirmed, legacy_leaky)."""
-    return {
-        kind : {
-            variant : annotate_block(frame_results, terms, variant, reference_video, valid_intervals, reference_rank, asr_mode)
-            for variant in VARIANTS
-        }
-        for kind, terms in cues.items()
-    }
+    """{kind: {variant: block}} for every cue kind the query has (confirmed, legacy_leaky).
+
+    Each variant (ocr, asr, both) is annotated on its own. One that raises, for example because the
+    OCR or ASR files are missing for an N or S video, becomes None and an entry in `errors`; the
+    others still run. Without an `errors` list the exception propagates (for direct callers)."""
+    blocks : dict[str, dict[str, dict[str, Any] | None]] = {}
+    for kind, terms in cues.items() :
+        blocks[kind] = {}
+        for variant in VARIANTS :
+            try :
+                blocks[kind][variant] = annotate_block(
+                    frame_results, terms, variant, reference_video, valid_intervals, reference_rank, asr_mode)
+            except Exception as exc :
+                if (errors is None) :
+                    raise
+                blocks[kind][variant] = None
+                errors.append(_error("annotation", exc, kind = kind, variant = variant))
+    return blocks
+
+
+def measure_query(
+    frame_results : list[dict[str, Any]],
+    reference_video : str,
+    valid_intervals : list[dict[str, int]] | None,
+    reference_rank : int | None,
+    cues : dict[str, dict[str, list[str]]],
+    annotate : bool,
+    asr_mode : str = "substring",
+) -> tuple[dict[str, Any], list[dict[str, Any]]] :
+    """The side measures of one query: OCR/ASR coverage of the reference video and, when `annotate`,
+    the annotation blocks. Returns (what to merge into extra_json, errors).
+
+    This never raises. Annotation is a side feature on top of a ranking that is already scored, so a
+    failure per source is recorded under text_signal_errors and the query keeps its retrieval metrics."""
+    errors : list[dict[str, Any]] = []
+    extra : dict[str, Any] = {}
+    try :
+        extra["text_coverage"] = coverage_for_video(reference_video, errors)
+    except Exception as exc :
+        errors.append(_error("coverage", exc))
+    if (annotate) :
+        try :
+            extra["text_signal"] = annotate_query(
+                frame_results, cues, reference_video, valid_intervals, reference_rank, asr_mode, errors)
+        except Exception as exc :
+            errors.append(_error("annotation", exc))
+    return extra, errors

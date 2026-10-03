@@ -164,8 +164,15 @@ def main() -> int :
                 f"fix the cause and rerun with --resume {run_dir}")
         rows = report.load_rows(conn, [r["id"] for r in runs if r["status"] in ("completed", "partial")])
         write_outputs(run_dir, rows, say)
+        annotation_errors : dict[tuple, int] = {}
+        for row in rows :
+            key = (row["config"], row["dataset"])
+            annotation_errors[key] = annotation_errors.get(key, 0) + (row.get("annotation_errors") or 0)
+        if (sum(annotation_errors.values())) :
+            say(f"WARNING: {sum(annotation_errors.values())} OCR/ASR annotation or coverage errors were recorded "
+                f"(no query lost its ranking); see annotation_errors per run in provenance.json")
         write_provenance(run_dir, args, datasets, runs, timings, started_at,
-                         json.loads((run_dir / "suite.json").read_text(encoding = "utf-8")).get("verify"))
+                         json.loads((run_dir / "suite.json").read_text(encoding = "utf-8")).get("verify"), annotation_errors)
         conn.close()
     say("done" if not unfinished else "finished with unfinished runs")
     return 0 if not unfinished else 1
@@ -212,7 +219,7 @@ def write_outputs(run_dir : Path, rows : list, say) -> None :
     say(f"wrote results_long.csv, rank matrices, bootstrap and LaTeX tables for {len(configs)} configurations (baseline: {baseline})")
 
 
-def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at, verify) -> None :
+def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at, verify, annotation_errors) -> None :
     first_runtime = next((r["runtime"] for r in runs if r.get("runtime")), None)
     provenance = {
         "started_at"      : started_at.isoformat(),
@@ -233,6 +240,7 @@ def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at, 
                 "id" : r["id"], "config_name" : r["configuration"].get("config_name"), "dataset" : r["dataset_version"],
                 "status" : r["status"], "completed" : r["completed_count"], "failed" : r["failed_count"],
                 "seconds" : round(timings.get(r["id"], 0.0), 1), "config_hash" : r["configuration"].get("config_hash"),
+                "annotation_errors" : annotation_errors.get((r["configuration"].get("config_name"), r["dataset_version"]), 0),
                 "config" : r["configuration"].get("config"),
             }
             for r in runs

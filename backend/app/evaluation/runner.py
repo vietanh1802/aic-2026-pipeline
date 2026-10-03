@@ -330,23 +330,22 @@ def process_run(
                         translation_ms = float(translation_ms),
                     )
                 if (config is not None and extra is not None) :
-                    # Per-video coverage of the loaded OCR and ASR artifacts, so a later run on refreshed
-                    # data is measured against what was loaded then.
-                    extra["text_coverage"] = text_measures.coverage_for_video(row["reference_video"])
-                if (config is not None and config.text_filter.sources and trake_events is None) :
-                    # Annotation is a side feature on top of the visual result: a failure here is recorded
-                    # and must not fail the query, whose ranking is already scored.
-                    try :
-                        extra["text_signal"] = text_measures.annotate_query(
-                            result["frame_results"], cue_map.get(row["query_key"], {}), row["reference_video"],
-                            valid_intervals, result["video_metrics"]["reference_video_rank"],
-                            config.text_filter.asr_mode,
-                        )
-                    except Exception as annotation_error :
-                        extra["text_signal_error"] = f"{type(annotation_error).__name__}: {annotation_error}"
+                    # Coverage of the loaded OCR and ASR artifacts for the reference video, and the
+                    # annotation blocks. measure_query never raises: whatever fails is recorded under
+                    # text_signal_errors and the query keeps its ranking and its metrics.
+                    side, side_errors = text_measures.measure_query(
+                        result["frame_results"], row["reference_video"], valid_intervals,
+                        result["video_metrics"]["reference_video_rank"], cue_map.get(row["query_key"], {}),
+                        annotate = bool(config.text_filter.sources) and trake_events is None,
+                        asr_mode = config.text_filter.asr_mode,
+                    )
+                    extra.update(side)
+                    if (side_errors) :
+                        extra["text_signal_errors"] = side_errors
                         if (not announced_annotation_error) :
                             announced_annotation_error = True
-                            print(f"[evaluation] text signal annotation failed: {extra['text_signal_error']}")
+                            print(f"[evaluation] text signal side measure failed (recorded, query kept): "
+                                  f"{side_errors[0]['error_type']}: {side_errors[0]['message']}")
                 _write_completed_result(conn, int(row["id"]), query_en, result, extra)
             except Exception as exc :
                 total_ms = (time.monotonic() - attempt_started) * 1000.0

@@ -211,3 +211,55 @@ def test_replay_over_a_full_cache_makes_no_network_call(conn, monkeypatch) :
     ).fetchone()
     assert first["query_en"].startswith("EN::") and first["translation_ms"] == 0.0
     assert calls == []
+
+
+# ─── annotation is a side feature ──────────────────────────────────────────
+
+def test_annotation_failures_are_recorded_and_never_cost_a_query_its_ranking(conn, monkeypatch) :
+    from app import asr_text, ocr_search, text_signal
+    from app.evaluation import report
+
+    monkeypatch.setattr(evaluation_router, "enqueue_run", lambda run_id : None)
+    user = _admin(conn)
+    import_seed(conn, ROUND1)
+    _fill_cache(conn, "translate_gtx")
+
+    refs = [row["video_id"] for row in text_cache.query_rows(conn, "round1-v3")]
+    pool = list(dict.fromkeys(refs))
+
+    def stub_search(text, models, top_k, top_m, rerank_mode) :
+        return [{"video" : v, "name" : f"{v}-0001-1.jpg", "frame_idx" : 1, "distance" : 1.0} for v in pool]
+
+    def missing_files(*args, **kwargs) :
+        raise FileNotFoundError("no OCR file for this video")
+
+    monkeypatch.setattr(shared_search, "search", stub_search)
+    monkeypatch.setattr(text_signal, "annotate_request", missing_files)      # annotation raises
+    monkeypatch.setattr(preprocess, "frames_for_video", lambda video : [f"{video}-0001-1.jpg"])
+    monkeypatch.setattr(ocr_search, "get_text", missing_files)               # coverage raises for OCR
+    monkeypatch.setattr(asr_text, "get_text", lambda name : "")
+
+    request = evaluation_router.EvaluationRunCreate(
+        dataset_version = "round1-v3", reference_set_version = "r1-manual-v3",
+        config = {"text_policy" : "translate_gtx", "text_filter" : {"sources" : ["ocr", "asr"]}},
+    )
+    run = evaluation_router.start_run(request, user, conn)["run"]
+    process_run(run["id"], runtime_snapshot_fn = lambda : {"device" : "test"})
+
+    stored = conn.execute("SELECT status, completed_count, failed_count FROM evaluation_runs WHERE id = ?", (run["id"],)).fetchone()
+    assert (stored["status"], stored["completed_count"], stored["failed_count"]) == ("completed", 24, 0)
+
+    rows = report.load_rows(conn, [run["id"]])
+    assert len(rows) == 24
+    for row in rows :
+        assert row["status"] == "completed"
+        assert row["reference_video_rank"] == pool.index(row["reference_video"]) + 1      # the ranking is intact
+    assert report.metrics(rows)["hit_at_1"] == pytest.approx(sum(1 for r in refs if r == pool[0]) / 24)
+
+    errors = [e for row in rows for e in (row["extra"] or {}).get("text_signal_errors", [])]
+    assert {e["part"] for e in errors} == {"annotation", "coverage"}
+    assert {e["error_type"] for e in errors} == {"FileNotFoundError"}
+    assert {e["variant"] for e in errors if e["part"] == "annotation"} == {"ocr", "asr", "both"}
+    assert {e["source"] for e in errors if e["part"] == "coverage"} == {"ocr"}
+    # The report shows the count.
+    assert report.metrics(rows)["annotation_errors"] == len(errors) > 0
