@@ -77,6 +77,22 @@ free -g
 
 `AIC_COMMIT` is passed on every run below because an archive has no `.git`; provenance records it.
 
+## 3b. [EC2] Verify shared search against the live search (gates the full run)
+
+The suite fuses memoised per-model lists instead of calling `ensemble_search` once per configuration.
+That is only valid if both give the same ranking on the real indexes. This checks it for all 7 encoder
+subsets with rerank `per_model` and `off` over the first 5 queries of a dataset (frame order and every
+score within 1e-6), one PASS or FAIL line per subset and mode, and exits non-zero on any FAIL. It loads
+the indexes and models like the suite does, so it takes a few minutes.
+
+```bash
+docker exec -e AIC_DB_PATH=/opt/aic/data/ablation_out/scratch.db -e OMP_NUM_THREADS=4 -e MKL_NUM_THREADS=4 $CID   python /tmp/ablation/scripts/verify_shared_search.py --dataset round1-v3 --n 5
+```
+
+Paste back the 14 lines and the last line (`ALL PASS` or `FAILED`). `run_ablation_suite.py` runs the same
+check first on its own and refuses to start when it fails (`--skip-verify` bypasses it, and the
+provenance then records that it was skipped), so this step is for seeing the result early.
+
 ## 4. [EC2] Smoke test (about 5 to 10 minutes)
 
 Three queries per dataset, 13 configurations x 4 datasets = 52 runs of 3 queries. Most of the time is

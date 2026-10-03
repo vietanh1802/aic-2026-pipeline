@@ -47,6 +47,7 @@ from app.evaluation.presets import DEFAULT_DATASETS, preset_configs  # noqa: E40
 from app.evaluation.runner import _db_path_env, interrupt_incomplete_runs, process_run  # noqa: E402
 from app.evaluation.seed import import_all_seeds  # noqa: E402
 from app.evaluation.suite import create_suite, resume_suite, run_suite, suite_runs  # noqa: E402
+from app.evaluation.verify import seed_queries, verify_shared_search  # noqa: E402
 from app.version import COMMIT, VERSION  # noqa: E402
 
 
@@ -68,6 +69,8 @@ def main() -> int :
     parser.add_argument("--out", default = "ablation_out", help = "parent folder; a timestamped folder is created inside")
     parser.add_argument("--resume", default = None, help = "an existing <out>/<timestamp> folder to continue")
     parser.add_argument("--limit-queries", type = int, default = None, help = "first N queries of each dataset (smoke test)")
+    parser.add_argument("--skip-verify", action = "store_true", help = "do not check shared_search against ensemble_search first")
+    parser.add_argument("--verify-queries", type = int, default = 5, help = "queries used by that check")
     args = parser.parse_args()
 
     started_at = datetime.now()
@@ -101,6 +104,17 @@ def main() -> int :
             resumed = resume_suite(conn, suite_id)
             say(f"resume: suite {suite_id}, {interrupted} marked interrupted, {len(resumed)} runs back in the queue")
         else :
+            # shared_search is only valid if it reproduces ensemble_search on the real indexes.
+            # A full run on top of a broken equivalence would produce a table nobody can trust.
+            if (args.skip_verify) :
+                verify = {"skipped" : True}
+                say("WARNING: --skip-verify, shared_search was not checked against ensemble_search")
+            else :
+                say(f"verifying shared_search against ensemble_search on {datasets[0]} ({args.verify_queries} queries)")
+                verify = verify_shared_search(seed_queries(datasets[0], args.verify_queries), say)
+                if (not verify["ok"]) :
+                    say("REFUSING to start: shared_search does not reproduce ensemble_search (see the FAIL lines)")
+                    return 4
             configs = preset_configs(args.preset)
             for config in configs :
                 config.subset.limit_queries = args.limit_queries
@@ -119,8 +133,8 @@ def main() -> int :
             suite_id = created["suite_id"]
             (run_dir / "suite.json").write_text(json.dumps({
                 "suite_id" : suite_id, "preset" : args.preset, "datasets" : datasets,
-                "limit_queries" : args.limit_queries, "started_at" : started_at.isoformat(),
-            }, indent = 1), encoding = "utf-8")
+                "limit_queries" : args.limit_queries, "started_at" : started_at.isoformat(), "verify" : verify,
+            }, indent = 1, ensure_ascii = False), encoding = "utf-8")
             say(f"suite {suite_id}: {len(created['run_ids'])} runs created")
 
         timings : dict[int, float] = {}
@@ -149,7 +163,8 @@ def main() -> int :
                 f"fix the cause and rerun with --resume {run_dir}")
         rows = report.load_rows(conn, [r["id"] for r in runs if r["status"] in ("completed", "partial")])
         write_outputs(run_dir, rows, say)
-        write_provenance(run_dir, args, datasets, runs, timings, started_at)
+        write_provenance(run_dir, args, datasets, runs, timings, started_at,
+                         json.loads((run_dir / "suite.json").read_text(encoding = "utf-8")).get("verify"))
         conn.close()
     say("done" if not unfinished else "finished with unfinished runs")
     return 0 if not unfinished else 1
@@ -193,7 +208,7 @@ def write_outputs(run_dir : Path, rows : list, say) -> None :
     say(f"wrote results_long.csv, rank matrices, bootstrap and LaTeX tables for {len(configs)} configurations (baseline: {baseline})")
 
 
-def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at) -> None :
+def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at, verify) -> None :
     first_runtime = next((r["runtime"] for r in runs if r.get("runtime")), None)
     provenance = {
         "started_at"      : started_at.isoformat(),
@@ -208,6 +223,7 @@ def write_provenance(run_dir : Path, args, datasets, runs, timings, started_at) 
         "host"            : platform.node(),
         "aic_index_dir"   : os.environ.get("AIC_INDEX_DIR"),
         "gemini_key_configured" : text_cache.key_configured(),   # presence only, never the value
+        "verify_shared_search" : verify,
         "runs"            : [
             {
                 "id" : r["id"], "config_name" : r["configuration"].get("config_name"), "dataset" : r["dataset_version"],
