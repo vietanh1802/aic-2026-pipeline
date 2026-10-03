@@ -284,6 +284,7 @@ def prefetch(
     expand_fn : Callable[[str, str], dict[str, Any]] | None = None,
     on_progress : Callable[[int, int], None] | None = None,
     failures : list[tuple[NeededText, str]] | None = None,
+    stop_after_failures : int | None = None,
 ) -> int :
     """Call the production function for each missing pair and record it. Runs before any
     retrieval; the first failure stops it with the pair named, so a run is never left half
@@ -299,6 +300,7 @@ def prefetch(
         from app.expansion import expand_query as expand_fn
 
     fetched = 0
+    consecutive = 0
     done : set[str] = set()
     for index, item in enumerate(missing, start = 1) :
         key = make_key(item.policy, item.text, item.task_type)
@@ -312,7 +314,11 @@ def prefetch(
                 raise
             # A caller that asked for the failures wants to see all of them, not the first.
             failures.append((item, str(exc)))
+            consecutive += 1
+            if (stop_after_failures is not None and consecutive >= stop_after_failures) :
+                break   # the provider is refusing everything; the caller reports it and can resume
             continue
+        consecutive = 0
         fetched += 1
         if (on_progress is not None) :
             on_progress(index, len(missing))
