@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from app.db.connection import get_conn, utcnow_iso
-from app.evaluation import text_cache
+from app.evaluation import text_cache, trake
 from app.evaluation.config import config_from_configuration
 from app.evaluation.coverage import provenance, video_coverage
 from app.evaluation.ensemble import evaluate_translated_ensemble_query, evaluate_with_config
@@ -269,8 +269,22 @@ def process_run(
             query_en = None
             translation_ms = None
             extra = None
+            trake_events = None
             try :
-                if (config is not None) :
+                if (config is not None and config.task_mode == "trake_n") :
+                    # One text per event, each through the chosen policy on its own (replay only).
+                    trake_events = trake.reference_events(conn, run, row)
+                    cached_events = [
+                        text_cache.get_text(conn, config.text_policy, e["description_vi"], row["task_type"])
+                        for e in trake_events
+                    ]
+                    query_en, translation_ms = " | ".join(c.text for c in cached_events), 0.0
+                    extra = {
+                        "text_policy"    : config.text_policy,
+                        "cache_digests"  : [c.digest for c in cached_events],
+                        "video_coverage" : video_coverage(row["reference_video"]),
+                    }
+                elif (config is not None) :
                     # Replay only: the text was recorded before the first query, so retrieval
                     # never reaches an LLM or the network.
                     cached = text_cache.get_text(conn, config.text_policy, row["query_vi"], row["task_type"])
@@ -289,7 +303,15 @@ def process_run(
                 else :
                     query_en, translation_ms = translate_fn(row["query_vi"])
 
-                if (evaluate_fn is None and config is not None) :
+                if (evaluate_fn is None and trake_events is not None) :
+                    result = trake.evaluate_trake_n(
+                        row["query_vi"], [c.text for c in cached_events], row["reference_video"], trake_events, config,
+                    )
+                    extra["trake"] = result["trake"]
+                    if (result["trake"]["missing_labels"]) :
+                        print(f"[evaluation] {row['query_key']}: no per-event reference frame for "
+                              f"{result['trake']['missing_labels']}; scored at video level only")
+                elif (evaluate_fn is None and config is not None) :
                     result = evaluate_with_config(
                         row["query_vi"], query_en, row["reference_video"], valid_intervals,
                         config, text_ms = 0.0,

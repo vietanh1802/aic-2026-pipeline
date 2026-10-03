@@ -33,6 +33,7 @@ SLICES = [("all", "all"), *((t, "all") for t in TASKS), *(("all", p) for p in PR
 LONG_FIELDS = (
     "config", "benchmark", "flags", "task_type", "prefix", "n", "failed",
     "hit_at_1", "r_at_5", "r_at_10", "mrr", "median_rank", "interval_final_score",
+    "event_accuracy", "event_queries",
 )
 
 
@@ -57,6 +58,8 @@ def load_rows(conn : sqlite3.Connection, run_ids : Iterable[int]) -> list[dict[s
                 "benchmark" : benchmark_of(slug),
                 "prefix"    : str(result["reference_video"])[ : 1],
                 "flags"     : list((result.get("extra") or {}).get("flags") or []),
+                # Per-event TRAKE accuracy of this query, None unless a TRAKE-N run could score it.
+                "event_accuracy" : (((result.get("extra") or {}).get("trake") or {}).get("events") or {}).get("accuracy"),
             })
     return rows
 
@@ -68,6 +71,7 @@ def _in_benchmark(row : dict[str, Any], benchmark : str) -> bool :
 def metrics(rows : list[dict[str, Any]]) -> dict[str, Any] :
     video = _video_metrics(rows)
     kis_qa = [r for r in rows if r["task_type"] in ("KIS", "QA")]
+    scored_events = [r["event_accuracy"] for r in rows if r.get("event_accuracy") is not None]
     return {
         "n"                    : video["total"],
         "failed"               : video["failed"],
@@ -77,6 +81,9 @@ def metrics(rows : list[dict[str, Any]]) -> dict[str, Any] :
         "mrr"                  : video["mrr"],
         "median_rank"          : video["median_reference_rank"],
         "interval_final_score" : _interval_metrics(kis_qa)["final_score"] if kis_qa else None,
+        # TRAKE-N only: mean share of events within the tolerance, over the queries with every event labelled.
+        "event_accuracy"       : sum(scored_events) / len(scored_events) if scored_events else None,
+        "event_queries"        : len(scored_events) or None,
     }
 
 

@@ -5,7 +5,8 @@
 placement, text policy), never a full factorial. Every configuration runs on all four datasets.
 "extras" holds what is worth running if time allows; the expand_gemini rung needs GEMINI_API_KEY
 and is deliberately outside "core" so nothing else has to be rerun when the key appears.
-TRAKE-N and the text filter arms are separate stages and are not in these lists.
+"trake" runs TRAKE-N and its plain-ensemble comparison on the TRAKE queries. The text filter arms
+are not configurations: they annotate the stored frames of a run.
 """
 from __future__ import annotations
 
@@ -42,7 +43,16 @@ def _extras() -> list[RunConfig] :
     return [*pairs_off, _config("C17 expand_gemini text", text_policy = "expand_gemini")]
 
 
-PRESETS = {"core" : _core, "extras" : _extras}
+def _trake() -> list[RunConfig] :
+    """TRAKE-N (production path, K 20, g 60 s) against plain ensemble search over the whole query text,
+    on the TRAKE queries only, so the two sit side by side in one report."""
+    return [
+        _config("T01 TRAKE-N", task_mode = "trake_n"),
+        _config("T02 TRAKE queries, plain ensemble", subset = {"task_types" : ["TRAKE"]}),
+    ]
+
+
+PRESETS = {"core" : _core, "extras" : _extras, "trake" : _trake}
 
 
 def preset_configs(name : str) -> list[RunConfig] :

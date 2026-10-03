@@ -198,8 +198,6 @@ def create_run(
         selected_policy = normalize_translation_policy(translation_policy)
         translator_id = translator_id_for_policy(selected_policy)
     else :
-        if (config.task_mode != "ensemble") :
-            raise ValueError(f"task_mode {config.task_mode} is not available yet")
         selected_policy = config.text_policy
         translator_id = f"cache:{config.text_policy}"
 
