@@ -1,4 +1,5 @@
-import { apiFetch } from "./base";
+import { API_BASE_URL, apiFetch } from "./base";
+import { useAuthStore } from "../store/authStore";
 
 // The retrieval benchmark. Backend still lives under /api/admin/evaluation —
 // only the frontend module name changed, to keep it clearly apart from the
@@ -295,4 +296,114 @@ export function cancelRun(runId: number): Promise<{ run: BenchmarkRun }> {
 
 export function resumeRun(runId: number): Promise<{ run: BenchmarkRun }> {
   return apiFetch(`/api/admin/evaluation/runs/${runId}/resume`, { method: "POST" });
+}
+
+// ── ablation suites ─────────────────────────────────────────────────────────
+// A suite is a list of runs, one per (configuration, dataset). The report is
+// computed on the server from the runs that have results so far.
+
+export interface SuiteSummary {
+  suite_id: string;
+  name: string | null;
+  runs: number;
+  created_at: string;
+}
+
+export interface SuiteStatus {
+  suite_id: string;
+  runs: number;
+  by_status: Record<string, number>;
+  queries_total: number;
+  queries_done: number;
+  finished: boolean;
+}
+
+export interface SuiteDetail {
+  suite: SuiteStatus;
+  runs: BenchmarkRun[];
+}
+
+/** One slice of one configuration: pooled benchmark, flag mode, task type, video prefix. */
+export interface SuiteReportRow {
+  config: string;
+  benchmark: string;
+  flags: string;
+  task_type: string;
+  prefix: string;
+  n: number;
+  failed: number;
+  hit_at_1: number;
+  r_at_5: number;
+  r_at_10: number;
+  mrr: number;
+  median_rank: number | null;
+  interval_final_score: number | null;
+  event_accuracy: number | null;
+  event_queries: number | null;
+}
+
+export interface SuiteReport {
+  configs: string[];
+  table: SuiteReportRow[];
+}
+
+export interface SuiteSlice {
+  benchmark: string;
+  flags: string;
+  task_type: string;
+  prefix: string;
+}
+
+export function listSuites(): Promise<{ suites: SuiteSummary[] }> {
+  return apiFetch("/api/admin/evaluation/suites");
+}
+
+export function startSuite(payload: {
+  name: string;
+  preset: string;
+}): Promise<{ suite: { suite_id: string; run_ids: number[] } }> {
+  return apiFetch("/api/admin/evaluation/suites", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getSuite(suiteId: string): Promise<SuiteDetail> {
+  return apiFetch(`/api/admin/evaluation/suites/${suiteId}`);
+}
+
+export function cancelSuite(suiteId: string): Promise<{ suite: SuiteStatus }> {
+  return apiFetch(`/api/admin/evaluation/suites/${suiteId}/cancel`, { method: "POST" });
+}
+
+export function resumeSuite(suiteId: string): Promise<{ suite: SuiteStatus }> {
+  return apiFetch(`/api/admin/evaluation/suites/${suiteId}/resume`, { method: "POST" });
+}
+
+export function getSuiteReport(suiteId: string): Promise<SuiteReport> {
+  return apiFetch(`/api/admin/evaluation/suites/${suiteId}/report`);
+}
+
+/** The CSV or LaTeX text of a suite's report. apiFetch parses JSON, so this reads the body as text. */
+export async function getSuiteReportText(
+  suiteId: string,
+  format: "csv" | "latex",
+  slice: SuiteSlice
+): Promise<string> {
+  const { token } = useAuthStore.getState();
+  const query = new URLSearchParams({
+    format,
+    benchmark: slice.benchmark,
+    flags: slice.flags,
+    task_type: slice.task_type,
+    prefix: slice.prefix,
+  });
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/evaluation/suites/${suiteId}/report?${query.toString()}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+  if (!response.ok) {
+    throw new Error(`Report download failed (HTTP ${response.status})`);
+  }
+  return response.text();
 }

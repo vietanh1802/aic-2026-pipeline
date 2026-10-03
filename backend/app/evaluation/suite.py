@@ -137,3 +137,19 @@ def run_suite(
         if (finished["status"] == "failed") :
             break
     return done
+
+
+def list_suites(conn : sqlite3.Connection, limit : int = 30) -> list[dict[str, Any]] :
+    """Newest suites first: id, name, number of runs and when the first run was created."""
+    rows = conn.execute(
+        """
+        SELECT json_extract(configuration_json, '$.suite_id') AS suite_id,
+               json_extract(configuration_json, '$.suite_name') AS name,
+               COUNT(*) AS runs, MIN(created_at) AS created_at
+        FROM evaluation_runs
+        WHERE json_extract(configuration_json, '$.suite_id') IS NOT NULL
+        GROUP BY suite_id ORDER BY MIN(id) DESC LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]

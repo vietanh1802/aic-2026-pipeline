@@ -4,16 +4,17 @@ import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, ValidationError
 
 from app import audit
 from app.auth.deps import require_admin
 from app.db.connection import get_db
+from app.evaluation import report as suite_report_module
 from app.evaluation import text_cache
 from app.evaluation.config import RunConfig
 from app.evaluation.presets import DEFAULT_DATASETS, preset_configs
-from app.evaluation.suite import cancel_suite, create_suite, resume_suite, suite_runs, suite_status
+from app.evaluation.suite import cancel_suite, create_suite, list_suites, resume_suite, suite_runs, suite_status
 from app.evaluation.repository import (
     create_run,
     find_active_run,
@@ -350,3 +351,38 @@ def suite_resume(
         if (run["status"] == "queued") :
             enqueue_run(run["id"])
     return {"resumed" : resumed, "suite" : suite_status(conn, suite_id)}
+
+
+@router.get("/suites")
+def suites(
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any] :
+    return {"suites" : list_suites(conn)}
+
+
+@router.get("/suites/{suite_id}/report")
+def suite_report(
+    suite_id : str,
+    _ : Annotated[sqlite3.Row, Depends(require_admin)],
+    conn : Annotated[sqlite3.Connection, Depends(get_db)],
+    format : str = Query(default = "json", pattern = "^(json|csv|latex)$"),
+    benchmark : str = Query(default = "A"),
+    flags : str = Query(default = "all"),
+    task_type : str = Query(default = "all"),
+    prefix : str = Query(default = "all"),
+) -> Any :
+    """The suite's tables from the runs that have results so far (completed or partial).
+    json: every configuration x benchmark x flag mode x slice; csv: the same, long format;
+    latex: one table for the chosen slice with the paper header, best value per column in bold."""
+    runs = suite_runs(conn, suite_id)
+    if (not runs) :
+        raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Evaluation suite not found")
+    rows = suite_report_module.load_rows(conn, [r["id"] for r in runs if r["status"] in ("completed", "partial", "running", "cancelled")])
+    table = suite_report_module.long_table(rows)
+    if (format == "csv") :
+        return Response(suite_report_module.long_csv(table), media_type = "text/csv",
+                        headers = {"Content-Disposition" : f'attachment; filename="suite-{suite_id}.csv"'})
+    if (format == "latex") :
+        return PlainTextResponse(suite_report_module.latex_table(table, benchmark, flags, task_type, prefix))
+    return {"configs" : suite_report_module.configs_in_order(rows), "table" : table}

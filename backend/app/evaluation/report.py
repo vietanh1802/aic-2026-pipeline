@@ -50,6 +50,8 @@ def load_rows(conn : sqlite3.Connection, run_ids : Iterable[int]) -> list[dict[s
         config = (run["configuration"] or {}).get("config") or {}
         name = config.get("name") or (run["configuration"] or {}).get("config_name") or f"run {run_id}"
         for result in get_results(conn, run_id) :
+            if (result["status"] not in ("completed", "failed")) :
+                continue   # queued or running queries of a suite still in progress are not misses
             rows.append({
                 **result,
                 "config"    : name,

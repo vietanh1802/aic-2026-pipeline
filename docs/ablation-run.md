@@ -195,6 +195,13 @@ rm -rf /opt/aic/ablation /tmp/ablation-out-$SHA.tgz
   `flip@1`, `flip@5` (gained or lost against C01) for failure analysis.
 - `bootstrap_A.csv`, `bootstrap_B.csv`: difference to C01 per metric with a 95% interval, 2000
   resamples of queries, fixed seed. Paired: every configuration sees the same resampled queries.
+- `text_signal.csv` (only when cues are labelled in `seeds/cues/`): OCR and ASR annotation measures of the
+  baseline, per benchmark, cue kind (`confirmed`, or `legacy_leaky` = the seed's old filter_terms, an upper
+  bound), variant (ocr, asr, both) and slice (all queries, with a cue, with a cue and OCR/ASR coverage of the
+  reference video). They never change a ranking. Per-video OCR/ASR coverage is recorded in every run.
+- TRAKE: `--preset trake` runs T01 (TRAKE-N, K 20, g 60 s) and T02 (plain ensemble over the whole text) on
+  the 8 TRAKE queries; `event_accuracy` in `results_long.csv` is the share of events within 5 s of the
+  team's reference frame. Run it after `core`; `core` is unaffected.
 - `provenance.json`: full commit, VERSION, every configuration with its hash, seconds per run, per-model
   index coverage and library versions of the first run.
 - The text policy is `translate_gtx` for every configuration except C12 (raw Vietnamese). The labels are

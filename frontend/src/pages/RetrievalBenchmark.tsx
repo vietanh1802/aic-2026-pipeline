@@ -3,14 +3,21 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiRequestError } from "../api/base";
 import {
   cancelRun,
+  cancelSuite,
   createRun,
   getRun,
   getRunResult,
   getRunResults,
+  getSuite,
+  getSuiteReport,
+  getSuiteReportText,
   listDatasets,
   listRuns,
+  listSuites,
   listTranslationPolicies,
   resumeRun,
+  resumeSuite,
+  startSuite,
 } from "../api/retrievalBenchmark";
 import type {
   BenchmarkRun,
@@ -20,6 +27,11 @@ import type {
   QueryResultDetail,
   RunHeadline,
   RunStatus,
+  SuiteDetail,
+  SuiteReport,
+  SuiteReportRow,
+  SuiteSlice,
+  SuiteSummary,
   TaskType,
   TranslationPolicy,
 } from "../api/retrievalBenchmark";
@@ -422,6 +434,386 @@ function CompareSection({
 
 // ── page ──────────────────────────────────────────────────────────────────
 
+// ── ablation suite view ────────────────────────────────────────────────────
+
+const SUITE_PRESETS = ["core", "trake", "extras"];
+const SUITE_BENCHMARKS = [
+  { id: "A", label: "Benchmark A (rounds 1-3, 86)" },
+  { id: "B", label: "Benchmark B (final, 28)" },
+  { id: "round1", label: "Round 1" },
+  { id: "round2", label: "Round 2" },
+  { id: "round3", label: "Round 3" },
+];
+const SUITE_TASKS = ["all", "KIS", "QA", "TRAKE"];
+const SUITE_PREFIXES = ["all", "L", "M", "N", "S"];
+
+function signed(value: number, digits: number): string {
+  const text = value.toFixed(digits);
+  return value > 0 ? `+${text}` : text;
+}
+
+function saveText(text: string, name: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: "single" | "suite";
+  onChange: (view: "single" | "suite") => void;
+}) {
+  return (
+    <div className="flex gap-1 mb-4">
+      {(["single", "suite"] as const).map((item) => (
+        <button
+          key={item}
+          type="button"
+          onClick={() => onChange(item)}
+          className={`px-3 py-1 rounded-[7px] border text-[12.5px] font-semibold ${
+            view === item
+              ? "bg-proto-primary text-white border-proto-primary"
+              : "bg-white text-proto-muted border-proto-line"
+          }`}
+        >
+          {item === "single" ? "Single run" : "Ablation suite"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// One configuration of the real system per row, one component varied at a time. The numbers come
+// from the server's report, computed from the runs that have results so far.
+function AblationSuiteView() {
+  const [suites, setSuites] = useState<SuiteSummary[]>([]);
+  const [suiteId, setSuiteId] = useState("");
+  const [detail, setDetail] = useState<SuiteDetail | null>(null);
+  const [report, setReport] = useState<SuiteReport | null>(null);
+  const [preset, setPreset] = useState("core");
+  const [slice, setSlice] = useState<SuiteSlice>({
+    benchmark: "A",
+    flags: "all",
+    task_type: "all",
+    prefix: "all",
+  });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listSuites()
+      .then((response) => {
+        setSuites(response.suites);
+        setSuiteId((current) => current || (response.suites[0]?.suite_id ?? ""));
+      })
+      .catch((err) => setError(errorMessage(err)));
+  }, []);
+
+  // Same polling loop as the single-run view: refresh until the suite is finished.
+  useEffect(() => {
+    if (!suiteId) return;
+    let cancelled = false;
+    let done = false;
+    const refresh = async () => {
+      try {
+        const [next, nextReport] = await Promise.all([getSuite(suiteId), getSuiteReport(suiteId)]);
+        if (cancelled) return;
+        done = next.suite.finished;
+        setDetail(next);
+        setReport(nextReport);
+        setError(null);
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => {
+      if (!done) void refresh();
+    }, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [suiteId, reloadKey]);
+
+  const act = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await action();
+      setReloadKey((key) => key + 1);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doStart = () =>
+    act(async () => {
+      const created = await startSuite({ name: `${preset} ${new Date().toLocaleString()}`, preset });
+      setDetail(null);
+      setReport(null);
+      setSuiteId(created.suite.suite_id);
+      setSuites((await listSuites()).suites);
+    });
+
+  const download = (format: "csv" | "latex") =>
+    act(async () => {
+      const text = await getSuiteReportText(suiteId, format, slice);
+      saveText(
+        text,
+        `suite-${suiteId}-${slice.benchmark}.${format === "csv" ? "csv" : "tex"}`,
+        format === "csv" ? "text/csv" : "text/plain"
+      );
+    });
+
+  const status = detail?.suite ?? null;
+  const progress = status && status.queries_total > 0 ? status.queries_done / status.queries_total : 0;
+  const active = !!status && !status.finished;
+  const resumable =
+    !!status && ["interrupted", "partial", "cancelled", "failed"].some((key) => (status.by_status[key] ?? 0) > 0);
+
+  const rows: SuiteReportRow[] = (report?.table ?? []).filter(
+    (row) =>
+      row.benchmark === slice.benchmark &&
+      row.flags === slice.flags &&
+      row.task_type === slice.task_type &&
+      row.prefix === slice.prefix
+  );
+  const baseline = rows.find((row) => row.config.startsWith("C01")) ?? rows[0];
+  const best = (pick: (row: SuiteReportRow) => number) =>
+    rows.length ? Math.max(...rows.map(pick)) : 0;
+  const bestHit1 = best((row) => row.hit_at_1);
+  const bestR5 = best((row) => row.r_at_5);
+  const bestR10 = best((row) => row.r_at_10);
+  const bestMrr = best((row) => row.mrr);
+  const showEvents = rows.some((row) => row.event_accuracy !== null);
+
+  const cell = (value: number, base: number | undefined, isBest: boolean, scale: number, digits: number) => (
+    <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap">
+      <span className={isBest ? "font-bold text-proto-ink" : "text-proto-ink"}>
+        {(value * scale).toFixed(digits)}
+      </span>
+      {base !== undefined && value !== base && (
+        <span className="ml-1.5 text-[10.5px] text-proto-muted">{signed((value - base) * scale, digits)}</span>
+      )}
+    </td>
+  );
+
+  const selectClass = "w-full px-2 py-1.5 rounded-[7px] border border-proto-line bg-white text-[13px]";
+  const labelClass = "block text-[10px] font-bold uppercase tracking-wide text-proto-muted mb-1";
+
+  return (
+    <div>
+      <p className="text-[12.5px] text-proto-muted mt-0 mb-3">
+        Each row is one configuration of the real system with one component varied (encoders, rerank
+        placement, text policy, TRAKE-N). Deltas are against the baseline row. Labels are
+        team-annotated, not official.
+      </p>
+      {error && <p className="text-[#c64545] text-sm mb-3">{error}</p>}
+
+      <div className="border border-proto-line rounded-[10px] bg-white p-4 mb-4">
+        <div className="grid gap-3 min-[900px]:grid-cols-[1fr_1fr_auto]">
+          <label>
+            <span className={labelClass}>Suite</span>
+            <select
+              className={selectClass}
+              value={suiteId}
+              disabled={suites.length === 0}
+              onChange={(event) => {
+                setDetail(null);
+                setReport(null);
+                setSuiteId(event.target.value);
+              }}
+            >
+              {suites.length === 0 && <option value="">No suites yet</option>}
+              {suites.map((item) => (
+                <option key={item.suite_id} value={item.suite_id}>
+                  {item.name ?? item.suite_id} · {item.runs} runs · {formatDate(item.created_at)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className={labelClass}>New suite (preset)</span>
+            <select className={selectClass} value={preset} onChange={(event) => setPreset(event.target.value)}>
+              {SUITE_PRESETS.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-end gap-2">
+            <Button size="sm" onClick={() => void doStart()} loading={busy} disabled={active}>
+              Start suite
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void act(() => cancelSuite(suiteId))}
+              disabled={!active || busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void act(() => resumeSuite(suiteId))}
+              disabled={active || !resumable || busy}
+            >
+              Resume
+            </Button>
+          </div>
+        </div>
+        <p className="text-[11px] text-proto-muted mt-2 mb-0">
+          Runs share the live search backend with the app. Texts must be cached first; a missing cache
+          without the Gemini key is refused before anything runs.
+        </p>
+      </div>
+
+      {status && (
+        <div className="border border-proto-line rounded-[10px] bg-white p-4 mb-4">
+          <div className="flex items-center gap-3 flex-wrap mb-2">
+            <span className="text-[13px] text-proto-ink font-semibold">
+              {status.queries_done} / {status.queries_total} queries · {status.runs} runs
+            </span>
+            {Object.entries(status.by_status).map(([name, count]) => (
+              <span key={name} className="flex items-center gap-1 text-[12px] text-proto-muted">
+                <StatusBadge status={name as RunStatus} /> {count}
+              </span>
+            ))}
+          </div>
+          <ScoreBar value={progress} />
+        </div>
+      )}
+
+      <div className="border border-proto-line rounded-[10px] bg-white p-4">
+        <div className="grid gap-3 min-[900px]:grid-cols-4 mb-3">
+          <label>
+            <span className={labelClass}>Benchmark</span>
+            <select
+              className={selectClass}
+              value={slice.benchmark}
+              onChange={(event) => setSlice({ ...slice, benchmark: event.target.value })}
+            >
+              {SUITE_BENCHMARKS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className={labelClass}>Task type</span>
+            <select
+              className={selectClass}
+              value={slice.task_type}
+              onChange={(event) => setSlice({ ...slice, task_type: event.target.value })}
+            >
+              {SUITE_TASKS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className={labelClass}>Video prefix</span>
+            <select
+              className={selectClass}
+              value={slice.prefix}
+              onChange={(event) => setSlice({ ...slice, prefix: event.target.value })}
+            >
+              {SUITE_PREFIXES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className={labelClass}>Flagged queries</span>
+            <select
+              className={selectClass}
+              value={slice.flags}
+              onChange={(event) => setSlice({ ...slice, flags: event.target.value })}
+            >
+              <option value="all">Included</option>
+              <option value="exclude_flagged">Excluded (vfr_times, whole-video interval)</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px] border-collapse">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wide text-proto-muted border-b border-proto-line">
+                <th className="px-3 py-1.5">Configuration</th>
+                <th className="px-3 py-1.5 text-right">Hit@1</th>
+                <th className="px-3 py-1.5 text-right">R@5</th>
+                <th className="px-3 py-1.5 text-right">R@10</th>
+                <th className="px-3 py-1.5 text-right">MRR</th>
+                <th className="px-3 py-1.5 text-right">n</th>
+                {showEvents && <th className="px-3 py-1.5 text-right">Event acc.</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.config} className="border-b border-proto-line/60">
+                  <td className="px-3 py-1.5 text-proto-ink">
+                    {row.config}
+                    {row === baseline && <span className="ml-1.5 text-[10.5px] text-proto-muted">baseline</span>}
+                  </td>
+                  {cell(row.hit_at_1, row === baseline ? undefined : baseline?.hit_at_1, row.hit_at_1 === bestHit1, 100, 1)}
+                  {cell(row.r_at_5, row === baseline ? undefined : baseline?.r_at_5, row.r_at_5 === bestR5, 100, 1)}
+                  {cell(row.r_at_10, row === baseline ? undefined : baseline?.r_at_10, row.r_at_10 === bestR10, 100, 1)}
+                  {cell(row.mrr, row === baseline ? undefined : baseline?.mrr, row.mrr === bestMrr, 1, 3)}
+                  <td className="px-3 py-1.5 text-right font-mono text-proto-muted">
+                    {row.n}
+                    {row.failed > 0 && <span className="text-[#c64545]"> ({row.failed} failed)</span>}
+                  </td>
+                  {showEvents && (
+                    <td className="px-3 py-1.5 text-right font-mono">
+                      {row.event_accuracy === null ? "-" : pct(row.event_accuracy)}
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={showEvents ? 7 : 6} className="px-3 py-4 text-proto-muted">
+                    {suiteId ? "No results for this slice yet." : "Start a suite or pick one above."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center gap-2 mt-3">
+          <Button size="sm" variant="secondary" onClick={() => void download("csv")} disabled={!suiteId || busy}>
+            Download CSV
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => void download("latex")} disabled={!suiteId || busy}>
+            Download LaTeX
+          </Button>
+          <span className="text-[11px] text-proto-muted">
+            CSV is every slice; LaTeX is the slice selected above.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RetrievalBenchmark() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [policies, setPolicies] = useState<TranslationPolicy[]>([]);
@@ -440,6 +832,7 @@ export default function RetrievalBenchmark() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<"single" | "suite">("single");
 
   useEffect(() => {
     let cancelled = false;
@@ -682,6 +1075,16 @@ export default function RetrievalBenchmark() {
     URL.revokeObjectURL(url);
   };
 
+  if (view === "suite") {
+    return (
+      <div className="max-w-[1240px] mx-auto p-6 font-baloo">
+        <h2 className="text-2xl text-proto-ink leading-tight mb-3">Retrieval Benchmark</h2>
+        <ViewToggle view={view} onChange={setView} />
+        <AblationSuiteView />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="max-w-[1240px] mx-auto p-6 font-baloo">
@@ -706,6 +1109,7 @@ export default function RetrievalBenchmark() {
 
   return (
     <div className="max-w-[1240px] mx-auto p-6 font-baloo">
+      <ViewToggle view={view} onChange={setView} />
       <div className="flex items-start gap-4 mb-4 flex-wrap">
         <div>
           <h2 className="text-2xl text-proto-ink leading-tight">Retrieval Benchmark</h2>
