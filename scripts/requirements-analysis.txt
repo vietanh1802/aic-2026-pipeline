@@ -1,0 +1,8 @@
+# scripts/requirements-analysis.txt
+# For scripts/analyze_ablation.py and scripts/aggregate_error_labels.py only. Not used by the backend,
+# the Docker image or the CI backend check. scripts/dump_corpus_features.py needs nothing beyond the
+# standard library.
+numpy>=1.26
+matplotlib>=3.8
+# Optional: adds dropdown validation to error_labeling_sheet.xlsx (the CSV is always written).
+openpyxl>=3.1
