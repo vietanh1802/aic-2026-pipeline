@@ -30,7 +30,7 @@ Dataset scale handled by the deployed system: **1,480 videos, 983,931 keyframes*
  │           ├─ BEiT-3 / CLIP ViT-bigG /       │   │   video · rank answers · submit  │
  │           │  SigLIP2 image embeddings       │   │            ▲  REST               │
  │           ├─ OCR (Vintern-1B-v3.5)          │──▶│  FastAPI backend                 │
- │           └─ ASR (Whisper large-v3)         │   │   search · collaboration ·       │
+ │           └─ ASR (NVIDIA Parakeet)          │   │   search · collaboration ·       │
  │                                             │   │   evaluation   (SQLite)          │
  │ ⇒ 3 FAISS indexes · OCR/ASR text · metadata │   │   indexes loaded in RAM, CPU only│
  └────────────────────────────────────────────┘   └──────────────────────────────────┘
@@ -48,7 +48,7 @@ Dataset scale handled by the deployed system: **1,480 videos, 983,931 keyframes*
    exact-search FAISS index (`IndexFlatIP`, cosine on L2-normalised vectors):
    BEiT-3 Large (1024-d), OpenCLIP ViT-bigG-14 (1280-d), SigLIP2-giant (1536-d).
 4. **OCR** of on-screen text with Vintern-1B-v3.5 (Vietnamese VLM).
-5. **ASR** with Whisper large-v3, split into overlapping 60 s windows.
+5. **ASR** with NVIDIA Parakeet, split into overlapping 60 s windows.
 
 ### Retrieval methods
 
