@@ -162,6 +162,11 @@ def main() -> int :
         if (unfinished) :
             say(f"{len(unfinished)} runs did not finish ({', '.join(sorted({r['status'] for r in unfinished}))}); "
                 f"fix the cause and rerun with --resume {run_dir}")
+        # runner.process_run records a provenance failure (for example coverage.py naming a preprocess
+        # global that no longer exists) as {"error": ...} in runtime_json and carries on; say so here.
+        no_provenance = [(r["id"], r["runtime"]["error"]) for r in runs if (r.get("runtime") or {}).get("error")]
+        if (no_provenance) :
+            say(f"WARNING: provenance failed for {len(no_provenance)} runs, first: run {no_provenance[0][0]}: {no_provenance[0][1]}")
         rows = report.load_rows(conn, [r["id"] for r in runs if r["status"] in ("completed", "partial")])
         write_outputs(run_dir, rows, say)
         annotation_errors : dict[tuple, int] = {}
