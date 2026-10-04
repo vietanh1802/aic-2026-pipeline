@@ -4,10 +4,14 @@ The suite runs as a SEPARATE PROCESS inside the existing API container. No resta
 push to `staging`. It reads the same indexes (the container already mounts `/opt/aic/indexes` read-only)
 and writes to its own SQLite file under `/opt/aic/data/ablation_out/`, never to `app.db`.
 
-**It shares the 8 CPUs and about 16 GB more RAM with live search.** A second copy of the indexes and
-models is loaded for it. Do not run it during a live round. The commands below limit it to 4 threads so
-live search keeps some CPU; remove the two thread variables to let it use all 8 (faster, slower live
-search). Check memory first: `free -g` must show more than 24 GB available.
+**It shares the 8 CPUs and the RAM with live search, and the memory margin is thin.** Measured on the
+instance (CPU only, 8 vCPU, 61 GB, no swap): about 29 GB is available while the live API runs, and the
+suite loads a second copy of the indexes and models into that. With no swap, running out means the kernel
+kills a process, possibly the live API. Watch available memory (`free -g`, the `available` column) and
+stop the suite if it drops below about 6 GB: `docker exec $CID pkill -f run_ablation_suite` (a
+`--resume` continues it later). Do not run it during a live round. The commands below limit it to 4
+threads so live search keeps some CPU; remove the two thread variables to let it use all 8 (faster,
+slower live search). Check memory first: `free -g` must show more than 24 GB available.
 
 Where each command runs is marked **[PC]** (your PowerShell, in `C:\Users\hongp\Downloads\aic-ablation`)
 or **[EC2]** (an SSM session on the API host, as root).
@@ -15,6 +19,12 @@ or **[EC2]** (an SSM session on the API host, as root).
 ## 0. Before you start
 
 - The branch must be committed locally. Nothing is pushed.
+- The API runs in the container `api` and listens on port 8000 inside it; use `docker exec`, not a public
+  URL. Health and memory from the host shell: `export CID=$(docker compose -f /opt/aic/app/docker-compose.yml ps -q api)`,
+  then `docker exec $CID python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode())"`
+  and `free -g`. Measured on the live endpoint, warm, one query: all three encoders with rerank 1.58 s,
+  BEiT-3 alone 0.28 s, CLIP alone 0.76 s, SigLIP2 alone 0.54 s, all three with rerank off 1.02 s. The first
+  call after a restart took 12.9 s (cold).
 - The text cache must be full or fetchable. `translate_gtx` calls Google Translate: from the PC used
   for development it answered **HTTP 429** on the first call today, and EC2 may be blocked as well. If a
   call fails, run the prefetch script from a machine that can reach Google (step 1b) and ship the file
@@ -47,7 +57,9 @@ cache full and makes no network call.
 
 ## 2. [PC] Hand the archive to EC2 with a presigned URL
 
-A presigned URL needs no S3 permission on the instance role (the role may only read `indexes*`).
+A presigned URL needs no S3 permission on the instance role. The role works with the AWS CLI (account and
+role were confirmed with `aws sts get-caller-identity`), but a write to the artifacts bucket has not been
+tested from the instance, so this guide does not depend on it.
 
 ```powershell
 $bucket = "aic2026-artifacts"
@@ -118,9 +130,16 @@ database inside the run folder, and this makes sure nothing can reach `/opt/aic/
 
 ## 5. [EC2] The full run
 
-Detached, so it survives the session closing. Expect roughly 35 to 70 minutes with 8 threads and more
-with 4 (estimate: about 1 to 2.3 s per query and model, 114 queries, 3 text policies; the script prints
-the real seconds per query and a running ETA after every run).
+Detached, so it survives the session closing.
+
+Time. Measured: the warm single-query timings in section 0 (1.58 s for all three encoders with rerank). A
+derived estimate, NOT measured, for the core preset is roughly 15 to 25 minutes. It comes from: 228 text
+variants (114 queries x 2 texts, `translate_gtx` and `raw_vi`) each searched once per model because the
+per-model searches are shared across the arms (228 x about 1.6 s is about 6 minutes), plus loading a
+second copy of the indexes (a few minutes), plus the `after_fusion` arm, which reranks a candidate pool
+under every model (a few minutes), plus the OCR/ASR annotation and per-run overhead. With 4 threads and a
+live API competing it is at the slower end. The script prints the real seconds per query and a running ETA
+after every run; trust that over this paragraph.
 
 ```bash
 docker exec -d -e AIC_COMMIT=$SHA -e AIC_DB_PATH=/opt/aic/data/ablation_out/scratch.db \
@@ -131,8 +150,12 @@ docker exec -d -e AIC_COMMIT=$SHA -e AIC_DB_PATH=/opt/aic/data/ablation_out/scra
 tail -n 5 /opt/aic/data/ablation_out/full.out
 ```
 
-Optional extras (pairs with rerank off, and the `expand_gemini` rung, which needs `GEMINI_API_KEY` in
-the container environment) go in a second run: `--preset extras`. Nothing from `core` is rerun.
+`--preset trake` (T01 TRAKE-N and T02 plain ensemble on the 8 TRAKE queries) is a SEPARATE second
+invocation of the same command with `--preset trake` in place of `--preset core`, started after the core run
+has finished (the runner allows one run at a time, and the memory margin above does not allow two copies of
+the suite). It writes its own run folder. Optional extras (pairs with rerank off, and the `expand_gemini`
+rung, which needs `GEMINI_API_KEY` in the container environment) are likewise a further invocation:
+`--preset extras`. Nothing from `core` is rerun.
 
 To stop it: `docker exec $CID pkill -f run_ablation_suite`. To continue, pass the folder it created:
 
@@ -154,8 +177,8 @@ tar czf /tmp/ablation-out-$SHA.tgz --exclude=ablation.db --exclude=scratch.db <t
 ls -la /tmp/ablation-out-$SHA.tgz
 ```
 
-**A. S3, from the instance** (works only if the instance role may write the bucket; if it answers
-AccessDenied use B):
+**A. S3, from the instance** (not tested: the role is known to work with the CLI, but a write to the
+artifacts bucket has not been tried; if it answers AccessDenied use B):
 
 ```bash
 aws s3 cp /tmp/ablation-out-$SHA.tgz s3://aic2026-artifacts/ablation/out/ablation-out-$SHA.tgz
