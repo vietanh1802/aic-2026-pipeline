@@ -169,12 +169,31 @@ recreated by a deploy. The copied code in `/tmp/ablation` does not: repeat step 
 
 ## 6. Get the output back
 
-Output is small once the database is left out (CSVs, LaTeX, provenance, log).
+The offline analysis (scripts/analyze_ablation.py) needs `ablation.db`, so the archive includes it. The
+database holds every query's ranked frames and is roughly 60 to 100 MB raw (a synthetic run of the same
+size is 62 MB), several times smaller compressed. Corpus features come first, because the analysis uses them
+(statistics only, no models are loaded; it parses the full keyframe metadata, about 3 GB of RAM):
+
+```bash
+docker exec -e AIC_INDEX_DIR=/opt/aic/indexes $CID python /tmp/ablation/scripts/dump_corpus_features.py   --index-dir /opt/aic/indexes --out /opt/aic/data/ablation_out/features
+```
+
+It prints the totals for paper section 3.1 (videos, hours as a lower bound, keyframes, shots, keyframes per
+shot, per prefix) and writes videos.csv, shots.csv, frames_ref.csv, index_files.csv and corpus_totals.json.
+Then pack the run folder AND the features folder (keep the `ablation.db-wal` and `-shm` files if present,
+they are part of the database; leave out only `scratch.db`):
 
 ```bash
 cd /opt/aic/data/ablation_out
-tar czf /tmp/ablation-out-$SHA.tgz --exclude=ablation.db --exclude=scratch.db <timestamp>
+tar czf /tmp/ablation-out-$SHA.tgz --exclude=scratch.db <timestamp> features
 ls -la /tmp/ablation-out-$SHA.tgz
+```
+
+On the PC, unpack and analyse (the analysis never touches the live system):
+
+```powershell
+pip install -r scriptsequirements-analysis.txt
+python scriptsnalyze_ablation.py --run-dir <timestamp> --features features
 ```
 
 **A. S3, from the instance** (not tested: the role is known to work with the CLI, but a write to the
@@ -194,11 +213,10 @@ python -c "import boto3; s=boto3.Session(profile_name='aic').client('s3'); print
 
 On EC2: `curl -fsS -T /tmp/ablation-out-$SHA.tgz '<that URL>'`, then download with `aws s3 cp` as above.
 
-**C. Last resort, copy through the session** (the archive is about 1 MB): `base64 -w0 /tmp/ablation-out-$SHA.tgz`,
-paste the line into a file on the PC and decode with `[IO.File]::WriteAllBytes("out.tgz", [Convert]::FromBase64String((Get-Content b64.txt -Raw)))`.
-
-The database `ablation.db` (tens of MB: every query's ranked frames) stays on the host; fetch it the same
-way if you want per-query frame lists.
+**C. Last resort, copy through the session**: only practical for the tables, not for the database. Pack a
+small archive with `--exclude=ablation.db*`, `base64 -w0` it, paste the line into a file on the PC and decode with
+`[IO.File]::WriteAllBytes("out.tgz", [Convert]::FromBase64String((Get-Content b64.txt -Raw)))`. The analysis
+then has to wait for a route A or B copy of the database.
 
 ## 7. [EC2] Clean up
 
