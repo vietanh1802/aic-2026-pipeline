@@ -143,3 +143,31 @@ def test_a_failed_attempt_keeps_what_it_fetched_for_the_next_start(conn, tmp_pat
     # A fresh database (a new run folder) imports the file and only misses the rest.
     fresh = text_cache.import_jsonl(conn, cache_file.read_text(encoding = "utf-8"))
     assert fresh == {"inserted" : 0, "skipped" : 3}
+
+
+# ─── prefetching the Expand texts without loading anything ──────────────────
+
+def _run_prefetch(monkeypatch, tmp_path, *extra : str) -> tuple[int, Path] :
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    sys.modules.pop("prefetch_text_cache", None)
+    prefetch = importlib.import_module("prefetch_text_cache")
+    out = tmp_path / "text_cache.jsonl"
+    monkeypatch.setattr(sys, "argv", ["prefetch_text_cache.py", "--preset", "core2", "--policy", "expand_gemini", "--datasets", "round1-v3", "--out", str(out), *extra])
+    return prefetch.main(), out
+
+
+def test_prefetch_expand_writes_the_file_the_suite_imports(monkeypatch, tmp_path) :
+    monkeypatch.setenv("GEMINI_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(expansion, "expand_query", lambda text, task_type : {
+        "eng_query" : f"English {task_type}", "check_units" : ["a"], "translated_query" : None, "provider" : "gemini", "elapsed_ms" : 1})
+    code, out = _run_prefetch(monkeypatch, tmp_path)
+    entries = [json.loads(line) for line in out.read_text(encoding = "utf-8").splitlines()]
+    expand = [e for e in entries if e["policy_id"] == "expand_v1"]       # the file also carries the committed gtx seed texts
+    assert code == 0 and len(expand) == 27 and all(e["provider"] == "gemini" for e in expand)    # 24 queries and 3 TRAKE events of round1-v3
+    assert {json.loads(e["output_json"])["check_units"][0] for e in expand} == {"a"}
+
+
+def test_prefetch_expand_without_a_key_says_blocked_and_writes_nothing(monkeypatch, tmp_path, capsys) :
+    monkeypatch.delenv("GEMINI_API_KEY", raising = False)
+    code, out = _run_prefetch(monkeypatch, tmp_path)
+    assert code == 2 and not out.exists() and "BLOCKED" in capsys.readouterr().out

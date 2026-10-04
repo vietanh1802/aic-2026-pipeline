@@ -1,5 +1,5 @@
 # scripts/prefetch_text_cache.py
-"""Fetch every translate_gtx text a preset needs and export it as JSONL, on any machine.
+"""Fetch every translate_gtx or Expand text a preset needs and export it as JSONL, on any machine.
 
 gtx may be unreachable from EC2. Run this on a PC that can reach Google Translate, then commit or copy
 the file into backend/app/evaluation/seeds/text_cache/ (seed time imports every *.jsonl there) or
@@ -8,7 +8,14 @@ never calls the network.
 
 Covers the query text of the preset's translate_gtx configurations on the chosen datasets AND the
 event text of every TRAKE query (for the TRAKE-N task mode). Texts already cached, in the seeds or in
-the --out file, are not fetched again. Expand (Gemini) texts are not fetched here.
+the --out file, are not fetched again.
+
+--policy expand_gemini fetches the Expand (Gemini) texts of the preset instead: the query text of its
+expand_gemini configurations plus the event text of every TRAKE query. It calls expansion.expand_query,
+which paces itself at 4.5 s per call (about 15 minutes for the 145 texts of core2), needs GEMINI_API_KEY and
+accepts only a Gemini answer (never the Ollama fallback). It loads no index and no model, so it can run in the
+live API container while the API is up; the suite, started later, imports the file (--text-cache, default
+<out>/text_cache.jsonl) and finds the cache full, so the API is down only for the retrieval itself.
 
 Gentler on the provider than the backend's own 4.5 s pacing: a configurable delay between requests
 (--delay, default 1.5 s), exponential backoff on HTTP 429 and 5xx (honouring Retry-After), and the
@@ -17,6 +24,7 @@ it resumes: the file is read first and only the missing texts are fetched. After
 consecutive failures it stops instead of hammering a provider that is refusing everything.
 
     python scripts/prefetch_text_cache.py --preset core --out backend/app/evaluation/seeds/text_cache/translate_gtx.jsonl
+    python scripts/prefetch_text_cache.py --preset core2 --policy expand_gemini --out /opt/aic/data/ablation_out/text_cache.jsonl
 """
 from __future__ import annotations
 
@@ -92,6 +100,7 @@ def write_atomically(path : Path, content : str) -> None :
 def main() -> int :
     parser = argparse.ArgumentParser(description = __doc__.split("\n")[0])
     parser.add_argument("--preset", default = "core")
+    parser.add_argument("--policy", default = "translate_gtx", choices = ("translate_gtx", "expand_gemini"), help = "which text to fetch")
     parser.add_argument("--datasets", default = ",".join(DEFAULT_DATASETS), help = "comma-separated dataset versions")
     parser.add_argument("--out", default = str(DEFAULT_OUT))
     parser.add_argument("--delay", type = float, default = 1.5, help = "seconds between requests")
@@ -110,14 +119,17 @@ def main() -> int :
         if (out.exists()) :
             text_cache.import_jsonl(conn, out.read_text(encoding = "utf-8"))
 
-        configs = [c for c in preset_configs(args.preset) if c.text_policy == "translate_gtx"]
+        configs = [c for c in preset_configs(args.preset) if c.text_policy == args.policy]
         skipped = len(preset_configs(args.preset)) - len(configs)
         # The TRAKE-N configuration is what asks for per-event texts.
-        configs.append(RunConfig(name = "trake events", text_policy = "translate_gtx", task_mode = "trake_n"))
+        configs.append(RunConfig(name = "trake events", text_policy = args.policy, task_mode = "trake_n"))
 
         report = text_cache.preflight(conn, configs, datasets)
-        missing = [m for m in report["_missing_items"] if m.policy == "translate_gtx"]
-        print(f"preset {args.preset}: {len(configs) - 1} translate_gtx configurations ({skipped} other-policy ones skipped) on {len(datasets)} datasets")
+        missing = [m for m in report["_missing_items"] if m.policy == args.policy]
+        if (missing and report["blocked"]) :
+            print(f"BLOCKED: {report['message']}")
+            return 2
+        print(f"preset {args.preset}: {len(configs) - 1} {args.policy} configurations ({skipped} other-policy ones skipped) on {len(datasets)} datasets")
         print(f"texts needed {report['needed']}, already cached {report['cached']}, to fetch {len(missing)}")
 
         failures : list = []
@@ -130,7 +142,7 @@ def main() -> int :
             print(f"  {index}/{total}, {len(failures)} failed, ETA {(total - index) * elapsed / max(1, index) / 60:.1f} min", flush = True)
 
         fetched = text_cache.prefetch(
-            conn, missing, gtx_fn = make_gtx_fn(args.delay), failures = failures,
+            conn, missing, gtx_fn = make_gtx_fn(args.delay) if args.policy == "translate_gtx" else None, failures = failures,
             on_progress = progress, stop_after_failures = args.stop_after,
         )
 
