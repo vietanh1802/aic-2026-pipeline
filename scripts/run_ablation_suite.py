@@ -14,11 +14,13 @@ Everything lands in <out>/<timestamp>/:
     results_long.csv      every configuration x benchmark x flag mode x slice
     rank_matrix_A.csv, rank_matrix_B.csv        reference video rank per query and configuration, flips vs baseline
     table_A.tex, table_A_noflag.tex, table_B.tex, table_B_noflag.tex      Configuration & Hit@1 & R@5 & R@10 & MRR
+    table_sanity.tex      the baseline next to the sanity configurations (raw Vietnamese), kept out of the tables above
     text_signal.csv       OCR / ASR annotation measures (only when cues are labelled in seeds/cues/)
+    text_cache.jsonl      every recorded text (gtx and Expand: eng_query, check_units, provider), importable elsewhere
     bootstrap_A.csv, bootstrap_B.csv            paired bootstrap against the baseline
 
-    python scripts/run_ablation_suite.py --preset core --out ablation_out
-    python scripts/run_ablation_suite.py --preset core --limit-queries 3 --out ablation_out   # smoke test
+    python scripts/run_ablation_suite.py --preset core2 --out ablation_out
+    python scripts/run_ablation_suite.py --preset core2 --limit-queries 3 --out ablation_out   # smoke test
     python scripts/run_ablation_suite.py --resume ablation_out/20261004-120000
 """
 from __future__ import annotations
@@ -65,7 +67,8 @@ def full_commit() -> str :
 
 def main() -> int :
     parser = argparse.ArgumentParser(description = __doc__.split("\n")[0])
-    parser.add_argument("--preset", default = "core", help = "core, extras, or both comma-separated")
+    parser.add_argument("--preset", default = "core2", help = "core2 (the paper's main run), or the older core, extras, trake; several comma-separated")
+    parser.add_argument("--text-cache", default = None, help = "JSONL with recorded texts, read at start and rewritten after fetching (default <out>/text_cache.jsonl)")
     parser.add_argument("--datasets", default = ",".join(DEFAULT_DATASETS), help = "comma-separated dataset versions")
     parser.add_argument("--out", default = "ablation_out", help = "parent folder; a timestamped folder is created inside")
     parser.add_argument("--resume", default = None, help = "an existing <out>/<timestamp> folder to continue")
@@ -96,6 +99,12 @@ def main() -> int :
         import_all_seeds(conn)
         added = text_cache.import_seed_caches(conn)
         say(f"text cache from seeds: {added['inserted']} added, {added['skipped']} already present")
+        # The run folder is new on every start, so texts fetched by an earlier attempt (Expand takes about 4.5 s
+        # per text) would be lost with it. They live in one file next to the run folders instead.
+        shared_cache = Path(args.text_cache) if args.text_cache else Path(args.out) / "text_cache.jsonl"
+        if (shared_cache.exists()) :
+            loaded = text_cache.import_jsonl(conn, shared_cache.read_text(encoding = "utf-8"))
+            say(f"text cache from {shared_cache}: {loaded['inserted']} added, {loaded['skipped']} already present")
 
         # asr_text.get_text() never loads by itself, so this process must. Without it every ASR measure reads
         # "no match" (the first real run). Refuse rather than produce that table again; run
@@ -138,7 +147,7 @@ def main() -> int :
             except text_cache.PreflightBlocked as exc :
                 say(f"BLOCKED: {exc}")
                 return 2
-            fetch_missing(conn, pre["_missing_items"], say)
+            fetch_missing(conn, pre["_missing_items"], say, shared_cache)
 
             created = create_suite(conn, f"{args.preset}-{started_at:%Y%m%d-%H%M%S}", configs, datasets)
             suite_id = created["suite_id"]
@@ -187,6 +196,7 @@ def main() -> int :
         if (sum(annotation_errors.values())) :
             say(f"WARNING: {sum(annotation_errors.values())} OCR/ASR annotation or coverage errors were recorded "
                 f"(no query lost its ranking); see annotation_errors per run in provenance.json")
+        (run_dir / "text_cache.jsonl").write_text(text_cache.export_jsonl(conn), encoding = "utf-8")
         write_provenance(run_dir, args, datasets, runs, timings, started_at,
                          json.loads((run_dir / "suite.json").read_text(encoding = "utf-8")).get("verify"), annotation_errors)
         conn.close()
@@ -194,23 +204,37 @@ def main() -> int :
     return 0 if not unfinished else 1
 
 
-def fetch_missing(conn, missing, say) -> None :
-    """Fill the text cache before any run is created, so the runs themselves never wait on a provider."""
+def fetch_missing(conn, missing, say, shared_cache : Path) -> None :
+    """Fill the text cache before any run is created, so the runs themselves never wait on a provider.
+
+    A text that cannot be fetched stops the suite BEFORE any retrieval, with every failed text listed (policy,
+    dataset/query, reason). Nothing falls back to another provider or policy: an Expand answer that did not come
+    from Gemini is refused by text_cache itself. What was fetched before the failure is kept in `shared_cache`,
+    so the next start only asks for the rest."""
     if (not missing) :
         return
     say(f"fetching {len(missing)} texts (about 4.5 s each, one provider call at a time)")
     started = time.monotonic()
+    failures : list = []
 
     def progress(index : int, total : int) -> None :
         elapsed = time.monotonic() - started
         say(f"  text {index}/{total}, ETA {(total - index) * elapsed / max(1, index) / 60:.1f} min")
 
     try :
-        fetched = text_cache.prefetch(conn, missing, on_progress = progress)
-    except text_cache.PrefetchError as exc :
-        say(f"PREFETCH FAILED: {exc}")
+        fetched = text_cache.prefetch(conn, missing, on_progress = progress, failures = failures, stop_after_failures = 5)
+    finally :
+        shared_cache.parent.mkdir(parents = True, exist_ok = True)
+        shared_cache.write_text(text_cache.export_jsonl(conn), encoding = "utf-8")
+    say(f"fetched {fetched} texts; cache saved to {shared_cache}")
+    if (failures) :
+        say(f"PREFETCH FAILED for {len(failures)} text(s); no run was created. First {min(20, len(failures))}:")
+        for _item, reason in failures[ : 20] :
+            say(f"  {reason}")      # the reason already names policy, dataset and query
+        if (any(item.policy == "expand_gemini" for item, _reason in failures)) :
+            say("Expand needs a working Gemini key and never falls back to another provider; "
+                "run scripts/check_expand.py to see the cause, fix it, and start again (the fetched texts are kept).")
         raise SystemExit(3)
-    say(f"fetched {fetched} texts")
 
 
 def write_outputs(run_dir : Path, rows : list, say) -> None :
@@ -229,6 +253,12 @@ def write_outputs(run_dir : Path, rows : list, say) -> None :
         (run_dir / f"table_{benchmark}.tex").write_text(report.latex_table(table, benchmark, "all"), encoding = "utf-8")
         (run_dir / f"table_{benchmark}_noflag.tex").write_text(
             report.latex_table(table, benchmark, "exclude_flagged"), encoding = "utf-8")
+    sanity = sorted({r["config"] for r in rows if r.get("sanity")})
+    if (sanity) :
+        # One small table: the baseline next to the sanity checks, for the paper to show once.
+        shown = [baseline, *sanity]
+        sections = [f"% benchmark {b}\n" + report.latex_table(table, b, "all", configs = shown) for b in ("A", "B")]
+        (run_dir / "table_sanity.tex").write_text("".join(sections), encoding = "utf-8")
     signal = report.text_signal_table(rows)
     if (signal) :
         (run_dir / "text_signal.csv").write_text(report.text_signal_csv(signal), encoding = "utf-8")

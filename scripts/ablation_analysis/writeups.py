@@ -182,9 +182,27 @@ def claims_check(ctx : Ctx) -> str :
     else :
         out += [f"Hours: not testable with this data (no features folder); the draft says {paper['hours']}.", ""]
 
+    # C10: the text claim, baseline (Expand) against plain translation
+    plain = ctx.data.code_for("plain_text")
+    out += ["## C10 (claim number; the arms are C01 and C14) LLM-prepared English search text beats plain translation", "", "Paper Section 3.3: the query is prepared by an LLM (Expand: a cleaned, enriched English search sentence plus a checklist) before it reaches the encoders. Test: baseline (Expand) against plain translation, the same queries searched with the same encoders.", ""]
+    if (not plain or ctx.info(ctx.base).config.get("text_policy") != "expand_gemini") :
+        out += ["**Verdict: not testable with this data** (the baseline is not Expand, or there is no plain-translation arm; run preset core2).", ""]
+    else :
+        rows, lines = _comparison_lines(ctx, plain, "plain translation")
+        out += [f"**Verdict: {_decide(rows, better_when_delta_negative = True)}**", "", f"Arms compared: {ctx.base} ({ctx.name(ctx.base)}) against {plain} ({ctx.name(plain)}).", "", *lines, "", adjust_note,
+                "Plain translations longer than an encoder's context are truncated, which is part of what this arm measures; table T5b splits the queries by whether the text was truncated.", ""]
+
     # C9
     out += ["## C9 Candidate-region blocks in the player", "", "**Verdict: not testable with this data.** A user-interface feature; none of Hit@k, R@k, MRR or latency measures it.", ""]
     return "\n".join(out) + "\n"
+
+
+def _text_sentence(ctx : Ctx) -> str :
+    """What text the arms searched, from the baseline's own configuration."""
+    if (ctx.info(ctx.base).config.get("text_policy") == "expand_gemini") :
+        return ("The text of every arm is the English search text prepared by the Expand step (one Gemini call that translates, cleans and enriches the Vietnamese query), "
+                "recorded once and replayed, so every arm searches the same text; plain translation (Google Translate) is the text ablation and raw Vietnamese a sanity check.")
+    return "The text policy of the baseline is server-side Google Translate to English (translate_gtx), recorded and replayed so every configuration searches the same text."
 
 
 def pct_or_na(x : float | None) -> str :
@@ -209,7 +227,7 @@ def protocol(ctx : Ctx) -> str :
              "## Flags", "",
              "Two label flags are kept beside the seeds. vfr_times marks 49 N videos whose keyframe timestamps drift from the container clock, so interval results on them are unreliable. whole_video_interval marks the one query whose valid interval is the whole video. Video-level metrics do not depend on either; tables are also given without the flagged queries.", "",
              "## Configurations", "",
-             "Each configuration varies one component of the shipped system and is run on all four datasets: " + "; ".join(ctx.name(c) for c in ctx.retrieval_codes()) + "." + (" TRAKE: " + "; ".join(ctx.name(c) for c in ctx.codes("trake")) + "." if ctx.codes("trake") else "") + " The text policy of the baseline is server-side Google Translate to English (translate_gtx), recorded and replayed so every configuration searches the same text. Rerank after fusion is our re-created implementation, not the earlier code.", "",
+             "Each configuration varies one component of the shipped system and is run on all four datasets: " + "; ".join(ctx.name(c) for c in ctx.retrieval_codes()) + "." + (" TRAKE: " + "; ".join(ctx.name(c) for c in ctx.codes("trake")) + "." if ctx.codes("trake") else "") + " " + _text_sentence(ctx) + " Rerank after fusion is our re-created implementation, not the earlier code.", "",
              "## Statistical methods", "",
              f"Proportions carry Wilson 95% intervals. MRR and the median rank carry percentile bootstrap intervals over queries ({stats.N_BOOT} resamples, seed {stats.SEED}). Comparisons with the baseline are paired on queries: an exact two-sided McNemar test on the queries gained and lost for Hit@1, R@5 and R@10, Holm-adjusted over every configuration and metric compared with the baseline within a benchmark, and a paired bootstrap interval for the MRR difference. One run per configuration; there is no run-to-run variance estimate.", "",
              "## Hardware, software and provenance", "",
@@ -230,7 +248,8 @@ def limitations(ctx : Ctx) -> str :
         ("There is no keyframe-sampling arm: the sampling rule is described by corpus statistics only, and the capped-at-four retrieval figure is an approximation by post-filtering the stored top-100.", "T14, T15"),
         ("Latency was measured on CPU only (8 vCPU, no GPU), for single queries in the live container; per-configuration latency is reconstructed from stored first-computation times.", "T12"),
         ("Rankings are taken from the 100 fused frames returned per query, so a reference video outside them counts as not retrieved and the not-retrieved bucket cannot separate rank 101 from rank 1000.", "scoring.py, top_k = 100"),
-        ("The text translation is a fixed single draw from a public translation service; the Gemini-based expansion arm was not run.", "preset core; no key"),
+        (("The Expand text is a single draw from one LLM (Gemini flash-lite, temperature 0) and the plain translation a single draw from a public service; neither was repeated." if ctx.info(ctx.base).config.get("text_policy") == "expand_gemini"
+          else "The text translation is a fixed single draw from a public translation service; the Gemini-based expansion arm was not run."), "run folder text cache; preset core2 or core"),
         ("The 8 TRAKE queries and 31 events support only descriptive statements; the shortlist stage of TRAKE-N is rebuilt from the same rule as the production function, not logged by it.", "T7; backend/app/evaluation/trake.py"),
     ]
     lines = ["# Limitation candidates", "", _banner(ctx), "Each statement is supported by the source named after it. Pick those the paper needs.", ""]
@@ -269,7 +288,7 @@ def readme(ctx : Ctx, written : dict[str, list[str]]) -> str :
              "| 3.1 dataset | tables/T1a_corpus, T1b_benchmarks, T14a, T14b, numbers_to_fix_in_paper.md |",
              "| 4.1 protocol | protocol.md, tables/T1b_benchmarks, limitations_candidates.md |",
              "| 4.2 main results | tables/T2_main_ablation, T2x_extended_A/B, T3_encoder_grid_A/B, T6_task_and_prefix, figures F1, F2, F5, F6 |",
-             "| 4.3 component analysis | tables/T4_rerank, T5_text_policy, T7a/T7b_trake, T8a/T8b, T9, T11a/T11b; figures F3, F4, F7 |",
+             "| 4.3 component analysis | tables/T4_rerank, T5_text_policy, T5s_sanity (raw Vietnamese, shown once), T7a/T7b_trake, T8a/T8b, T9, T11a/T11b; figures F3, F4, F7 |",
              "| 4.4 efficiency and errors | tables/T10a to T10d, T12a to T12c, T13a to T13c, T15a/T15b; figures F7, F8; qualitative/; error_labeling_sheet.csv |",
              "| claims | claims_check.md |", "",
              "Every table is written as .csv (numbers), .tex (paper) and .md (reading). paper_tables.tex joins T1, T2, T3, T4, T7, T8, T10, T12. A CSV of a stamped run starts with a '#' comment line; read it with comment = '#'.", "",

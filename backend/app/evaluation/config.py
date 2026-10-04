@@ -67,6 +67,9 @@ class RunConfig(BaseModel) :
     trake       : TrakeConfig = Field(default_factory = TrakeConfig)
     text_filter : TextFilterConfig = Field(default_factory = TextFilterConfig)
     subset      : QuerySubset = Field(default_factory = QuerySubset)
+    # A sanity check, not an ablation arm (raw Vietnamese text against English-only encoders): its rows stay in
+    # the CSVs and the database but are left out of the paper tables, which show it once in a separate table.
+    sanity      : bool = False
 
     @field_validator("models")
     @classmethod

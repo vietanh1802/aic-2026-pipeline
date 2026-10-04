@@ -251,18 +251,32 @@ def t4_rerank(ctx : Ctx) -> list[Table] :
 
 # ─── T5 ────────────────────────────────────────────────────────────────────
 
+TEXT_LABEL = {
+    "expand_gemini" : "Expand (LLM-prepared English)",
+    "translate_gtx" : "plain translation (Google Translate)",
+    "raw_vi"        : "raw Vietnamese",
+}
+
+
+def _text_policy(ctx : Ctx, code : str) -> str :
+    return ctx.info(code).config.get("text_policy", "translate_gtx")
+
+
 def t5_text_policy(ctx : Ctx) -> list[Table] :
-    raw = ctx.data.code_for("raw_vi")
-    if (not raw) :
-        ctx.skip("T5 text policy", "no raw Vietnamese configuration in the run folder")
+    """The text ablation: the baseline's text against the other English text (plain translation against an Expand
+    baseline, or the reverse in a folder from the first run). Raw Vietnamese is a sanity check, see T5s."""
+    other = ctx.data.code_for("plain_text") or ctx.data.code_for("expand_gemini")
+    if (not other) :
+        ctx.skip("T5 text policy", "no arm with a different English text (plain translation or Expand) in the run folder")
         return []
+    pairs = [(f"{TEXT_LABEL[_text_policy(ctx, ctx.base)]} (baseline)", ctx.base), (TEXT_LABEL[_text_policy(ctx, other)], other)]
     rows, records = [], []
     for b in ("A", "B") :
-        fam_ = M.family(ctx.data, b, ctx.base, ctx.retrieval_codes())[raw]
-        for label, code in (("translate_gtx (shipped baseline)", ctx.base), ("raw Vietnamese", raw)) :
+        fam_ = M.family(ctx.data, b, ctx.base, ctx.retrieval_codes())[other]
+        for label, code in pairs :
             s = M.summary(ctx.data.results_of(code, b), with_ci = False)
             row = [b, "all", label, str(s["n"]), *_cells(s)]
-            if (code == raw) :
+            if (code == other) :
                 row += [f"{100 * fam_['hit_at_1']['delta']:+.1f}", f"+{fam_['hit_at_1']['gained']}/-{fam_['hit_at_1']['lost']}", fmt_p(fam_["hit_at_1"]["p_holm"])]
             else :
                 row += ["", "", ""]
@@ -278,14 +292,32 @@ def t5_text_policy(ctx : Ctx) -> list[Table] :
     names = [f"short (<= {cuts[0]:.0f} words)", f"medium (<= {cuts[1]:.0f})", f"long (> {cuts[1]:.0f})"]
     for t in range(3) :
         uids = {r.uid for r in everyone if tercile(r) == t}
-        for label, code in (("translate_gtx (shipped baseline)", ctx.base), ("raw Vietnamese", raw)) :
+        for label, code in pairs :
             results = [r for r in ctx.data.results_of(code) if r.uid in uids]
             s = M.summary(results, with_ci = False)
             rows.append(["A+B", names[t], label, str(s["n"]), *_cells(s), "", "", ""])
             records.append({"bench" : "A+B", "slice" : names[t], "text" : label, "n" : s["n"], "hit_at_1" : s["hit_at_1"], "r_at_5" : s["r_at_5"], "r_at_10" : s["r_at_10"], "mrr" : s["mrr"]})
-    return [Table("T5", "T5_text_policy", "Text policy: server-side Google Translate to English (baseline) against the raw Vietnamese query, overall and by query-length tercile.",
+    return [Table("T5", "T5_text_policy", f"Text policy: {pairs[0][0]} against {pairs[1][0]}, overall and by query-length tercile.",
                   ["Bench", "Slice", "Text", "n", "Hit@1", "R@5", "R@10", "MRR", "delta Hit@1", "+/-", "p Holm"], rows, small = True, records = records, align = "lllrrrrrrrr",
-                  notes = ["The raw run has the same queries searched with the Vietnamese text itself. delta, +/- and p Holm as in T3 (Holm family: all configurations against the baseline). Tercile rows pool A and B and are descriptive.", M.power_note(ctx.data)])]
+                  notes = ["Both arms search the same queries with the text recorded for them. delta, +/- and p Holm as in T3 (Holm family: all ablation arms against the baseline). Tercile rows pool A and B and are descriptive.", M.power_note(ctx.data)])]
+
+
+def t5s_sanity(ctx : Ctx) -> list[Table] :
+    """Raw Vietnamese text against the English-only encoders: a sanity check that the encoders really need English,
+    not an ablation arm, so it is kept out of T2 to T6 and shown here once."""
+    codes = ctx.sanity_codes()
+    if (not codes) :
+        ctx.skip("T5s sanity", "no sanity configuration in the run folder")
+        return []
+    rows, records = [], []
+    for b in ("A", "B") :
+        for label, code in [("baseline", ctx.base), *[(ctx.name(c), c) for c in codes]] :
+            results = ctx.data.results_of(code, b)
+            s = M.summary(results, with_ci = False)
+            rows.append([b, ctx.name(code) if label == "baseline" else label, str(s["n"]), *_cells(s), pct(s["not_retrieved_rate"])])
+            records.append({"bench" : b, "configuration" : ctx.name(code), "n" : s["n"], "hit_at_1" : s["hit_at_1"], "r_at_5" : s["r_at_5"], "r_at_10" : s["r_at_10"], "mrr" : s["mrr"], "not_retrieved_rate" : s["not_retrieved_rate"]})
+    return [Table("T5s", "T5s_sanity", "Sanity check: raw Vietnamese text against the baseline. BEiT-3 and OpenCLIP are English-only, so this is expected to collapse; it is not an ablation arm and appears in no other table.",
+                  ["Bench", "Configuration", "n", "Hit@1", "R@5", "R@10", "MRR", "Not retrieved"], rows, small = True, records = records, align = "llrrrrrr")]
 
 
 # ─── T6 ────────────────────────────────────────────────────────────────────

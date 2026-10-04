@@ -36,7 +36,7 @@ from ablation_analysis.tablefmt import Table  # noqa: E402
 
 TABLE_BUILDERS = (
     tables_core.t1_corpus_and_benchmarks, tables_core.t2_main_ablation, tables_core.t3_encoder_grid, tables_core.t4_rerank,
-    tables_core.t5_text_policy, tables_core.t6_by_task_and_prefix, tables_more.t7_trake, tables_more.t8_complementarity,
+    tables_core.t5_text_policy, tables_core.t5s_sanity, tables_core.t6_by_task_and_prefix, tables_more.t7_trake, tables_more.t8_complementarity,
     tables_more.t9_interval_level, tables_more.t10_errors, tables_more.t11_text_signal, tables_more.t12_efficiency,
     tables_core.t13_sensitivity, tables_more.t14_sampling,
 )

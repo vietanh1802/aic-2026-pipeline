@@ -192,7 +192,7 @@ def f6_rank_heatmap(ctx : Ctx, folder : Path) -> list[str] :
 
 
 def f7_errors(ctx : Ctx, folder : Path) -> list[str] :
-    codes = [c for c in [ctx.base, *[ctx.data.code_for(f"single:{m}") for m in ("beit3", "clip", "siglip2")], ctx.data.code_for("all:off"), ctx.data.code_for("raw_vi"), ctx.data.code_for("all:after_fusion")] if c]
+    codes = [c for c in [ctx.base, *[ctx.data.code_for(f"single:{m}") for m in ("beit3", "clip", "siglip2")], ctx.data.code_for("all:off"), ctx.data.code_for("plain_text"), ctx.data.code_for("all:after_fusion")] if c]
     t01 = ctx.data.code_for("trake_n")
     fig, axes = plt.subplots(1 if not t01 else 2, 2, figsize = (WIDTH_IN, 2.8 if not t01 else 5.2), squeeze = False)
     for ax, b in zip(axes[0], ("A", "B")) :

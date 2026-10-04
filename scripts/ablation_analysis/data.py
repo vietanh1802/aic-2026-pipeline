@@ -79,6 +79,7 @@ class ConfigInfo :
     name : str
     config : dict[str, Any]
     role : str
+    sanity : bool = False      # a sanity check, not an ablation arm: kept in the CSVs, left out of the paper tables
 
 
 @dataclass
@@ -116,12 +117,18 @@ class RunData :
 
 
 def config_code(name : str) -> str :
-    match = re.match(r"^([A-Z]\d+)\b", name)
+    """C01, T01, and the lettered arms C12a to C12c."""
+    match = re.match(r"^([A-Z]\d+[a-z]?)\b", name)
     return match.group(1) if match else name
 
 
-def role_of(config : dict[str, Any]) -> str :
-    """What a configuration is, from its fields (not its name), so a renamed preset still maps."""
+def role_of(config : dict[str, Any], base_text : str = "translate_gtx") -> str :
+    """What a configuration is, from its fields (not its name), so a renamed preset still maps.
+
+    base_text is the text policy of the run folder's baseline (C01): translate_gtx in the first real run,
+    expand_gemini from preset core2 on. An arm that searches the baseline's text is classified by its encoders
+    and rerank mode; an arm that varies the text is plain_text (translate_gtx against an Expand baseline),
+    expand_gemini (the reverse) or raw_vi."""
     models = [m for m in CANONICAL_MODELS if m in config.get("models", [])]
     mode, text, task_mode = config.get("rerank_mode", "per_model"), config.get("text_policy", ""), config.get("task_mode", "ensemble")
     if (task_mode == "trake_n") :
@@ -130,13 +137,13 @@ def role_of(config : dict[str, Any]) -> str :
         return "trake_plain"
     label = "+".join(models)
     all_models = len(models) == len(CANONICAL_MODELS)
-    if (text == "translate_gtx" and mode == "per_model" and all_models) :
+    if (text == base_text and mode == "per_model" and all_models) :
         return "base"
     if (text == "raw_vi" and all_models and mode == "per_model") :
         return "raw_vi"
-    if (text == "expand_gemini" and all_models and mode == "per_model") :
-        return "expand_gemini"
-    if (text != "translate_gtx") :
+    if (text != base_text and all_models and mode == "per_model") :
+        return "expand_gemini" if text == "expand_gemini" else "plain_text" if text == "translate_gtx" else f"other:{label}:{mode}:{text}"
+    if (text != base_text) :
         return f"other:{label}:{mode}:{text}"
     suffix = "" if mode == "per_model" else f":{mode}"
     return ("all" if all_models else f"single:{label}" if len(models) == 1 else f"pair:{label}") + suffix
@@ -185,12 +192,20 @@ def load_run_folder(folder : Path, features_synthetic : bool = False) -> RunData
         "SELECT r.id, r.reference_set_id, r.configuration_json, r.runtime_json, r.status, d.version AS dataset, d.slug AS slug "
         "FROM evaluation_runs r JOIN evaluation_datasets d ON d.id = r.dataset_id ORDER BY r.id"
     ).fetchall()
+    base_text = "translate_gtx"
+    for run in runs :
+        config = _json(run["configuration_json"], {}).get("config") or {}
+        if (config_code(config.get("name") or "") == "C01") :
+            base_text = config.get("text_policy", base_text)
+            break
     for run in runs :
         configuration = _json(run["configuration_json"], {})
         config = configuration.get("config") or {}
         name = config.get("name") or configuration.get("config_name") or f"run {run['id']}"
         code = config_code(name)
-        configs.setdefault(code, ConfigInfo(code, name, config, role_of(config)))
+        role = role_of(config, base_text)
+        # The old preset's C12 (raw Vietnamese) predates the flag: it is a sanity check by what it is.
+        configs.setdefault(code, ConfigInfo(code, name, config, role, sanity = bool(config.get("sanity")) or role == "raw_vi"))
         for ref in conn.execute(
             "SELECT q.query_key, r.confidence, r.provenance, r.status, r.notes, r.trake_events_json FROM evaluation_references r "
             "JOIN evaluation_queries q ON q.id = r.query_id WHERE r.reference_set_id = ?", (run["reference_set_id"],)

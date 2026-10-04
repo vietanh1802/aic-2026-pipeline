@@ -7,6 +7,13 @@ placement, text policy), never a full factorial. Every configuration runs on all
 and is deliberately outside "core" so nothing else has to be rerun when the key appears.
 "trake" runs TRAKE-N and its plain-ensemble comparison on the TRAKE queries. The text filter arms
 are not configurations: they annotate the stored frames of a run.
+
+"core2" is the paper's main run and replaces "core" + "trake": the baseline text is the LLM-prepared English
+search text (Expand, Gemini), as in the paper's Section 3.3, and every other arm searches that same text unless
+it is the arm that varies the text. The first real run (preset "core") used plain Google Translate as the
+baseline, so many texts were longer than the encoders' context (CLIP 77 tokens) and were truncated; plain
+translation is now the text ablation (C14). Raw Vietnamese (C15) is a sanity check and carries sanity = True.
+The older presets stay available so a run folder made with them can still be reproduced.
 """
 from __future__ import annotations
 
@@ -53,7 +60,33 @@ def _trake() -> list[RunConfig] :
     ]
 
 
-PRESETS = {"core" : _core, "extras" : _extras, "trake" : _trake}
+def _core2() -> list[RunConfig] :
+    """19 configurations x 4 datasets = 76 runs. Names carry the paper's arm codes (C01 to C15, T01, T02)."""
+    def arm(name : str, **fields) -> RunConfig :
+        fields.setdefault("text_policy", "expand_gemini")
+        return _config(name, **fields)
+
+    singles     = [arm(f"C{2 + i:02d} {m} only", models = [m]) for i, m in enumerate(_ALL)]
+    pairs       = [arm(f"C{5 + i:02d} {a}+{b}", models = [a, b]) for i, (a, b) in enumerate(_PAIRS)]
+    singles_off = [arm(f"C{9 + i:02d} {m} only, rerank off", models = [m], rerank_mode = "off") for i, m in enumerate(_ALL)]
+    pairs_off   = [arm(f"C12{'abc'[i]} {a}+{b}, rerank off", models = [a, b], rerank_mode = "off") for i, (a, b) in enumerate(_PAIRS)]
+    return [
+        # The baseline also carries the OCR and ASR annotation measures (annotation only: no ranking effect).
+        arm("C01 baseline", text_filter = {"sources" : ["ocr", "asr"]}),
+        *singles,
+        *pairs,
+        arm("C08 rerank off", rerank_mode = "off"),
+        *singles_off,
+        *pairs_off,
+        arm("C13 rerank after fusion (post-fusion rerank, our implementation)", rerank_mode = "after_fusion"),
+        arm("C14 plain translation (translate_gtx)", text_policy = "translate_gtx"),
+        arm("C15 raw Vietnamese text (sanity)", text_policy = "raw_vi", sanity = True),
+        arm("T01 TRAKE-N", task_mode = "trake_n"),
+        arm("T02 TRAKE queries, plain ensemble", subset = {"task_types" : ["TRAKE"]}),
+    ]
+
+
+PRESETS = {"core" : _core, "extras" : _extras, "trake" : _trake, "core2" : _core2}
 
 
 def preset_configs(name : str) -> list[RunConfig] :

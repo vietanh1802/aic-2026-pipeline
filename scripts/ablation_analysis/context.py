@@ -11,9 +11,9 @@ from ablation_analysis.data import ConfigInfo, RunData
 from ablation_analysis.features import Features
 
 
-def natural_key(code : str) -> tuple[str, int] :
-    match = re.match(r"^([A-Z]+)(\d+)", code)
-    return (match.group(1), int(match.group(2))) if match else (code, 0)
+def natural_key(code : str) -> tuple[str, int, str] :
+    match = re.match(r"^([A-Z]+)(\d+)([a-z]?)", code)
+    return (match.group(1), int(match.group(2)), match.group(3)) if match else (code, 0, "")
 
 
 @dataclass
@@ -34,7 +34,7 @@ class Ctx :
     def base(self) -> str :
         code = self.data.code_for("base")
         if (code is None) :
-            raise ValueError("no baseline configuration (all three encoders, rerank per_model, translate_gtx) in this run folder")
+            raise ValueError("no baseline configuration (all three encoders, rerank per_model, the text policy of C01) in this run folder")
         return code
 
     def codes(self, *prefixes : str) -> list[str] :
@@ -43,8 +43,12 @@ class Ctx :
         return sorted(picked, key = natural_key)
 
     def retrieval_codes(self) -> list[str] :
-        """Every configuration that searched the whole query text (everything except the TRAKE task modes)."""
-        return sorted((c for c, info in self.data.configs.items() if not info.role.startswith("trake")), key = natural_key)
+        """Every ablation arm that searched the whole query text: everything except the TRAKE task modes and the
+        sanity checks (raw Vietnamese), which are shown in their own small table."""
+        return sorted((c for c, info in self.data.configs.items() if not info.role.startswith("trake") and not info.sanity), key = natural_key)
+
+    def sanity_codes(self) -> list[str] :
+        return sorted((c for c, info in self.data.configs.items() if info.sanity), key = natural_key)
 
     def info(self, code : str) -> ConfigInfo :
         return self.data.configs[code]

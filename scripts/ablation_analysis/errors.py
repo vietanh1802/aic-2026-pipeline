@@ -96,7 +96,7 @@ def cross_labels(data : RunData, bench : str, ks : Sequence[int] = (1, 10)) -> d
     base = data.code_for("base")
     singles = [c for c in (data.code_for(f"single:{m}") for m in ("beit3", "clip", "siglip2")) if c]
     off, raw = data.code_for("all:off"), data.code_for("raw_vi")
-    grid = [c for c, info in data.configs.items() if not info.role.startswith(("trake", "other"))]
+    grid = [c for c, info in data.configs.items() if not info.role.startswith(("trake", "other")) and not info.sanity]
     labels : dict[tuple[str, str], dict[str, Any]] = {}
     for r in data.results_of(base, bench) :
         uid = r.uid

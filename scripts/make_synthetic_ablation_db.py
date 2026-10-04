@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import functools
+import hashlib
 import json
 import math
 import random
@@ -102,9 +103,15 @@ def all_frames(video : dict) -> list[tuple[int, int]] :
 # ─── query contexts: what the fake search needs to know about a text ───────
 
 class Context :
-    def __init__(self, dataset : str, key : str, task : str, video : str, intervals : list[tuple[int, int]], event : bool = False, raw : bool = False) :
-        self.dataset, self.key, self.task, self.video, self.intervals, self.event, self.raw = dataset, key, task, video, intervals, event, raw
+    def __init__(self, dataset : str, key : str, task : str, video : str, intervals : list[tuple[int, int]], event : bool = False, raw : bool = False, expand : bool = False) :
+        self.dataset, self.key, self.task, self.video, self.intervals, self.event, self.raw, self.expand = dataset, key, task, video, intervals, event, raw, expand
         self.prefix = video[0]
+
+
+def expand_text(label : str) -> str :
+    """A synthetic Expand text whose length varies (20 to 79 words) so the truncation analysis has something to see."""
+    words = 20 + (int(hashlib.sha256(label.encode("utf-8")).hexdigest(), 16) % 60)
+    return f"EXP::{label} " + " ".join(f"w{i}" for i in range(words))
 
 
 def load_contexts(conn) -> tuple[dict[str, Context], dict[str, Context]] :
@@ -119,9 +126,11 @@ def load_contexts(conn) -> tuple[dict[str, Context], dict[str, Context]] :
             ctx = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals)
             by_key[row["query_key"]] = ctx
             by_text[f"EN::{row['query_key']}"] = ctx
+            by_text[expand_text(row["query_key"])] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals, expand = True)
             by_text[row["query_vi"]] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals, raw = True)
             for event in json.loads(row["trake_events_json"] or "[]") :
                 by_text[f"EN::{event['description_vi']}"] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], [], event = True)
+                by_text[expand_text(event["description_vi"])] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], [], event = True, expand = True)
     return by_text, by_key
 
 
@@ -137,7 +146,7 @@ class FakeSearch :
         """Skill of the model on this query: higher is easier. Difficulty is shared by every model and text."""
         difficulty = rng_for("difficulty", ctx.key).gauss(0, 1)
         noise = rng_for("noise", model, text).gauss(0, 1)
-        return SKILL[model] + PREFIX_OFFSET[ctx.prefix] - 0.9 * difficulty + 0.7 * noise - (0.8 if ctx.raw else 0.0) - (0.3 if ctx.event else 0.0)
+        return SKILL[model] + PREFIX_OFFSET[ctx.prefix] - 0.9 * difficulty + 0.7 * noise - (0.8 if ctx.raw else 0.0) - (0.3 if ctx.event else 0.0) + (0.25 if ctx.expand else 0.0)
 
     def reference_frame(self, rng : random.Random, ctx : Context, s : float) -> tuple[str, int, int] :
         """A keyframe of the reference video: inside a valid interval with probability rising in s, else near it."""
@@ -304,7 +313,7 @@ def main() -> int :
     parser = argparse.ArgumentParser(description = __doc__.split("\n")[0])
     parser.add_argument("--out", required = True, help = "run folder to create")
     parser.add_argument("--limit-queries", type = int, default = None, help = "first N queries of each dataset (makes it a smoke-style folder)")
-    parser.add_argument("--presets", default = "core,trake")
+    parser.add_argument("--presets", default = "core2")
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -345,6 +354,11 @@ def main() -> int :
                 texts += [(e["description_vi"], f"EN::{e['description_vi']}") for e in json.loads(row["trake_events_json"] or "[]")]
                 for vi, en in texts :
                     text_cache.store(conn, text_cache.make_key("translate_gtx", vi, ""), vi, {"text" : en}, "google_gtx")
+                # The Expand text of the query and of each TRAKE event (task type of the row, as the runner asks for it).
+                labels = [(row["query_vi"], row["query_key"])] + [(e["description_vi"], e["description_vi"]) for e in json.loads(row["trake_events_json"] or "[]")]
+                for vi, label in labels :
+                    output = {"eng_query" : expand_text(label), "check_units" : ["a unit", "another unit"], "translated_query" : None}
+                    text_cache.store(conn, text_cache.make_key("expand_gemini", vi, row["task_type"]), vi, output, "gemini")
 
         patches = [
             (preprocess, "_load_indexes", lambda : None), (preprocess, "_load_meta", lambda : None),

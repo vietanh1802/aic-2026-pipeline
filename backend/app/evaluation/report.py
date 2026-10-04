@@ -33,7 +33,7 @@ SLICES = [("all", "all"), *((t, "all") for t in TASKS), *(("all", p) for p in PR
 LONG_FIELDS = (
     "config", "benchmark", "flags", "task_type", "prefix", "n", "failed",
     "hit_at_1", "r_at_5", "r_at_10", "mrr", "median_rank", "interval_final_score",
-    "event_accuracy", "event_queries", "annotation_errors",
+    "event_accuracy", "event_queries", "annotation_errors", "sanity",
 )
 
 
@@ -57,6 +57,7 @@ def load_rows(conn : sqlite3.Connection, run_ids : Iterable[int]) -> list[dict[s
                 "config"    : name,
                 "dataset"   : run["dataset_version"],
                 "slug"      : slug,
+                "sanity"    : bool(config.get("sanity")),     # a sanity check, not an ablation arm (see config.RunConfig)
                 "benchmark" : benchmark_of(slug),
                 "prefix"    : str(result["reference_video"])[ : 1],
                 "flags"     : list((result.get("extra") or {}).get("flags") or []),
@@ -117,7 +118,8 @@ def long_table(rows : list[dict[str, Any]], benchmarks : Iterable[str] = BENCHMA
                     ]
                     if (subset) :
                         table.append({"config" : config, "benchmark" : benchmark, "flags" : flag_mode,
-                                      "task_type" : task, "prefix" : prefix, **metrics(subset)})
+                                      "task_type" : task, "prefix" : prefix, **metrics(subset),
+                                      "sanity" : bool(mine[0].get("sanity"))})
     return table
 
 
@@ -200,13 +202,17 @@ def latex_table(
     flags : str = "all",
     task_type : str = "all",
     prefix : str = "all",
+    configs : Iterable[str] | None = None,
 ) -> str :
     """Configuration & Hit@1 & R@5 & R@10 & MRR, one row per configuration, best value of each
     column in bold (every tied value). Hit@1, R@5 and R@10 are percentages with one decimal, MRR has
-    three."""
+    three. Sanity configurations (raw Vietnamese) are left out unless `configs` names exactly the
+    rows to show, which is how the separate sanity table is made."""
+    wanted = None if configs is None else set(configs)
     rows = [
         r for r in table
         if (r["benchmark"], r["flags"], r["task_type"], r["prefix"]) == (benchmark, flags, task_type, prefix)
+        and ((not r.get("sanity")) if wanted is None else r["config"] in wanted)
     ]
     columns = (("hit_at_1", 100.0, 1), ("r_at_5", 100.0, 1), ("r_at_10", 100.0, 1), ("mrr", 1.0, 3))
     best = {
