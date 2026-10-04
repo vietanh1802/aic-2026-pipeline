@@ -191,8 +191,7 @@ rm -rf /opt/aic/ablation /tmp/ablation-out-$SHA.tgz
   L, M, N, S). Columns: n, failed, hit_at_1, r_at_5, r_at_10, mrr, median_rank, interval_final_score
   (interval R-Score, KIS and QA). Hit@1, R@5, R@10 and MRR are video level.
 - `table_A.tex`, `table_B.tex`: the paper table, `Configuration & Hit@1 & R@5 & R@10 & MRR`, best value of
-  each column in bold; `*_noflag.tex` drops the flagged queries (the 49 `vfr_times` videos and the
-  whole-video interval).
+  each column in bold; `*_noflag.tex` drops the flagged queries (see "Flags" below for which ones exist).
 - `rank_matrix_A.csv`, `rank_matrix_B.csv`: the reference video's rank per query and configuration, and
   `flip@1`, `flip@5` (gained or lost against C01) for failure analysis.
 - `bootstrap_A.csv`, `bootstrap_B.csv`: difference to C01 per metric with a 95% interval, 2000
@@ -208,3 +207,30 @@ rm -rf /opt/aic/ablation /tmp/ablation-out-$SHA.tgz
   index coverage and library versions of the first run.
 - The text policy is `translate_gtx` for every configuration except C12 (raw Vietnamese). The labels are
   team-annotated, not official; benchmark B has the team's appeal answers with a plus or minus 5 s interval.
+
+## Flags, and what the exclude_flagged tables change
+
+Two label flags exist (`seeds/flags/`): `vfr_times` (49 N videos whose keyframe timestamps drift from the
+container clock, so interval results on them are unreliable) and `whole_video_interval` (the valid interval
+is the whole video, so the interval metric is trivially a hit). The id spelling matches: the flag file and the
+final-v1 seed both write N and S ids with a hyphen (`N061-V002`, `S01-V009`) and L and M ids with an
+underscore, the forms `frontend/src/helpers/frameRef.ts` documents for the real data (the EC2 keyframe metadata
+was not inspected for this), so no normalisation is needed (`tests/test_evaluation_flags.py` pins the spelling).
+
+How many queries carry each flag (checked by calling `flags.flags_for` on every query of every seed):
+
+| Dataset | Queries | vfr_times | whole_video_interval |
+|---|---|---|---|
+| round1-v3 | 24 | 0 | 0 |
+| round2-v2 | 29 | 0 | 0 |
+| round3-v2 | 33 | 0 | 0 |
+| final-v1 | 28 | 0 | 1 (`f2-qa-03`, L27_V012) |
+
+The two N reference videos of final-v1 (`N061-V002`, `N025-V002`) are not among the 49 `vfr_times` ids, so the
+flag does not fire for them. Whether they were measured at all is not recorded here (the source file
+`paper_stats/timestamp_check.csv` is not in the repository).
+
+Consequence: the `exclude_flagged` tables can differ from the all-queries tables only on benchmark B, because
+rounds 1 to 3 are all L videos and carry no flag. On B the only difference is the one query `f2-qa-03` (n goes
+from 28 to 27). A flagged query is dropped from every metric of that table, video level included, so the
+difference is not limited to the interval columns.
