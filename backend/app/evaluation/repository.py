@@ -9,6 +9,7 @@ from app.evaluation.config import RunConfig, to_configuration
 from app.evaluation.ensemble import MODELS, STRATEGY_NAME, STRATEGY_SHARED, TOP_K, TOP_M, USE_RERANK
 from app.evaluation.flags import flags_for, select_rows
 from app.evaluation.scoring import INTERVAL_SCORING_POLICY, VIDEO_RANKING_POLICY
+from app.evaluation.trake import INTERVAL_POLICY_TRAKE_N, STRATEGY_TRAKE_N, VIDEO_RANKING_TRAKE_N
 from app.translation import (
     DEFAULT_TRANSLATION_POLICY,
     normalize_translation_policy,
@@ -224,9 +225,14 @@ def create_run(
             "translation_policy" : selected_policy,
         }
         strategy = STRATEGY_NAME
+        video_policy, interval_policy = VIDEO_RANKING_POLICY, INTERVAL_SCORING_POLICY
     else :
         configuration = {**to_configuration(config), **(extra_configuration or {})}
-        strategy = STRATEGY_SHARED
+        if (config.task_mode == "trake_n") :
+            # trake_search_candidates ranks videos by combined score and TRAKE has no interval to score.
+            strategy, video_policy, interval_policy = STRATEGY_TRAKE_N, VIDEO_RANKING_TRAKE_N, INTERVAL_POLICY_TRAKE_N
+        else :
+            strategy, video_policy, interval_policy = STRATEGY_SHARED, VIDEO_RANKING_POLICY, INTERVAL_SCORING_POLICY
     now = utcnow_iso()
     conn.execute("BEGIN IMMEDIATE")
     try :
@@ -241,7 +247,7 @@ def create_run(
             """,
             (
                 dataset["id"], reference_set["id"], strategy,
-                VIDEO_RANKING_POLICY, INTERVAL_SCORING_POLICY, translator_id,
+                video_policy, interval_policy, translator_id,
                 dataset["query_count"], created_by_user_id,
                 json.dumps(configuration, ensure_ascii = False), now, now,
             ),

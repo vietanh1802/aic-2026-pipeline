@@ -28,6 +28,12 @@ from typing import Any, Callable
 
 from app.evaluation.scoring import score_video_ranking
 
+# Written on the run row (repository.create_run) and on every result, so a TRAKE-N run is never
+# labelled with the shared-search strategy or the plain video-ranking policy.
+STRATEGY_TRAKE_N        = "trake_n_v1"
+VIDEO_RANKING_TRAKE_N   = "trake_combined_score_v1"
+INTERVAL_POLICY_TRAKE_N = "none_trake_video_level"
+
 
 def reference_events(conn : sqlite3.Connection, run : dict[str, Any], row : sqlite3.Row) -> list[dict[str, Any]] :
     """The seed's events of one query: event_id, description_vi, reference_frame_idx."""
@@ -104,9 +110,9 @@ def evaluate_trake_n(
         for r in results for i, e in enumerate(r["events"])
     ]
     return {
-        "strategy"                : "trake_n_v1",
-        "video_ranking_policy"    : "trake_combined_score_v1",
-        "interval_scoring_policy" : "none_trake_video_level",
+        "strategy"                : STRATEGY_TRAKE_N,
+        "video_ranking_policy"    : VIDEO_RANKING_TRAKE_N,
+        "interval_scoring_policy" : INTERVAL_POLICY_TRAKE_N,
         "translator"              : f"cache:{config.text_policy}",
         "query_vi"                : query_vi,
         "query_en"                : " | ".join(event_texts),
