@@ -337,3 +337,5 @@ def test_configured_run_persists_model_timings_and_interval_gap(conn, monkeypatc
         # TRAKE has no interval; KIS and QA record the gap (the fake corpus never returns the reference video).
         assert ("interval_gap" in extra) == (row["task_type"] != "TRAKE")
         assert "text_signal_errors" not in extra
+        # Token counts of the searched text under each encoder's tokenizer (or the recorded estimate).
+        assert {m : extra["text_length"][m]["limit"] for m in ("beit3", "clip", "siglip2")} == {"beit3" : 64, "clip" : 77, "siglip2" : 64}

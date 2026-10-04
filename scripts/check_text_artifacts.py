@@ -37,7 +37,7 @@ if hasattr(sys.stdout, "reconfigure") :
     sys.stdout.reconfigure(encoding = "utf-8")
 
 from app import asr_text, ocr_search, preprocess, text_signal  # noqa: E402
-from app.evaluation import cues, text_measures  # noqa: E402
+from app.evaluation import cues, text_length, text_measures  # noqa: E402
 from app.evaluation.seed import SEEDS_DIR  # noqa: E402
 
 PREFIXES       = ("L", "M", "N", "S")
@@ -117,11 +117,20 @@ def section_lookup() -> None :
             print(f"      first {hits[0].frame_name} ({hits[0].match_type}): ...{text[start : start + 140]}...")
 
 
+def section_tokenizers() -> None :
+    print("== 5. tokenizers for the text-length diagnostic (no model weights are loaded)")
+    sample = "A man in a red shirt walks into the kitchen and opens the fridge " * 8
+    for model in text_length.MODELS :
+        count, limit, method = text_length.counter(model)
+        print(f"  {model:8} limit {limit}, {count(sample)} tokens for a {len(sample.split())}-word sample, tokens by {method}")
+
+
 def main() -> int :
     section_files()
     report = section_loading()
     counts = section_coverage()
     section_lookup()
+    section_tokenizers()
     problems = []
     if (not report["asr"]["ready"] or not report["asr"]["entries"]) :
         problems.append("the ASR text index is not loaded or empty")

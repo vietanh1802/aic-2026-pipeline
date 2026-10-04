@@ -320,6 +320,88 @@ def t5s_sanity(ctx : Ctx) -> list[Table] :
                   ["Bench", "Configuration", "n", "Hit@1", "R@5", "R@10", "MRR", "Not retrieved"], rows, small = True, records = records, align = "llrrrrrr")]
 
 
+# ─── T5b, T5c: text length against each encoder's context ──────────────────
+
+MODEL_LABEL = {"beit3" : "BEiT-3", "clip" : "OpenCLIP", "siglip2" : "SigLIP2"}
+
+
+def _lengths(results : list[Result]) -> list[dict[str, Any]] :
+    return [r.extra["text_length"] for r in results if r.extra.get("text_length")]
+
+
+def _policy_arms(ctx : Ctx) -> dict[str, str] :
+    """text policy -> the first non-TRAKE configuration that searched it (the text is the same in every arm of a policy)."""
+    arms : dict[str, str] = {}
+    for code in sorted((c for c, info in ctx.data.configs.items() if not info.role.startswith("trake")), key = lambda c : (ctx.info(c).sanity, c)) :
+        arms.setdefault(_text_policy(ctx, code), code)
+    return arms
+
+
+def t5b_text_length(ctx : Ctx) -> list[Table] :
+    """How long the searched text is in each encoder's tokens and how many queries exceed the encoder's context."""
+    rows, records = [], []
+    for policy, code in _policy_arms(ctx).items() :
+        for b in ("A", "B", "A+B") :
+            results = ctx.data.results_of(code) if b == "A+B" else ctx.data.results_of(code, b)
+            lengths = _lengths(results)
+            if (not lengths) :
+                continue
+            for model in ("beit3", "clip", "siglip2") :
+                tokens = np.array([x[model]["tokens"] for x in lengths], dtype = float)
+                over = sum(1 for x in lengths if x[model]["over_limit"])
+                cut = sum(1 for x in lengths if x[model]["truncated"])
+                methods = sorted({x[model]["method"].split(":")[0] for x in lengths})
+                limit = lengths[0][model]["limit"]
+                rows.append([TEXT_LABEL.get(policy, policy), b, MODEL_LABEL[model], str(len(lengths)), f"{np.median(tokens):.0f}", f"{np.percentile(tokens, 90):.0f}", f"{tokens.max():.0f}",
+                             str(limit), f"{over} ({pct(over / len(lengths))}%)", f"{cut} ({pct(cut / len(lengths))}%)", "/".join(methods)])
+                records.append({"text" : policy, "bench" : b, "model" : model, "n" : len(lengths), "tokens_median" : float(np.median(tokens)), "tokens_p90" : float(np.percentile(tokens, 90)),
+                                "tokens_max" : float(tokens.max()), "limit" : limit, "n_over_limit" : over, "share_over_limit" : over / len(lengths), "n_truncated" : cut, "share_truncated" : cut / len(lengths), "method" : "/".join(methods)})
+    if (not rows) :
+        ctx.skip("T5b text length", "no run stored text_length (the run is from before the diagnostic existed)")
+        return []
+    return [Table("T5b", "T5b_text_length", "Tokens of the searched text under each encoder's own tokenizer, against its context limit.",
+                  ["Text", "Bench", "Encoder", "Queries", "Median tokens", "p90", "Max", "Limit", "Over the limit", "Truncated by the code", "Tokens by"], rows, small = True, records = records, align = "lllrrrrrrrl",
+                  notes = ["Tokens include the encoder's start and end tokens. OpenCLIP and SigLIP2 cut a longer text (their tokenizer truncates), so over the limit means the end of the text was not read. This backend does NOT cut text for BEiT-3 (preprocess._Beit3Tokenizer adds no truncation): a text over 64 tokens is longer than the 64 the BEiT-3 retrieval model was fine-tuned on, which is a different problem than being cut, and why its truncated column is 0.",
+                           "Tokens by: tokenizer (the encoder's real tokenizer, loaded without its weights) or estimate (a word-count approximation, words x 1.4 + 2, used when a tokenizer was not on the host; the reason is stored per query). TRAKE-N queries count the longest of their event texts."])]
+
+
+def t5c_truncated_vs_not(ctx : Ctx) -> list[Table] :
+    """Hit@1 of the queries whose text is over an encoder's limit against the others, for the all-encoder arm of each text
+    (split by whether ANY encoder is over its limit) and for each single-encoder arm (split by that encoder's own limit)."""
+    rows, records = [], []
+
+    def add(label : str, code : str, split : str, results : list[Result], b : str) -> None :
+        if (not results) :
+            return
+        s = M.summary(results, with_ci = False)
+        rows.append([label, b, split, str(s["n"]), pct(s["hit_at_1"]), pct(s["r_at_10"]), num(s["mrr"])])
+        records.append({"configuration" : ctx.name(code), "bench" : b, "split" : split, "n" : s["n"], "hit_at_1" : s["hit_at_1"], "r_at_10" : s["r_at_10"], "mrr" : s["mrr"]})
+
+    for b in ("A", "B", "A+B") :
+        def results_of(code : str) -> list[Result] :
+            return ctx.data.results_of(code) if b == "A+B" else ctx.data.results_of(code, b)
+
+        for code in [c for c in (ctx.base, ctx.data.code_for("plain_text")) if c] :
+            have = [r for r in results_of(code) if r.extra.get("text_length")]
+            over = [r for r in have if any(r.extra["text_length"][m]["over_limit"] for m in ("beit3", "clip", "siglip2"))]
+            add(ctx.name(code), code, "text over a limit for some encoder", over, b)
+            over_ids = {r.uid for r in over}
+            add(ctx.name(code), code, "text within every limit", [r for r in have if r.uid not in over_ids], b)
+        for model in ("beit3", "clip", "siglip2") :
+            code = ctx.data.code_for(f"single:{model}")
+            if (not code) :
+                continue
+            have = [r for r in results_of(code) if r.extra.get("text_length")]
+            add(ctx.name(code), code, f"text over the {MODEL_LABEL[model]} limit", [r for r in have if r.extra["text_length"][model]["over_limit"]], b)
+            add(ctx.name(code), code, f"text within the {MODEL_LABEL[model]} limit", [r for r in have if not r.extra["text_length"][model]["over_limit"]], b)
+    if (not rows) :
+        ctx.skip("T5c truncated versus not", "no run stored text_length")
+        return []
+    return [Table("T5c", "T5c_truncated_vs_not", "Hit@1 and R@10 for queries whose searched text is over an encoder's context limit against the others, on the arms that search the baseline text and its plain-translation counterpart.",
+                  ["Configuration", "Bench", "Split", "n", "Hit@1", "R@10", "MRR"], rows, small = True, records = records, align = "lllrrrr",
+                  notes = ["Descriptive: the two groups are different queries (long texts come from long, detailed queries), so a difference is not the effect of the cut. For a single-encoder arm the split uses that encoder's own limit, which isolates it from the others. Groups are small, read n first."])]
+
+
 # ─── T6 ────────────────────────────────────────────────────────────────────
 
 def t6_by_task_and_prefix(ctx : Ctx) -> list[Table] :

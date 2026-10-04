@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from app.db.connection import get_conn, utcnow_iso
-from app.evaluation import cues, text_cache, text_measures, trake
+from app.evaluation import cues, text_cache, text_length, text_measures, trake
 from app.evaluation.config import config_from_configuration
 from app.evaluation.diagnostics import interval_gap
 from app.evaluation.coverage import provenance, video_coverage
@@ -366,6 +366,13 @@ def process_run(
                             extra["interval_gap"] = gap
                     except Exception as exc :
                         side_errors.append({"part" : "interval_gap", "error_type" : type(exc).__name__, "message" : str(exc)[ : 300]})
+                    # Token counts of the searched text under each encoder's own tokenizer (tokenizers only,
+                    # never a model). A TRAKE-N query has one searched text per event. Same narrow isolation.
+                    try :
+                        searched = [c.text for c in cached_events] if trake_events is not None else [query_en]
+                        extra["text_length"] = text_length.measure(searched)
+                    except Exception as exc :
+                        side_errors.append({"part" : "text_length", "error_type" : type(exc).__name__, "message" : str(exc)[ : 300]})
                     if (side_errors) :
                         extra["text_signal_errors"] = side_errors
                         if (not announced_annotation_error) :
