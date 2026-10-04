@@ -27,7 +27,7 @@ if hasattr(sys.stdout, "reconfigure") :
     sys.stdout.reconfigure(encoding = "utf-8")
 
 from ablation_analysis import errors as E  # noqa: E402
-from ablation_analysis import qualitative, stats, tables_core, tables_more, writeups  # noqa: E402
+from ablation_analysis import qualitative, stats, tables_core, tables_more, tables_rerank, writeups  # noqa: E402
 from ablation_analysis.context import Ctx  # noqa: E402
 from ablation_analysis.data import load_run_folder  # noqa: E402
 from ablation_analysis.facts import load_facts  # noqa: E402
@@ -35,7 +35,7 @@ from ablation_analysis.features import load_features  # noqa: E402
 from ablation_analysis.tablefmt import Table  # noqa: E402
 
 TABLE_BUILDERS = (
-    tables_core.t1_corpus_and_benchmarks, tables_core.t2_main_ablation, tables_core.t3_encoder_grid, tables_core.t4_rerank,
+    tables_core.t1_corpus_and_benchmarks, tables_core.t2_main_ablation, tables_core.t3_encoder_grid, tables_core.t4_rerank, tables_rerank.t4b_rerank_by_links,
     tables_core.t5_text_policy, tables_core.t5b_text_length, tables_core.t5c_truncated_vs_not, tables_core.t5s_sanity, tables_core.t6_by_task_and_prefix, tables_more.t7_trake, tables_more.t8_complementarity,
     tables_more.t9_interval_level, tables_more.t10_errors, tables_more.t11_text_signal, tables_more.t12_efficiency,
     tables_core.t13_sensitivity, tables_more.t14_sampling,

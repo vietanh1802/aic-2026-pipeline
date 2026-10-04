@@ -7,11 +7,17 @@ host the full file (991,469 records) parses in a few GB of RAM.
 
 Written to <out>/:
     videos.csv         video, prefix, n_keyframes, n_shots, fps, fps_varies, fps_map, first_frame, last_frame,
-                       duration_s, last_timestamp_s
+                       duration_s, last_timestamp_s, n_with_links, share_with_links
     shots.csv          video, shot, n_keyframes, first_frame, last_frame, span_s, duration_est_s
     frames_ref.csv     video, name, shot, frame_idx   (only the reference videos of the four seeds)
     index_files.csv    name, bytes   (every file in the index folder: vectors per index come from the log)
     corpus_totals.json the totals printed at the end
+
+Stored neighbour links. n_with_links / share_with_links count the keyframes whose record has a non-empty
+  neighbors_clip. preprocess._neighbor_faiss_ids uses those links for the neighbour rerank and, for a frame
+  without them, falls back to the 2 keyframes either side of it INCLUDING itself. The rerank therefore applies
+  two different neighbourhoods depending on the video, and this column is what tells them apart: on the local
+  Batch 1 metadata it is exactly 1.0 or 0.0 for every video (251 videos with links, 622 without, none mixed).
 
 What is and is not known from the metadata
   shot        record["scene_id"] when present, else the middle part of the file name video-shot-frame. The
@@ -84,6 +90,7 @@ def build(records : list[dict], fps_map : dict[str, float], references : dict[st
         by_video.setdefault(video, []).append({
             "name" : record["name"], "shot" : int(shot), "frame_idx" : int(record["frame_idx"]),
             "fps" : float(record.get("fps") or 0.0), "ts_ms" : record.get("timestamp_ms"),
+            "linked" : bool(record.get("neighbors_clip")),
         })
 
     videos, shots, refs = [], [], []
@@ -111,6 +118,8 @@ def build(records : list[dict], fps_map : dict[str, float], references : dict[st
             "first_frame" : frames[0]["frame_idx"], "last_frame" : last["frame_idx"],
             "duration_s" : round(last["frame_idx"] / fps, 2),
             "last_timestamp_s" : round(last["ts_ms"] / 1000.0, 2) if last["ts_ms"] is not None else "",
+            "n_with_links" : sum(1 for f in frames if f["linked"]),
+            "share_with_links" : round(sum(1 for f in frames if f["linked"]) / len(frames), 4),
         })
         if (video in references) :
             refs.extend({"video" : video, "name" : f["name"], "shot" : f["shot"], "frame_idx" : f["frame_idx"]} for f in frames)
@@ -128,6 +137,10 @@ def totals(videos : list[dict], shots : list[dict]) -> dict :
             "shots"       : len(ss),
             "keyframes_per_shot_mean"   : round(statistics.mean(per_shot), 3) if per_shot else None,
             "keyframes_per_shot_median" : statistics.median(per_shot) if per_shot else None,
+            "keyframes_with_links"      : sum(v["n_with_links"] for v in vs),
+            "videos_all_links"         : sum(1 for v in vs if v["share_with_links"] == 1),
+            "videos_no_links"          : sum(1 for v in vs if v["share_with_links"] == 0),
+            "videos_mixed_links"       : sum(1 for v in vs if 0 < v["share_with_links"] < 1),
         }
     result = {"all" : block(videos, shots)}
     for prefix in sorted({v["prefix"] for v in videos}) :
@@ -167,7 +180,7 @@ def main() -> int :
     videos, shots, refs, disagree = build(records, fps_map, references)
     del records
 
-    write_csv(out / "videos.csv", videos, ["video", "prefix", "n_keyframes", "n_shots", "fps", "fps_varies", "fps_map", "first_frame", "last_frame", "duration_s", "last_timestamp_s"])
+    write_csv(out / "videos.csv", videos, ["video", "prefix", "n_keyframes", "n_shots", "fps", "fps_varies", "fps_map", "first_frame", "last_frame", "duration_s", "last_timestamp_s", "n_with_links", "share_with_links"])
     write_csv(out / "shots.csv", shots, ["video", "shot", "n_keyframes", "first_frame", "last_frame", "span_s", "duration_est_s"])
     write_csv(out / "frames_ref.csv", refs, ["video", "name", "shot", "frame_idx"])
     index_dir = Path(args.index_dir) if args.index_dir else metadata_path.parent
@@ -184,6 +197,10 @@ def main() -> int :
     for key, b in summary["totals"].items() :
         print(f"{key:>6} {b['videos']:7d} {b['hours']:7.1f} {b['keyframes']:10d} {b['shots']:8d} {b['keyframes_per_shot_mean']:13.2f} {b['keyframes_per_shot_median']:7}")
     print("hours = last keyframe frame / fps, a lower bound of the true duration")
+    print("\nstored neighbour links (neighbors_clip) per prefix: the rerank uses them, else a fallback of 2 keyframes either side incl. itself")
+    print("prefix  keyframes with links  videos all links  no links  mixed")
+    for key, b in summary["totals"].items() :
+        print(f"{key:>6} {b['keyframes_with_links']:>10d} of {b['keyframes']:>9d} {b['videos_all_links']:>10d} {b['videos_no_links']:>10d} {b['videos_mixed_links']:>7d}")
     print(f"disagreements between scene_id, file name and frame_idx: {disagree}")
     print(f"reference videos of the seeds found in the metadata: {summary['reference_videos_found']} of {summary['reference_videos']}")
     print(f"wrote {out}")

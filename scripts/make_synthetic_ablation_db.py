@@ -288,9 +288,12 @@ def write_features(out : Path, corpus : dict[str, dict], references : set[str]) 
         fps = c["fps"]
         n_frames = sum(len(f) for _s, f in c["shots"])
         last = c["shots"][-1][1][-1]
+        # Like the real metadata: M, N and S carry stored neighbour links, and an L video has them all or none (about a quarter do).
+        share = 1.0 if (c["prefix"] != "L" or int(hashlib.sha256(video.encode("utf-8")).hexdigest(), 16) % 4 == 0) else 0.0
         videos.append({"video" : video, "prefix" : c["prefix"], "n_keyframes" : n_frames, "n_shots" : len(c["shots"]), "fps" : fps,
                        "fps_varies" : int(c["prefix"] == "N" and fps != 25.0), "fps_map" : fps, "first_frame" : c["shots"][0][1][0],
-                       "last_frame" : last, "duration_s" : round(last / fps, 2), "last_timestamp_s" : round(last / fps, 2)})
+                       "last_frame" : last, "duration_s" : round(last / fps, 2), "last_timestamp_s" : round(last / fps, 2),
+                       "n_with_links" : int(share * n_frames), "share_with_links" : share})
         for index, (shot, frames) in enumerate(c["shots"]) :
             nxt = c["shots"][index + 1][1][0] if index + 1 < len(c["shots"]) else frames[-1]
             shots.append({"video" : video, "shot" : shot, "n_keyframes" : len(frames), "first_frame" : frames[0], "last_frame" : frames[-1],

@@ -288,7 +288,7 @@ def readme(ctx : Ctx, written : dict[str, list[str]]) -> str :
              "| 3.1 dataset | tables/T1a_corpus, T1b_benchmarks, T14a, T14b, numbers_to_fix_in_paper.md |",
              "| 4.1 protocol | protocol.md, tables/T1b_benchmarks, limitations_candidates.md |",
              "| 4.2 main results | tables/T2_main_ablation, T2x_extended_A/B, T3_encoder_grid_A/B, T6_task_and_prefix, figures F1, F2, F5, F6 |",
-             "| 4.3 component analysis | tables/T4_rerank, T5_text_policy, T5b_text_length and T5c_truncated_vs_not (tokens against each encoder's limit), T5s_sanity (raw Vietnamese, shown once), T7a/T7b_trake, T8a/T8b, T9, T11a/T11b; figures F3, F4, F7 |",
+             "| 4.3 component analysis | tables/T4_rerank, T4b_rerank_by_links (needs --features from the current dump), T5_text_policy, T5b_text_length and T5c_truncated_vs_not (tokens against each encoder's limit), T5s_sanity (raw Vietnamese, shown once), T7a/T7b_trake, T8a/T8b, T9, T11a/T11b; figures F3, F4, F7 |",
              "| 4.4 efficiency and errors | tables/T10a to T10d, T12a to T12c, T13a to T13c, T15a/T15b; figures F7, F8; qualitative/; error_labeling_sheet.csv |",
              "| claims | claims_check.md |", "",
              "Every table is written as .csv (numbers), .tex (paper) and .md (reading). paper_tables.tex joins T1, T2, T3, T4, T7, T8, T10, T12. A CSV of a stamped run starts with a '#' comment line; read it with comment = '#'.", "",
