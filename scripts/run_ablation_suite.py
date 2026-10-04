@@ -43,7 +43,7 @@ if hasattr(sys.stdout, "reconfigure") :
 
 from app.db.connection import get_conn  # noqa: E402
 from app.db.migrate import migrate  # noqa: E402
-from app.evaluation import report, text_cache  # noqa: E402
+from app.evaluation import report, text_cache, text_measures  # noqa: E402
 from app.evaluation.presets import DEFAULT_DATASETS, preset_configs  # noqa: E402
 from app.evaluation.runner import _db_path_env, interrupt_incomplete_runs, process_run  # noqa: E402
 from app.evaluation.seed import import_all_seeds  # noqa: E402
@@ -97,6 +97,16 @@ def main() -> int :
         added = text_cache.import_seed_caches(conn)
         say(f"text cache from seeds: {added['inserted']} added, {added['skipped']} already present")
 
+        # asr_text.get_text() never loads by itself, so this process must. Without it every ASR measure reads
+        # "no match" (the first real run). Refuse rather than produce that table again; run
+        # scripts/check_text_artifacts.py to see which file is missing.
+        artifacts = text_measures.load_text_artifacts()
+        for source, info in artifacts.items() :
+            say(f"{source} text: ready {info['ready']}, {info['entries']:,} frames with text, {info['path']}" + (f", ERROR {info['error']}" if info["error"] else ""))
+        if (not all(info["ready"] and info["entries"] for info in artifacts.values())) :
+            say("REFUSING to start: the OCR or ASR text is not loaded in this process (see above); the text-signal measures would be empty")
+            return 5
+
         if (args.resume) :
             state = json.loads((run_dir / "suite.json").read_text(encoding = "utf-8"))
             suite_id = state["suite_id"]
@@ -135,6 +145,7 @@ def main() -> int :
             (run_dir / "suite.json").write_text(json.dumps({
                 "suite_id" : suite_id, "preset" : args.preset, "datasets" : datasets,
                 "limit_queries" : args.limit_queries, "started_at" : started_at.isoformat(), "verify" : verify,
+                "text_artifacts" : artifacts,
             }, indent = 1, ensure_ascii = False), encoding = "utf-8")
             say(f"suite {suite_id}: {len(created['run_ids'])} runs created")
 

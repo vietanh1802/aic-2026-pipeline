@@ -242,7 +242,7 @@ TRAKE_TRUTH : dict[str, list[int]] = {}
 
 # ─── synthetic OCR / ASR annotation (patched into text_measures) ───────────
 
-def fake_annotate_block(frame_results, terms, variant, reference_video, valid_intervals, reference_rank, asr_mode = "substring") :
+def fake_annotate_block(frame_results, terms, variant, reference_video, valid_intervals, reference_rank, asr_mode = "substring", memo = None) :
     sources = ("ocr", "asr") if variant == "both" else (variant,)
     used = {s : terms.get(s, [])[ : 5] for s in sources}
     if (not any(used.values())) :
@@ -251,10 +251,15 @@ def fake_annotate_block(frame_results, terms, variant, reference_video, valid_in
     chance = {"ocr" : 0.5, "asr" : 0.3, "both" : 0.62}[variant] * (1.0 if reference_video[0] == "L" else 0.4)
     flagged = rng.random() < chance
     videos = {f["video"] for f in frame_results}
+    n_flagged = rng.randint(0, 6) + int(flagged)
+    # The strict rule can only flag fewer videos than the OR rule; a single-term cue is the same either way.
+    multi = any(len(t) > 1 for t in used.values())
+    strict_flagged = flagged and (not multi or rng.random() < 0.6)
     return {
         "terms" : used, "ref_flagged" : flagged, "ref_location" : rng.choice(["here", "elsewhere"]) if flagged else "none",
         "ref_in_interval" : (rng.random() < 0.5) if (flagged and valid_intervals is not None) else None,
-        "n_flagged" : rng.randint(0, 6) + int(flagged), "n_videos" : len(videos), "ref_rank" : reference_rank,
+        "n_flagged" : n_flagged, "n_videos" : len(videos), "ref_rank" : reference_rank,
+        "strict" : {"ref_flagged" : strict_flagged, "n_flagged" : n_flagged if not multi else max(int(strict_flagged), n_flagged // 3)},
     }
 
 
@@ -348,6 +353,7 @@ def main() -> int :
             (preprocess, "fps_for_video", lambda video : corpus[video]["fps"] if video in corpus else 25.0),
             (preprocess, "trake_search_candidates", functools.partial(fake_trake, fake, trake.discovery_info)),
             (text_measures, "annotate_block", fake_annotate_block),
+            (text_measures, "load_text_artifacts", lambda : {s : {"ready" : True, "entries" : 1, "path" : "synthetic", "error" : None} for s in ("ocr", "asr")}),
             (text_measures, "coverage_for_video", lambda video, errors = None : fake_text_coverage(corpus, video, errors)),
             (runner, "video_coverage", lambda video : {m : 1.0 for m in preprocess.MODEL_NAMES}),
             (coverage, "index_coverage", lambda : {"metadata_frames" : 0, "synthetic" : True, "models" : {}}),

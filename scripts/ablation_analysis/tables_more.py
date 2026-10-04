@@ -205,6 +205,24 @@ def _text_metrics(blocks : list[dict | None]) -> dict[str, Any] :
         "precision" : len(flagged) / sum(b["n_flagged"] for b in with_flags) if with_flags else None,
         "base_rate" : sum(b["n_flagged"] / b["n_videos"] for b in seen) / len(seen) if seen else None,
         "rescue_potential" : sum(1 for b in flagged if b["ref_rank"] is None or b["ref_rank"] > 1) / n if n else None,
+        **_strict_text_metrics(blocks),
+    }
+
+
+def _strict_text_metrics(blocks : list[dict | None]) -> dict[str, Any] :
+    """The same flag rate, precision and base rate under the strict rule (all terms of a source's cue present in
+    the video); None for a run folder from before the strict part existed, or in BM25 mode."""
+    n = len(blocks)
+    strict = [(b, b["strict"]) for b in blocks if b and b.get("strict")]
+    if (not strict) :
+        return {"strict_flag_rate_ref" : None, "strict_precision" : None, "strict_base_rate" : None}
+    flagged = [s for _b, s in strict if s["ref_flagged"]]
+    with_flags = [s for _b, s in strict if s["n_flagged"] > 0]
+    seen = [(b, s) for b, s in strict if b["n_videos"] > 0]
+    return {
+        "strict_flag_rate_ref" : len(flagged) / n if n else None,
+        "strict_precision" : len(flagged) / sum(s["n_flagged"] for s in with_flags) if with_flags else None,
+        "strict_base_rate" : sum(s["n_flagged"] / b["n_videos"] for b, s in seen) / len(seen) if seen else None,
     }
 
 
@@ -232,12 +250,14 @@ def t11_text_signal(ctx : Ctx) -> list[Table] :
                         continue
                     m = _text_metrics(picked)
                     label = "legacy_leaky (upper bound)" if kind == "legacy_leaky" else kind
-                    rows.append([b, label, variant, slice_name, str(m["n"]), str(m["n_flagged_ref"]), pct(m["flag_rate_ref"]), pct(m["here_rate"]), pct(m["in_interval"]), pct(m["precision"]), pct(m["base_rate"]), pct(m["rescue_potential"])])
+                    rows.append([b, label, variant, slice_name, str(m["n"]), str(m["n_flagged_ref"]), pct(m["flag_rate_ref"]), pct(m["here_rate"]), pct(m["in_interval"]), pct(m["precision"]), pct(m["base_rate"]),
+                                 pct(m["strict_flag_rate_ref"]), pct(m["strict_precision"]), pct(m["strict_base_rate"]), pct(m["rescue_potential"])])
                     records.append({"bench" : b, "kind" : kind, "variant" : variant, "slice" : slice_name, **m})
     tables = [Table("T11a", "T11a_text_signal", f"OCR and ASR annotation measures on the baseline run ({ctx.name(code)}). Annotation only: neither filter changes a ranking.",
-                    ["Bench", "Cue kind", "Variant", "Slice", "n", "Ref flagged", "Flag rate", "Here", "In interval", "Precision", "Base rate", "Rescue potential"], rows, small = True, records = records, align = "lllllrrrrrrr",
+                    ["Bench", "Cue kind", "Variant", "Slice", "n", "Ref flagged", "Flag rate", "Here", "In interval", "Precision", "Base rate", "Strict flag rate", "Strict precision", "Strict base rate", "Rescue potential"], rows, small = True, records = records, align = "lllllrrrrrrrrrr",
                     notes = ["legacy_leaky cues are the seed's old filter terms, audited against the real OCR and ASR engines, so every number built on them is an upper bound. confirmed cues appear only once a reviewer has confirmed them in the cue sidecar.",
-                             "Flag rate: the reference video is annotated as matched. Here: of those, the matched frame is among the returned frames. Rescue potential: the reference is flagged but not ranked first, an upper bound on what an injection stage could fix; no such stage ships."])]
+                             "Flag rate: the reference video is annotated as matched. Here: of those, the matched frame is among the returned frames. Rescue potential: the reference is flagged but not ranked first, an upper bound on what an injection stage could fix; no such stage ships.",
+                             "Precision and base rate use the shipped OR rule over the terms of a cue, so a short common term (a number, a year) flags most of the result list. The strict columns repeat flag rate, precision and base rate with a video flagged only when it holds EVERY term of a source's cue (OR over the sources); they equal the plain columns for single-term cues and are blank for runs made before the strict rule existed."])]
     rows, records = [], []
     for b in ("A", "B") :
         for prefix in ("L", "M", "N", "S") :

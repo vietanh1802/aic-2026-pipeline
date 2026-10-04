@@ -226,6 +226,16 @@ def process_run(
                 )
         except Exception as exc :
             runtime = {"error" : f"{type(exc).__name__}: {exc}"}
+        if (config is not None) :
+            # asr_text.get_text() never loads by itself (only the API's warm-up does), so a process without
+            # the API must load the OCR and ASR files here or every ASR measure silently reads "no match".
+            # A source that cannot load is recorded and printed, and its coverage is then recorded as an
+            # error per query; the retrieval itself is unaffected (side features fail closed).
+            runtime["text_artifacts"] = text_measures.load_text_artifacts()
+            for source, info in runtime["text_artifacts"].items() :
+                if (info["error"] or not info["entries"]) :
+                    print(f"[evaluation] WARNING: {source} text is not available ({info['error'] or 'no entries'}); "
+                          f"its coverage and annotation measures will be empty")
         conn.execute(
             "UPDATE evaluation_runs SET runtime_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(runtime, ensure_ascii = False), utcnow_iso(), run_id),

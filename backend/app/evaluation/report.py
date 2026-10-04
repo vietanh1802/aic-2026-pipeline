@@ -282,6 +282,7 @@ def bootstrap_csv(records : list[dict[str, Any]]) -> str :
 TEXT_SIGNAL_FIELDS = (
     "config", "benchmark", "kind", "variant", "slice", "n", "n_flagged_ref", "flag_rate_ref", "here_rate",
     "in_interval", "precision", "base_rate", "rescue_potential",
+    "strict_flag_rate_ref", "strict_precision", "strict_base_rate",
 )
 
 
@@ -306,6 +307,9 @@ def text_signal_table(rows : list[dict[str, Any]], benchmarks : Iterable[str] = 
     base_rate         mean share of the result list's videos that are flagged
     rescue_potential  share of queries where the reference is flagged but not ranked first: what an
                       injection could fix. It is NOT a ranking effect of anything that shipped.
+    strict_*          flag_rate_ref, precision and base_rate again under the strict rule (a video is flagged for
+                      a source only when it holds EVERY term of the cue, see text_measures.py). The plain
+                      columns are an OR over the terms and are inflated by short common terms.
     """
     table : list[dict[str, Any]] = []
     for config in configs_in_order(rows) :
@@ -348,6 +352,24 @@ def _text_signal_metrics(blocks : list[dict[str, Any] | None]) -> dict[str, Any]
         "precision"        : len(flagged) / sum(b["n_flagged"] for b in with_flags) if with_flags else None,
         "base_rate"        : sum(b["n_flagged"] / b["n_videos"] for b in seen) / len(seen) if seen else None,
         "rescue_potential" : sum(1 for b in flagged if b["ref_rank"] is None or b["ref_rank"] > 1) / n,
+        **_strict_metrics(blocks),
+    }
+
+
+def _strict_metrics(blocks : list[dict[str, Any] | None]) -> dict[str, Any] :
+    """flag rate, precision and base rate of the strict rule; None where the blocks carry no strict part
+    (a run from before it existed, or BM25 mode)."""
+    n = len(blocks)
+    strict = [(b, b["strict"]) for b in blocks if b and b.get("strict")]
+    if (not strict) :
+        return {"strict_flag_rate_ref" : None, "strict_precision" : None, "strict_base_rate" : None}
+    flagged = [s for _b, s in strict if s["ref_flagged"]]
+    with_flags = [s for _b, s in strict if s["n_flagged"] > 0]
+    seen = [(b, s) for b, s in strict if b["n_videos"] > 0]
+    return {
+        "strict_flag_rate_ref" : len(flagged) / n,
+        "strict_precision"     : len(flagged) / sum(s["n_flagged"] for s in with_flags) if with_flags else None,
+        "strict_base_rate"     : sum(s["n_flagged"] / b["n_videos"] for b, s in seen) / len(seen) if seen else None,
     }
 
 

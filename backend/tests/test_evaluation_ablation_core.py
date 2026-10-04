@@ -248,6 +248,7 @@ def test_annotation_failures_are_recorded_and_never_cost_a_query_its_ranking(con
     monkeypatch.setattr(preprocess, "frames_for_video", lambda video : [f"{video}-0001-1.jpg"])
     monkeypatch.setattr(ocr_search, "get_text", missing_files)               # coverage raises for OCR
     monkeypatch.setattr(asr_text, "get_text", lambda name : "")
+    monkeypatch.setattr(asr_text, "status", lambda : {"ready" : True})        # a loaded index that has no text for these frames
 
     request = evaluation_router.EvaluationRunCreate(
         dataset_version = "round1-v3", reference_set_version = "r1-manual-v3",
