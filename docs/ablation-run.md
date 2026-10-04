@@ -257,3 +257,23 @@ Consequence: the `exclude_flagged` tables can differ from the all-queries tables
 rounds 1 to 3 are all L videos and carry no flag. On B the only difference is the one query `f2-qa-03` (n goes
 from 28 to 27). A flagged query is dropped from every metric of that table, video level included, so the
 difference is not limited to the interval columns.
+
+## What is stored per query (extra_json), for the offline analysis
+
+Besides the columns of `evaluation_query_results` (video rank and hits, interval metrics, `frame_results_json`
+with the 100 fused frames and each frame's per-model `routes` rank and cosine, `ranked_videos_json` with every
+video's first-appearance rank and its first three frames), `extra_json` holds:
+
+- `model_timings`: per model `search_ms` (text encoding plus the FAISS scan) and `rerank_ms`, as measured the
+  first time that model was computed for that text, `reused` (true when an earlier arm had already paid),
+  and `fuse_ms` (plus `pool_rerank_ms` per model for `after_fusion`). The wall-clock `retrieval_ms` of an
+  arm is NOT its cost, because later arms reuse earlier searches; a configuration's latency is rebuilt as
+  the sum of its models' `search_ms` and `rerank_ms` plus `fuse_ms`.
+- `interval_gap` (KIS and QA): the returned frame of the reference video closest to the valid interval, its
+  rank and frame index, `gap_frames`, `gap_s` and the `fps` used, and how many of the 100 frames belong to
+  the reference video. It covers only the returned frames.
+- TRAKE-N: `trake.events` (chosen frame and error in seconds per event), `trake.shortlist` (videos with a
+  feasible chain) and `trake.discovery`: the reference video's rank in the rebuilt shortlist stage, how many
+  events returned it, whether it was shortlisted and whether a feasible chain exists. `consistent` must be
+  true: it checks that every video the real call returned is in the rebuilt shortlist.
+- text, policy and cache digest, `check_units`, `flags`, `text_coverage`, `text_signal`, `video_coverage`.

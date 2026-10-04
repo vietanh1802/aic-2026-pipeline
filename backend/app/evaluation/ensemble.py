@@ -129,14 +129,19 @@ def evaluate_with_config(
     with the same code. search_fn exists for tests; the default is shared_search.search."""
     if (config.task_mode != "ensemble") :
         raise NotImplementedError(f"task_mode {config.task_mode} is not available yet")
-    if (search_fn is None) :
-        from app.evaluation.shared_search import search as search_fn
+    shared = search_fn is None
+    if (shared) :
+        from app.evaluation import shared_search
+        search_fn = shared_search.search
 
     retrieval_started = time.monotonic()
     frame_results = search_fn(
         query_text, list(config.models), config.top_k, config.top_m, config.rerank_mode
     )
     retrieval_ms = (time.monotonic() - retrieval_started) * 1000.0
+    # Per-model search and rerank times as first measured (a reused memo entry reports its original
+    # time with reused = true), so the cost of this arm can be rebuilt offline. Stubs report nothing.
+    model_timings = shared_search.last_timing() if shared else None
 
     aggregation_started = time.monotonic()
     ranked_videos = rank_visual_videos(frame_results)
@@ -157,6 +162,7 @@ def evaluate_with_config(
         "ranked_videos"           : ranked_videos,
         "video_metrics"           : video_metrics,
         "interval_metrics"        : interval_metrics,
+        "model_timings"           : model_timings,
         "timings" : {
             "translation_ms" : round(text_ms, 3),
             "retrieval_ms"   : round(retrieval_ms, 3),

@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterator
 from app.db.connection import get_conn, utcnow_iso
 from app.evaluation import cues, text_cache, text_measures, trake
 from app.evaluation.config import config_from_configuration
+from app.evaluation.diagnostics import interval_gap
 from app.evaluation.coverage import provenance, video_coverage
 from app.evaluation.ensemble import evaluate_translated_ensemble_query, evaluate_with_config
 from app.evaluation.repository import get_results, get_run, update_counts
@@ -85,6 +86,11 @@ def _runtime_snapshot() -> dict[str, Any] :
         "index_files"      : status.get("index_files"),
         "stale_files"      : status.get("stale_files"),
     }
+
+
+def _fps_of(video : str) -> float :
+    from app.preprocess import fps_for_video
+    return fps_for_video(video)
 
 
 def _final_status(completed_count : int, failed_count : int) -> str :
@@ -340,6 +346,16 @@ def process_run(
                         asr_mode = config.text_filter.asr_mode,
                     )
                     extra.update(side)
+                    if (result.get("model_timings")) :
+                        extra["model_timings"] = result["model_timings"]
+                    # How far the closest returned frame of the reference video was from the valid
+                    # interval (None for TRAKE). Its own narrow try, like the other side measures.
+                    try :
+                        gap = interval_gap(result["frame_results"], row["reference_video"], valid_intervals, _fps_of(row["reference_video"]))
+                        if (gap is not None) :
+                            extra["interval_gap"] = gap
+                    except Exception as exc :
+                        side_errors.append({"part" : "interval_gap", "error_type" : type(exc).__name__, "message" : str(exc)[ : 300]})
                     if (side_errors) :
                         extra["text_signal_errors"] = side_errors
                         if (not announced_annotation_error) :

@@ -20,7 +20,7 @@ from app.evaluation.presets import preset_configs
 from app.evaluation.repository import get_run
 from app.evaluation.runner import process_run
 from app.evaluation.seed import SEEDS_DIR, import_seed
-from app.evaluation.trake import evaluate_trake_n, score_trake
+from app.evaluation.trake import discovery_info, evaluate_trake_n, score_trake
 from app.routers import evaluation as evaluation_router
 
 REFERENCE = "L10_V001"
@@ -145,6 +145,9 @@ def test_trake_n_run_goes_through_process_run_and_the_report(conn, monkeypatch) 
     extra = rows[0]["extra"]
     assert extra["trake"]["events"]["correct"] == 2 and extra["trake"]["events"]["total"] == 3
     assert extra["trake"]["shortlist"] == 2
+    # The stage breakdown is stored (with the corpus not loaded here the rebuilt shortlist is empty).
+    assert {"candidates", "reference_rank", "in_shortlist", "feasible_chain", "consistent"} <= set(extra["trake"]["discovery"])
+    assert extra["trake"]["discovery"]["feasible_chain"] is True
     assert len(extra["cache_digests"]) == 3
     long_rows = report.long_table(rows)
     assert long_rows and any(r.get("event_accuracy") == pytest.approx(2 / 3) for r in long_rows)
@@ -179,3 +182,29 @@ def test_trake_n_completes_on_every_seed_with_exact_chains(conn, monkeypatch, da
     loaded = report.load_rows(conn, [run["id"]])
     assert [r["extra"]["trake"]["events"]["accuracy"] for r in loaded] == [1.0] * len(rows)
     assert all(r.get("event_accuracy") == 1.0 for r in report.long_table(loaded))
+
+
+# ─── where the reference video stood in the shortlist stage ────────────────
+
+def _fake_discovery_search(text, models, top_k, top_m, rerank_mode) :
+    """Two events. V_REF appears in both, V_ONE in event 1 only, V_TWO in event 2 only."""
+    rows = {"e1" : [("V_ONE", 90.0), ("V_REF", 80.0), ("V_ONE", 70.0)], "e2" : [("V_TWO", 95.0), ("V_REF", 60.0)]}[text]
+    return [{"video" : v, "distance" : d} for v, d in rows]
+
+
+def test_discovery_info_separates_not_shortlisted_from_no_feasible_chain() :
+    # V_REF appears in both events and is first. V_ONE (best distance 90, counted once per event) and
+    # V_TWO (95) have one event each, so V_TWO comes second.
+    shortlisted = discovery_info(["e1", "e2"], "V_REF", 50, 2, ["V_TWO"], search_fn = _fake_discovery_search)
+    assert (shortlisted["reference_rank"], shortlisted["reference_events"], shortlisted["candidates"]) == (1, 2, 3)
+    assert shortlisted["in_shortlist"] is True and shortlisted["feasible_chain"] is False
+    assert shortlisted["shortlist_videos"] == ["V_REF", "V_TWO"] and shortlisted["consistent"] is True
+
+    # A reference that no event returned has no rank at all.
+    absent = discovery_info(["e1", "e2"], "V_NONE", 50, 2, ["V_TWO"], search_fn = _fake_discovery_search)
+    assert absent["reference_rank"] is None and absent["in_shortlist"] is False and absent["reference_events"] == 0
+
+    # Ranked second but K = 1: not shortlisted. The real call returning it anyway would mean the rebuilt
+    # rule does not follow the real one, which is what consistent reports.
+    outside = discovery_info(["e1", "e2"], "V_TWO", 50, 1, ["V_TWO"], search_fn = _fake_discovery_search)
+    assert outside["reference_rank"] == 2 and outside["in_shortlist"] is False and outside["consistent"] is False

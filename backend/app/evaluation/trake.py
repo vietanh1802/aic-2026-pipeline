@@ -81,6 +81,56 @@ def score_trake(
     }
 
 
+def discovery_info(
+    event_texts : list[str],
+    reference_video : str,
+    top_m : int,
+    top_videos : int,
+    result_videos : list[str],
+    search_fn : Callable[..., list[dict]] | None = None,
+) -> dict[str, Any] :
+    """Where the reference video stood in the shortlist stage of trake_search_candidates.
+
+    That function returns only videos that survived the whole pipeline, so "never shortlisted" and
+    "shortlisted but no feasible chain" look the same in its output. preprocess.py cannot be changed, so
+    the shortlist is rebuilt here with the same rule: per event, ensemble search over every active
+    encoder with rerank (top_k = top_m); per video, the events it appears in and the sum of its best
+    distances; order by (events desc, summed distance desc); the first top_videos are the shortlist.
+    The per-model searches come from the shared memo, which verify.py proves equal to ensemble_search,
+    so this costs one search per event text, not two.
+
+    consistent is False when a video the real call returned is not in the rebuilt shortlist, which would
+    mean the rebuild does not follow the real rule and the stage labels must not be trusted."""
+    from app import preprocess
+    from app.evaluation import shared_search
+
+    search_fn = search_fn or shared_search.search
+    models = list(preprocess.ACTIVE_MODELS)
+    video_hits : dict[str, list[float]] = {}
+    for text in event_texts :
+        seen : set[str] = set()
+        for hit in search_fn(text, models, top_m, top_m, "per_model") :
+            video = hit.get("video")
+            if (not video or video in seen) :
+                continue
+            seen.add(video)
+            video_hits.setdefault(video, []).append(hit["distance"])
+    ordered = sorted(video_hits.items(), key = lambda kv : (-len(kv[1]), -sum(kv[1])))
+    names = [v for v, _hits in ordered]
+    shortlist = names[ : top_videos]
+    rank = names.index(reference_video) + 1 if reference_video in video_hits else None
+    return {
+        "candidates"          : len(names),
+        "top_videos"          : top_videos,
+        "reference_rank"      : rank,
+        "reference_events"    : len(video_hits.get(reference_video, [])),
+        "in_shortlist"        : rank is not None and rank <= top_videos,
+        "feasible_chain"      : reference_video in result_videos,
+        "shortlist_videos"    : shortlist,
+        "consistent"          : all(v in shortlist for v in result_videos),
+    }
+
+
 def evaluate_trake_n(
     query_vi : str,
     event_texts : list[str],
@@ -90,6 +140,7 @@ def evaluate_trake_n(
     *,
     search_fn : Callable[..., list[dict]] | None = None,
     fps_fn : Callable[[str], float] | None = None,
+    discovery_fn : Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any] :
     """One TRAKE query through trake_search_candidates with the production parameters of `config`."""
     from app import preprocess
@@ -105,6 +156,14 @@ def evaluate_trake_n(
     retrieval_ms = (time.monotonic() - started) * 1000.0
 
     scored = score_trake(results, reference_video, ref_events, fps_fn(reference_video), config.trake.event_tolerance_s)
+
+    # The stage breakdown is a side measure: if the rebuild fails the query keeps its scores and the
+    # failure is recorded where the breakdown would be, so the analysis can say it is missing.
+    try :
+        discovery = (discovery_fn or discovery_info)(
+            event_texts, reference_video, config.top_m, config.trake.top_videos, [r["video"] for r in results])
+    except Exception as exc :
+        discovery = {"error" : f"{type(exc).__name__}: {str(exc)[ : 300]}"}
     frame_results = [
         {"video" : r["video"], "name" : e["name"], "frame_idx" : e.get("frame_idx"), "event" : i + 1, "distance" : e.get("score")}
         for r in results for i, e in enumerate(r["events"])
@@ -126,5 +185,5 @@ def evaluate_trake_n(
         "timings"                 : {"translation_ms" : 0.0, "retrieval_ms" : round(retrieval_ms, 3),
                                      "aggregation_ms" : 0.0, "total_ms" : round(retrieval_ms, 3)},
         "trake"                   : {"events" : scored["events"], "missing_labels" : scored["missing_labels"],
-                                     "shortlist" : len(results)},
+                                     "shortlist" : len(results), "discovery" : discovery},
     }

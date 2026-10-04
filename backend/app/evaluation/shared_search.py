@@ -30,12 +30,17 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import time
 from typing import Any
 
 from app.evaluation.config import CANONICAL_MODELS
 
-_MEMO : dict[tuple[str, str, int], dict[str, list[dict]]] = {}
+_MEMO : dict[tuple[str, str, int], dict[str, Any]] = {}
 _MEMO_LIMIT = 8192
+
+# Timing of the most recent search() call, for the runner to persist per query (model_timings). One
+# suite worker thread calls search(), so a module global is enough; it is replaced on every call.
+_LAST : dict[str, Any] = {}
 
 
 def _pp() :
@@ -51,37 +56,64 @@ def _text_hash(text : str) -> str :
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def per_model_hits(text : str, model : str, top_m : int) -> dict[str, list[dict]] :
-    """{"raw": hits as _search_one returns them, "reranked": the same after Algorithm 2}.
+def _entry(text : str, model : str, top_m : int) -> tuple[dict[str, Any], bool] :
+    """The memo entry of (text, model, top_m) and whether it was already there.
 
-    rerank_one_model rewrites each hit's score in place, so the raw list is copied first."""
+    Besides the two lists the entry holds search_ms (text encoding plus the FAISS scan, one call to
+    preprocess._search_one) and rerank_ms (rerank_one_model on those hits), measured when the entry is
+    FIRST computed. A later arm that reuses it pays nothing, so the wall-clock time of an arm in the
+    database is not its cost; the cost of a configuration is rebuilt offline as the sum of its models'
+    stored search_ms and rerank_ms plus its fusion time."""
     key = (_text_hash(text), model, top_m)
     cached = _MEMO.get(key)
     if (cached is not None) :
-        return cached
+        return cached, True
     pp = _pp()
+    started = time.perf_counter()
     hits = pp._search_one(model, text, top_m)
+    search_ms = (time.perf_counter() - started) * 1000.0
     if (not hits) :
-        entry = {"raw" : [], "reranked" : []}
+        entry = {"raw" : [], "reranked" : [], "search_ms" : search_ms, "rerank_ms" : 0.0}
     else :
         raw = copy.deepcopy(hits)
-        entry = {"raw" : raw, "reranked" : pp.rerank_one_model(hits, text, model)}
+        started = time.perf_counter()
+        reranked = pp.rerank_one_model(hits, text, model)
+        entry = {"raw" : raw, "reranked" : reranked, "search_ms" : search_ms, "rerank_ms" : (time.perf_counter() - started) * 1000.0}
     if (len(_MEMO) >= _MEMO_LIMIT) :
         _MEMO.pop(next(iter(_MEMO)))
     _MEMO[key] = entry
-    return entry
+    return entry, False
 
 
-def _after_fusion(text : str, models : list[str], top_k : int, top_m : int) -> list[dict] :
+def per_model_hits(text : str, model : str, top_m : int) -> dict[str, Any] :
+    """{"raw": hits as _search_one returns them, "reranked": the same after Algorithm 2, plus the
+    search_ms and rerank_ms of the first computation}.
+
+    rerank_one_model rewrites each hit's score in place, so the raw list is copied first."""
+    return _entry(text, model, top_m)[0]
+
+
+def last_timing() -> dict[str, Any] :
+    """Timing of the most recent search(): per model {search_ms, rerank_ms, reused}, fuse_ms, and for
+    after_fusion pool_rerank_ms per model. Empty before the first call."""
+    return copy.deepcopy(_LAST)
+
+
+def _after_fusion(text : str, models : list[str], top_k : int, top_m : int, timing : dict[str, Any]) -> list[dict] :
     pp = _pp()
-    raw = {m : per_model_hits(text, m, top_m)["raw"] for m in models}
-    raw = {m : hits for m, hits in raw.items() if hits}
+    entries = {m : _entry(text, m, top_m) for m in models}
+    timing["models"] = {m : {"search_ms" : e["search_ms"], "rerank_ms" : e["rerank_ms"], "reused" : reused} for m, (e, reused) in entries.items()}
+    raw = {m : e["raw"] for m, (e, _reused) in entries.items() if e["raw"]}
+    timing["pool_rerank_ms"] = {}
+    timing["fuse_ms"] = 0.0
     if (not raw) :
         return []
 
     # 1. fuse the raw lists. The fused list, not top_k, is the candidate pool.
     pool_size = sum(len(hits) for hits in raw.values())
+    started = time.perf_counter()
     fused = pp._merge_ensemble(raw, pool_size)
+    timing["fuse_ms"] += (time.perf_counter() - started) * 1000.0
 
     # 2. every candidate gets its neighbour score under every active model.
     # rerank_one_model reads only h["name"] (to find the frame's neighbours) and overwrites h["score"]
@@ -104,10 +136,15 @@ def _after_fusion(text : str, models : list[str], top_k : int, top_m : int) -> l
             }
             for row in fused
         ]
+        started = time.perf_counter()
         rescored[model] = pp.rerank_one_model(pool, text, model)
+        timing["pool_rerank_ms"][model] = (time.perf_counter() - started) * 1000.0
 
     # 3. fuse the rescored lists, as the shipped merge does.
-    return pp._merge_ensemble(rescored, top_k)
+    started = time.perf_counter()
+    merged = pp._merge_ensemble(rescored, top_k)
+    timing["fuse_ms"] += (time.perf_counter() - started) * 1000.0
+    return merged
 
 
 def search(
@@ -123,19 +160,30 @@ def search(
     pp._load_indexes()
     pp._load_meta()
     ordered = [m for m in CANONICAL_MODELS if m in models and m in pp.MODEL_NAMES]
+    timing : dict[str, Any] = {"rerank_mode" : rerank_mode}
 
     if (rerank_mode == "after_fusion") :
-        return _after_fusion(text, ordered, top_k, top_m)
+        rows = _after_fusion(text, ordered, top_k, top_m, timing)
+        _LAST.clear()
+        _LAST.update(timing)
+        return rows
     if (rerank_mode not in ("per_model", "off")) :
         raise ValueError(f"unknown rerank_mode {rerank_mode}")
 
     field = "reranked" if rerank_mode == "per_model" else "raw"
     per_model : dict[str, list[dict]] = {}
+    timing["models"] = {}
     for model in ordered :
-        hits = per_model_hits(text, model, top_m)[field]
-        if (hits) :
-            per_model[model] = hits
-    return pp._merge_ensemble(per_model, top_k)
+        entry, reused = _entry(text, model, top_m)
+        timing["models"][model] = {"search_ms" : entry["search_ms"], "rerank_ms" : entry["rerank_ms"], "reused" : reused}
+        if (entry[field]) :
+            per_model[model] = entry[field]
+    started = time.perf_counter()
+    rows = pp._merge_ensemble(per_model, top_k)
+    timing["fuse_ms"] = (time.perf_counter() - started) * 1000.0
+    _LAST.clear()
+    _LAST.update(timing)
+    return rows
 
 
 def memo_size() -> int :

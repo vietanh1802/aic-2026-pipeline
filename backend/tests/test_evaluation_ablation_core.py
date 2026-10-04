@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import json
 import re
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from fastapi import HTTPException
 
 from app import preprocess
 from app.db.connection import utcnow_iso
-from app.evaluation import shared_search, text_cache, verify
+from app.evaluation import diagnostics, shared_search, text_cache, verify
 from app.evaluation.config import RunConfig
 from app.evaluation.runner import process_run
 from app.evaluation.seed import SEEDS_DIR, import_seed
@@ -272,3 +273,66 @@ def test_annotation_failures_are_recorded_and_never_cost_a_query_its_ranking(con
     assert {e["source"] for e in errors if e["part"] == "coverage"} == {"ocr"}
     # The report shows the count.
     assert report.metrics(rows)["annotation_errors"] == len(errors) > 0
+
+
+# ─── what the analysis needs is persisted per query ────────────────────────
+
+def test_search_reports_per_model_timings_and_marks_reused_entries(fake_preprocess) :
+    shared_search.search("q-a", ["beit3", "clip"], 100, 20, "per_model")
+    first = shared_search.last_timing()
+    assert set(first["models"]) == {"beit3", "clip"}
+    assert all(not m["reused"] and m["search_ms"] >= 0 and m["rerank_ms"] >= 0 for m in first["models"].values())
+    assert first["fuse_ms"] >= 0 and first["rerank_mode"] == "per_model"
+
+    # A later arm over the same text pays nothing for a model that is already memoised, and reports the
+    # time of its first computation.
+    shared_search.search("q-a", ["clip", "siglip2"], 100, 20, "off")
+    second = shared_search.last_timing()
+    assert second["models"]["clip"]["reused"] is True and second["models"]["siglip2"]["reused"] is False
+    assert second["models"]["clip"]["search_ms"] == first["models"]["clip"]["search_ms"]
+
+    shared_search.search("q-a", ["beit3", "clip", "siglip2"], 100, 20, "after_fusion")
+    third = shared_search.last_timing()
+    assert set(third["pool_rerank_ms"]) == {"beit3", "clip", "siglip2"} and third["fuse_ms"] >= 0
+
+
+def test_interval_gap_inside_before_after_and_missing() :
+    frames = [
+        {"video" : "A", "frame_idx" : 50}, {"video" : "L1", "frame_idx" : 40}, {"video" : "L1", "frame_idx" : 130},
+        {"video" : "L1", "frame_idx" : 155}, {"video" : "L1", "frame_idx" : 118},
+    ]
+    intervals = [{"start" : 100, "end" : 120}, {"start" : 300, "end" : 320}]
+    gap = diagnostics.interval_gap(frames, "L1", intervals, 25.0)
+    # 118 is inside the first interval (rank 5); 130 is 10 frames past it; 40 is 60 before it.
+    assert (gap["gap_frames"], gap["nearest_frame_rank"], gap["nearest_frame_idx"], gap["inside"]) == (0, 5, 118, True)
+    assert (gap["n_ref_frames"], gap["first_ref_frame_rank"]) == (4, 2)
+
+    outside = diagnostics.interval_gap(frames[ : 4], "L1", intervals, 25.0)
+    assert (outside["gap_frames"], outside["gap_s"], outside["inside"]) == (10, 0.4, False)
+
+    assert diagnostics.interval_gap(frames, "L1", None, 25.0) is None                  # TRAKE: no interval
+    missing = diagnostics.interval_gap(frames, "L9", intervals, 25.0)
+    assert (missing["n_ref_frames"], missing["gap_frames"], missing["inside"]) == (0, None, False)
+
+
+def test_configured_run_persists_model_timings_and_interval_gap(conn, monkeypatch, fake_preprocess) :
+    monkeypatch.setattr(evaluation_router, "enqueue_run", lambda run_id : None)
+    user = _admin(conn)
+    import_seed(conn, ROUND1)
+    _fill_cache(conn, "translate_gtx")
+    request = evaluation_router.EvaluationRunCreate(
+        dataset_version = "round1-v3", reference_set_version = "r1-manual-v3",
+        config = {"text_policy" : "translate_gtx", "top_m" : 20},
+    )
+    run = evaluation_router.start_run(request, user, conn)["run"]
+    process_run(run["id"], runtime_snapshot_fn = lambda : {"device" : "test"})
+
+    rows = conn.execute("SELECT query_key, task_type, extra_json FROM evaluation_query_results WHERE run_id = ?", (run["id"],)).fetchall()
+    assert len(rows) == 24
+    for row in rows :
+        extra = json.loads(row["extra_json"])
+        assert set(extra["model_timings"]["models"]) == {"beit3", "clip", "siglip2"}
+        assert extra["model_timings"]["fuse_ms"] >= 0
+        # TRAKE has no interval; KIS and QA record the gap (the fake corpus never returns the reference video).
+        assert ("interval_gap" in extra) == (row["task_type"] != "TRAKE")
+        assert "text_signal_errors" not in extra
