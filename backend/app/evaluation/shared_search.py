@@ -84,6 +84,11 @@ def _after_fusion(text : str, models : list[str], top_k : int, top_m : int) -> l
     fused = pp._merge_ensemble(raw, pool_size)
 
     # 2. every candidate gets its neighbour score under every active model.
+    # rerank_one_model reads only h["name"] (to find the frame's neighbours) and overwrites h["score"]
+    # and h["n_neighbors"]; faiss_id is never read, so -1 is harmless. raw_score is used only by
+    # _merge_ensemble for the route cosine shown in "routes" and never affects the ranking. A frame
+    # outside this model's own top_m has no stored cosine, so it shows 0.0 there: a display
+    # placeholder, not a measurement.
     cosine = {m : {h["name"] : h["raw_score"] for h in hits} for m, hits in raw.items()}
     rescored : dict[str, list[dict]] = {}
     for model in raw :

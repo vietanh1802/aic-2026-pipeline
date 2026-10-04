@@ -6,6 +6,11 @@ gives. The unit test proves that on fakes; this proves it on the real encoders a
 for every one of the 7 model subsets with rerank per_model and off. Frame order and every score
 (the fused distance and each model's route rank and cosine) must match within 1e-6.
 
+A fourth check covers the re-created after_fusion order: with a single model there is nothing to
+fuse, so after_fusion must equal per_model for each of the 3 models. That cannot prove the
+multi-model after_fusion variant is right (no reference exists), but it does prove its candidate
+pool and second rerank pass are wired to the real encoders and indexes. Total: 14 + 3 = 17 lines.
+
 The suite script runs this before a full run and refuses to continue on a failure.
 """
 from __future__ import annotations
@@ -56,7 +61,7 @@ def verify_shared_search(
     top_m : int = 50,
 ) -> dict[str, Any] :
     """Compare shared_search with ensemble_search for every subset and rerank mode over `queries`.
-    One line per subset and mode. Returns {"ok": bool, "results": [...]}."""
+    One line per subset and mode, then one per single model for the after_fusion check. Returns {"ok": bool, "results": [...]}."""
     from app import preprocess
 
     shared_search.clear_memo()
@@ -74,4 +79,17 @@ def verify_shared_search(
                     break
             say(f"{'FAIL' if problem else 'PASS'} {label} ({len(queries)} queries){': ' + problem if problem else ''}")
             results.append({"subset" : subset, "mode" : mode, "ok" : problem is None, "detail" : problem})
+
+    for model in CANONICAL_MODELS :
+        label = f"{model} after_fusion == per_model"
+        problem = None
+        for number, text in enumerate(queries, start = 1) :
+            expected = shared_search.search(text, [model], top_k, top_m, "per_model")
+            actual = shared_search.search(text, [model], top_k, top_m, "after_fusion")
+            problem = first_difference(expected, actual)
+            if (problem) :
+                problem = f"query {number}: {problem}"
+                break
+        say(f"{'FAIL' if problem else 'PASS'} {label} ({len(queries)} queries){': ' + problem if problem else ''}")
+        results.append({"subset" : [model], "mode" : "after_fusion==per_model", "ok" : problem is None, "detail" : problem})
     return {"ok" : all(r["ok"] for r in results), "queries" : len(queries), "results" : results}

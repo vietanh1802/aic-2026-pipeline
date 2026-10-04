@@ -21,7 +21,7 @@ from fastapi import HTTPException
 
 from app import preprocess
 from app.db.connection import utcnow_iso
-from app.evaluation import shared_search, text_cache
+from app.evaluation import shared_search, text_cache, verify
 from app.evaluation.config import RunConfig
 from app.evaluation.runner import process_run
 from app.evaluation.seed import SEEDS_DIR, import_seed
@@ -121,6 +121,15 @@ def test_shared_search_equals_ensemble_search_for_every_subset(fake_preprocess, 
             assert actual == expected, (query, subset, mode)
     # The three models were searched once each however many arms asked.
     assert shared_search.memo_size() == 3
+
+
+@pytest.mark.parametrize("query", ["q-a", "q-neg"])
+def test_after_fusion_with_a_single_model_equals_per_model(fake_preprocess, query) :
+    for model in preprocess.MODEL_NAMES :
+        expected = shared_search.search(query, [model], 100, 20, "per_model")
+        actual = shared_search.search(query, [model], 100, 20, "after_fusion")
+        assert verify.first_difference(expected, actual) is None, (query, model)
+        assert expected, model
 
 
 # ─── (c) preflight and replay ──────────────────────────────────────────────

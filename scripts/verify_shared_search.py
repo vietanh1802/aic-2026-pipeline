@@ -31,7 +31,7 @@ def main() -> int :
     args = parser.parse_args()
 
     outcome = verify_shared_search(seed_queries(args.dataset, args.n), lambda line : print(line, flush = True))
-    print("ALL PASS" if outcome["ok"] else "FAILED: shared_search does not reproduce ensemble_search")
+    print("ALL PASS" if outcome["ok"] else "FAILED: shared_search does not reproduce ensemble_search (or after_fusion differs from per_model for a single model)")
     return 0 if outcome["ok"] else 1
 
 
