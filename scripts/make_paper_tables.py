@@ -13,11 +13,16 @@ Tables (written to <run-dir>/paper_tables/, or --out):
   trake.tex         TRAKE-N vs whole-description search, rerank off, per text policy
   rerank_onoff.tex  supplement: rerank on vs off, Expand sentence, seven encoder sets
   components.tex    the component ablation table, from the final_table run (--final-dir)
+  components_stats.csv  full system against each row: Hit@1 gained/lost, exact McNemar p (Holm), paired bootstrap
+                    95% interval of the MRR difference (10,000 resamples, seed 0)
+  corpus.tex        the Method section's collection table, from the analysis table T1a (--corpus-csv)
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import random
+from math import comb
 from pathlib import Path
 
 LABEL = {"beit3" : "BEiT-3", "clip" : "OpenCLIP", "siglip2" : "SigLIP2"}
@@ -104,11 +109,61 @@ def latex(caption : str, label : str, row_names : list[str], cells : list[list[d
     ])
 
 
+def mcnemar_exact(gained : int, lost : int) -> float :
+    """Two-sided exact McNemar (binomial on the discordant pairs)."""
+    n = gained + lost
+    if (n == 0) :
+        return 1.0
+    tail = sum(comb(n, i) for i in range(0, min(gained, lost) + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+def holm(pvalues : list[float]) -> list[float] :
+    order = sorted(range(len(pvalues)), key = lambda i : pvalues[i])
+    adjusted, running = [0.0] * len(pvalues), 0.0
+    for rank, i in enumerate(order) :
+        running = max(running, min(1.0, (len(pvalues) - rank) * pvalues[i]))
+        adjusted[i] = running
+    return adjusted
+
+
+def paired_stats(run : "Run", base : str, other : str, bench : str) -> dict :
+    a, b = run.ranks[bench][run.by_code[base]], run.ranks[bench][run.by_code[other]]
+    queries = sorted(a)
+    rr = lambda r : 1.0 / r if r else 0.0   # noqa: E731
+    gained = sum(1 for q in queries if a[q] == 1 and b[q] != 1)
+    lost = sum(1 for q in queries if b[q] == 1 and a[q] != 1)
+    diffs = [rr(a[q]) - rr(b[q]) for q in queries]
+    rng = random.Random(0)
+    means = sorted(sum(rng.choice(diffs) for _ in diffs) / len(diffs) for _ in range(10000))
+    return {"n" : len(queries), "gained" : gained, "lost" : lost, "p" : mcnemar_exact(gained, lost),
+            "mrr_diff" : sum(diffs) / len(diffs), "ci_low" : means[249], "ci_high" : means[9749]}
+
+
+def corpus_table(path : Path) -> str :
+    rows = list(csv.DictReader(path.open(encoding = "utf-8")))
+    lines = []
+    for r in rows :
+        hours, keyframes = float(r["hours_lower_bound"]), int(r["keyframes"])
+        per_hour = keyframes / hours if hours else 0.0
+        gap = 3600.0 / per_hour if per_hour else 0.0
+        name = "Total" if r["prefix"] in ("All", "all") else r["prefix"]
+        lines.append(f"{name} & {int(r['videos']):,} & {hours:.1f} & {keyframes:,} & {int(r['shots']):,} & {per_hour:,.0f} & {gap:.2f} \\\\")
+    return "\n".join([
+        "\\begin{table}[t]", "\\centering", "\\small", "\\renewcommand{\\arraystretch}{1.35}", "\\setlength{\\tabcolsep}{5pt}",
+        "\\caption{Indexed collection by video group (hours are a lower bound: last keyframe over frame rate).}", "\\label{tab:corpus}",
+        "\\resizebox{\\columnwidth}{!}{%", "\\begin{tabular}{l|rrrrrr}", "\\hline",
+        "Group & Videos & Hours & Keyframes & Shots & KF/hour & Gap (s) \\\\", "\\hline", *lines[ : -1], "\\hline", lines[-1], "\\hline",
+        "\\end{tabular}", "}", "\\end{table}", "",
+    ])
+
+
 def main() -> int :
     parser = argparse.ArgumentParser(description = __doc__.split("\n")[0])
     parser.add_argument("--run-dir", required = True, help = "the core3 run folder")
     parser.add_argument("--final-dir", default = None, help = "the final_table run folder (components table)")
     parser.add_argument("--visual-text", default = "sentence", choices = tuple(OFF_CODES), help = "text of the visual table")
+    parser.add_argument("--corpus-csv", default = None, help = "analysis/tables/T1a_corpus.csv of a run folder")
     parser.add_argument("--out", default = None)
     args = parser.parse_args()
     core = Run(Path(args.run_dir))
@@ -162,6 +217,18 @@ def main() -> int :
         (out / "components.tex").write_text(latex(
             "Component ablation: the full system and one component changed at a time.", "tab:components",
             labels, ab(final, [c for c, _ in rows], labels, "components"), groups, True), encoding = "utf-8")
+
+        stats = [(bench, code, paired_stats(final, "F01", code, bench)) for code, _ in rows if code != "F01" for bench in ("A", "B")]
+        adjusted = holm([s["p"] for _, _, s in stats])
+        with (out / "components_stats.csv").open("w", encoding = "utf-8", newline = "") as handle :
+            writer = csv.writer(handle)
+            writer.writerow(["bench", "full_system_vs", "n", "hit1_gained", "hit1_lost", "mcnemar_p", "holm_p", "mrr_diff", "mrr_diff_ci95_low", "mrr_diff_ci95_high"])
+            for (bench, code, s), p_holm in zip(stats, adjusted) :
+                writer.writerow([bench, final.by_code[code], s["n"], s["gained"], s["lost"], f"{s['p']:.3f}", f"{p_holm:.3f}",
+                                 f"{s['mrr_diff']:+.3f}", f"{s['ci_low']:+.3f}", f"{s['ci_high']:+.3f}"])
+
+    if (args.corpus_csv) :
+        (out / "corpus.tex").write_text(corpus_table(Path(args.corpus_csv)), encoding = "utf-8")
 
     with (out / "sources.csv").open("w", encoding = "utf-8", newline = "") as handle :
         writer = csv.DictWriter(handle, fieldnames = ["table", "row", "bench", "run", "config", "n"])

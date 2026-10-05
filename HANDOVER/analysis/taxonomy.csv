@@ -1,0 +1,10 @@
+code,description
+D1,many visually similar videos
+D2,small or fine detail not captured
+D3,depends on visible text
+D4,depends on speech
+D5,action or temporal order not visible in one frame
+D6,query ambiguous or under-specified
+D7,translation or text-encoder loss
+D8,reference label doubtful
+D9,other

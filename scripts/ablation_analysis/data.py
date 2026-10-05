@@ -131,6 +131,10 @@ def role_of(config : dict[str, Any], base_text : str = "translate_gtx") -> str :
     expand_gemini (the reverse) or raw_vi."""
     models = [m for m in CANONICAL_MODELS if m in config.get("models", [])]
     mode, text, task_mode = config.get("rerank_mode", "per_model"), config.get("text_policy", ""), config.get("task_mode", "ensemble")
+    # A final_table run reranks with the frozen evaluation-side variant: it plays the role per_model plays elsewhere,
+    # so F01 is the baseline and F02 (off) the rerank-off arm.
+    if (mode == "variant") :
+        mode = "per_model"
     if (task_mode == "trake_n") :
         return "trake_n"
     if ((config.get("subset") or {}).get("task_types") == ["TRAKE"]) :

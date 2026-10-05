@@ -34,7 +34,11 @@ F02 equals C08 on A.
 On B the full system has the best H@1 and MRR of every row. On A, removing BEiT-3 is better than the full system (45.3
 vs 41.9): the row stays in the table as the brief requires. Paired Hit@1 of the full system against: no rerank A +2/-0,
 B +2/-0; plain translation A +9/-3, B +6/-2; keywords A +14/-11, B +2/-1. With 86 and 28 queries none of these is
-significant on its own (INFERRED from the counts; the analysis script's McNemar/Holm tables were not regenerated).
+significant after Holm adjustment (`paper_tables/components_stats.csv`: exact McNemar on Hit@1 with Holm over the 12
+comparisons, paired bootstrap 95% interval of the MRR difference, 10,000 resamples). The one difference whose MRR interval
+excludes 0 on both benchmarks is removing SigLIP2 (A +0.110 [+0.052, +0.171], B +0.119 [+0.032, +0.221]). Rerank: A
++0.012 [-0.005, +0.033], B +0.026 [-0.016, +0.085]. Plain translation: A +0.047 [-0.013, +0.109], B +0.115 [-0.023,
++0.251].
 
 ## Expand: the two outputs and plain translation (rerank off, core3 `20261005-072438`)
 
@@ -54,13 +58,37 @@ against keywords is mixed: the sentence wins on A, the keywords on B H@1, the se
 TRAKE (8 queries, `trake.tex`): TRAKE-N 50.0 H@1 on Expand sentence and on plain translation; whole-description search
 with rerank off 12.5 (sentence), 0.0 (plain), 37.5 (keywords). Eight queries decide it: describe, do not claim.
 
+## Method-section numbers (`paper_tables/corpus.tex`, from `analysis/T1a_corpus.md`)
+
+| Group | Videos | Hours (lower bound) | Keyframes | Shots | KF/hour | Gap (s) |
+|---|---|---|---|---|---|---|
+| L | 873 | 130.6 | 360,531 | 96,746 | 2,761 | 1.30 |
+| M | 304 | 99.5 | 336,876 | 97,434 | 3,386 | 1.06 |
+| N | 298 | 48.3 | 201,221 | 298 | 4,166 | 0.86 |
+| S | 12 | 46.6 | 92,841 | 9,887 | 1,992 | 1.81 |
+| Total | 1,487 | 325.0 | 991,469 | 204,365 | 3,051 | 1.18 |
+
+Replaces the draft's 1,480 videos, 323.8 h, 983,931 keyframes, 202,114 shots, M 297 / 95,183 / 329,338. Stored neighbour
+lists: 727,574 of 991,469 keyframes (73.4%); the 263,895 without are all L. ASR: the deployed BM25 index has 18,489
+documents (18,546 windows built; the difference was not traced).
+
+## Truncation on final-v2 (`analysis/T5b_text_length.md`, `T5c_truncated_vs_not.md`)
+
+Share of queries over the encoder's context (Benchmark B): Expand sentence OpenCLIP 7.1%, SigLIP2 14.3%; plain
+translation 21.4% and 25.0%; Expand keywords 0%. Final-v1 was 17.9% / 50.0% (Expand) and 85.7% / 96.4% (plain).
+
+## Error labelling
+
+`analysis/error_labeling_sheet.xlsx` (73 rows): every query the FULL SYSTEM (F01) does not rank first, A and B, with the
+top-5 videos and automatic labels. To fill by hand: `error_codes` (D1 to D9, `taxonomy.csv`), `small_detail_query`,
+`text_cue_present`, `label_doubt`; then `python scripts/aggregate_error_labels.py <filled csv> --run-dir 20261005-081235`.
+
 ## Not done (time)
 
-- Prompt variants of Task 3.5 (no new Gemini prompt was tried); truncation tables T5b/T5c on final-v2; the 10 example
-  pairs of Task 3.4.
-- `analyze_ablation.py` on the new folders (the old analysis works on a synthetic core3 folder; not run on the real ones).
+- Prompt variants of Task 3.5 (no new Gemini prompt was tried) and the 10 example pairs of Task 3.4.
 - Reading `app.db` for the live settings (Task 2.1); H2 as an L-only re-run.
-- Method-section number fixes (Task 4.1) and error labelling (Task 4.2).
+- A production patch for the rerank fix (`docs/proposed_patches/`).
+- Filling the error labels (needs a person).
 
 ## Commands
 

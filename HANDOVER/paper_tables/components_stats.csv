@@ -1,0 +1,13 @@
+bench,full_system_vs,n,hit1_gained,hit1_lost,mcnemar_p,holm_p,mrr_diff,mrr_diff_ci95_low,mrr_diff_ci95_high
+A,F02 without rerank,86,2,0,0.500,1.000,+0.012,-0.005,+0.033
+B,F02 without rerank,28,2,0,0.500,1.000,+0.026,-0.016,+0.085
+A,F03 plain translation instead of Expand,86,9,3,0.146,1.000,+0.047,-0.013,+0.109
+B,F03 plain translation instead of Expand,28,6,2,0.289,1.000,+0.115,-0.023,+0.251
+A,F04 without BEiT-3,86,4,7,0.549,1.000,-0.025,-0.070,+0.019
+B,F04 without BEiT-3,28,4,1,0.375,1.000,+0.044,-0.057,+0.155
+A,F05 without OpenCLIP,86,4,3,1.000,1.000,+0.017,-0.023,+0.060
+B,F05 without OpenCLIP,28,3,0,0.250,1.000,+0.059,-0.011,+0.139
+A,F06 without SigLIP2,86,12,3,0.035,0.422,+0.110,+0.052,+0.171
+B,F06 without SigLIP2,28,4,0,0.125,1.000,+0.119,+0.032,+0.221
+A,F07 the other Expand output (keywords),86,14,11,0.690,1.000,+0.034,-0.050,+0.119
+B,F07 the other Expand output (keywords),28,2,1,1.000,1.000,+0.036,-0.070,+0.156
