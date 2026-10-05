@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{5pt}
+\caption{Video-level retrieval by encoder set (Expand (sentence) text).}
+\label{tab:visual}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l|cccc|cccc}
+\hline
+ & \multicolumn{4}{c|}{Benchmark A (dev.)} & \multicolumn{4}{c}{Benchmark B (held out)} \\
+ & H@1 & R@5 & R@10 & MRR & H@1 & R@5 & R@10 & MRR \\
+\hline
+BEiT-3 & $32.6$ & $52.3$ & $59.3$ & $0.412$ & $32.1$ & $53.6$ & $64.3$ & $0.438$ \\
+OpenCLIP & $29.1$ & $55.8$ & $61.6$ & $0.405$ & $32.1$ & $60.7$ & $78.6$ & $0.470$ \\
+SigLIP2 & $39.5$ & $62.8$ & $68.6$ & $0.504$ & $\mathbf{46.4}$ & $\mathbf{78.6}$ & $82.1$ & $\mathbf{0.617}$ \\
+BEiT-3 + OpenCLIP & $33.7$ & $54.7$ & $64.0$ & $0.432$ & $35.7$ & $67.9$ & $71.4$ & $0.495$ \\
+BEiT-3 + SigLIP2 & $41.9$ & $62.8$ & $67.4$ & $0.513$ & $39.3$ & $75.0$ & $75.0$ & $0.558$ \\
+OpenCLIP + SigLIP2 & $\mathbf{46.5}$ & $64.0$ & $69.8$ & $\mathbf{0.549}$ & $\mathbf{46.4}$ & $75.0$ & $\mathbf{85.7}$ & $0.617$ \\
+All three & $39.5$ & $\mathbf{65.1}$ & $\mathbf{70.9}$ & $0.512$ & $\mathbf{46.4}$ & $75.0$ & $\mathbf{85.7}$ & $0.598$ \\
+\hline
+\end{tabular}
+}
+\end{table}

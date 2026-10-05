@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{5pt}
+\caption{Component ablation: the full system and one component changed at a time.}
+\label{tab:components}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l|cccc|cccc}
+\hline
+ & \multicolumn{4}{c|}{Benchmark A (dev.)} & \multicolumn{4}{c}{Benchmark B (held out)} \\
+ & H@1 & R@5 & R@10 & MRR & H@1 & R@5 & R@10 & MRR \\
+\hline
+Full system & $41.9$ & $64.0$ & $\mathbf{73.3}$ & $0.524$ & $\mathbf{53.6}$ & $\mathbf{75.0}$ & $82.1$ & $\mathbf{0.624}$ \\
+Without rerank & $39.5$ & $\mathbf{65.1}$ & $70.9$ & $0.512$ & $46.4$ & $\mathbf{75.0}$ & $\mathbf{85.7}$ & $0.598$ \\
+Plain translation instead of Expand & $34.9$ & $60.5$ & $\mathbf{73.3}$ & $0.476$ & $39.3$ & $67.9$ & $75.0$ & $0.510$ \\
+Without BEiT-3 & $\mathbf{45.3}$ & $\mathbf{65.1}$ & $70.9$ & $\mathbf{0.549}$ & $42.9$ & $71.4$ & $82.1$ & $0.580$ \\
+Without OpenCLIP & $40.7$ & $59.3$ & $69.8$ & $0.507$ & $42.9$ & $71.4$ & $75.0$ & $0.565$ \\
+Without SigLIP2 & $31.4$ & $51.2$ & $64.0$ & $0.414$ & $39.3$ & $67.9$ & $67.9$ & $0.505$ \\
+The other Expand output (keywords) & $38.4$ & $61.6$ & $68.6$ & $0.490$ & $50.0$ & $\mathbf{75.0}$ & $78.6$ & $0.588$ \\
+\hline
+\end{tabular}
+}
+\end{table}

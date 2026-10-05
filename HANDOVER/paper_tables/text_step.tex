@@ -1,0 +1,29 @@
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{5pt}
+\caption{Query text: the two Expand outputs against plain translation.}
+\label{tab:text}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l|cccc|cccc}
+\hline
+ & \multicolumn{4}{c|}{Benchmark A (dev.)} & \multicolumn{4}{c}{Benchmark B (held out)} \\
+ & H@1 & R@5 & R@10 & MRR & H@1 & R@5 & R@10 & MRR \\
+\hline
+BEiT-3, Expand (sentence) & $32.6$ & $52.3$ & $59.3$ & $0.412$ & $32.1$ & $53.6$ & $64.3$ & $0.438$ \\
+BEiT-3, Expand (keywords) & $30.2$ & $50.0$ & $55.8$ & $0.380$ & $35.7$ & $60.7$ & $60.7$ & $0.444$ \\
+BEiT-3, Plain translation & $26.7$ & $55.8$ & $61.6$ & $0.382$ & $42.9$ & $57.1$ & $71.4$ & $0.514$ \\
+OpenCLIP, Expand (sentence) & $29.1$ & $55.8$ & $61.6$ & $0.405$ & $32.1$ & $60.7$ & $78.6$ & $0.470$ \\
+OpenCLIP, Expand (keywords) & $26.7$ & $51.2$ & $58.1$ & $0.384$ & $46.4$ & $67.9$ & $78.6$ & $0.569$ \\
+OpenCLIP, Plain translation & $30.2$ & $52.3$ & $60.5$ & $0.411$ & $39.3$ & $64.3$ & $75.0$ & $0.512$ \\
+SigLIP2, Expand (sentence) & $39.5$ & $62.8$ & $68.6$ & $0.504$ & $46.4$ & $\mathbf{78.6}$ & $82.1$ & $\mathbf{0.617}$ \\
+SigLIP2, Expand (keywords) & $\mathbf{41.9}$ & $\mathbf{65.1}$ & $67.4$ & $0.506$ & $35.7$ & $67.9$ & $71.4$ & $0.499$ \\
+SigLIP2, Plain translation & $31.4$ & $47.7$ & $58.1$ & $0.398$ & $32.1$ & $60.7$ & $67.9$ & $0.453$ \\
+All three, Expand (sentence) & $39.5$ & $\mathbf{65.1}$ & $70.9$ & $\mathbf{0.512}$ & $46.4$ & $75.0$ & $\mathbf{85.7}$ & $0.598$ \\
+All three, Expand (keywords) & $38.4$ & $61.6$ & $68.6$ & $0.492$ & $\mathbf{50.0}$ & $75.0$ & $78.6$ & $0.597$ \\
+All three, Plain translation & $31.4$ & $59.3$ & $\mathbf{72.1}$ & $0.451$ & $39.3$ & $67.9$ & $75.0$ & $0.510$ \\
+\hline
+\end{tabular}
+}
+\end{table}

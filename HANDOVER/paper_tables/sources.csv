@@ -1,0 +1,87 @@
+table,row,bench,run,config,n
+visual,BEiT-3,A,20261005-072438,"C09 beit3 only, rerank off",86
+visual,BEiT-3,B,20261005-072438,"C09 beit3 only, rerank off",28
+visual,OpenCLIP,A,20261005-072438,"C10 clip only, rerank off",86
+visual,OpenCLIP,B,20261005-072438,"C10 clip only, rerank off",28
+visual,SigLIP2,A,20261005-072438,"C11 siglip2 only, rerank off",86
+visual,SigLIP2,B,20261005-072438,"C11 siglip2 only, rerank off",28
+visual,BEiT-3 + OpenCLIP,A,20261005-072438,"C12a beit3+clip, rerank off",86
+visual,BEiT-3 + OpenCLIP,B,20261005-072438,"C12a beit3+clip, rerank off",28
+visual,BEiT-3 + SigLIP2,A,20261005-072438,"C12b beit3+siglip2, rerank off",86
+visual,BEiT-3 + SigLIP2,B,20261005-072438,"C12b beit3+siglip2, rerank off",28
+visual,OpenCLIP + SigLIP2,A,20261005-072438,"C12c clip+siglip2, rerank off",86
+visual,OpenCLIP + SigLIP2,B,20261005-072438,"C12c clip+siglip2, rerank off",28
+visual,All three,A,20261005-072438,C08 rerank off,86
+visual,All three,B,20261005-072438,C08 rerank off,28
+text_step,"BEiT-3, Expand (sentence)",A,20261005-072438,"C09 beit3 only, rerank off",86
+text_step,"BEiT-3, Expand (sentence)",B,20261005-072438,"C09 beit3 only, rerank off",28
+text_step,"BEiT-3, Expand (keywords)",A,20261005-072438,"C23 beit3, Expand keywords, rerank off",86
+text_step,"BEiT-3, Expand (keywords)",B,20261005-072438,"C23 beit3, Expand keywords, rerank off",28
+text_step,"BEiT-3, Plain translation",A,20261005-072438,"C16 beit3, plain translation, rerank off",86
+text_step,"BEiT-3, Plain translation",B,20261005-072438,"C16 beit3, plain translation, rerank off",28
+text_step,"OpenCLIP, Expand (sentence)",A,20261005-072438,"C10 clip only, rerank off",86
+text_step,"OpenCLIP, Expand (sentence)",B,20261005-072438,"C10 clip only, rerank off",28
+text_step,"OpenCLIP, Expand (keywords)",A,20261005-072438,"C24 clip, Expand keywords, rerank off",86
+text_step,"OpenCLIP, Expand (keywords)",B,20261005-072438,"C24 clip, Expand keywords, rerank off",28
+text_step,"OpenCLIP, Plain translation",A,20261005-072438,"C17 clip, plain translation, rerank off",86
+text_step,"OpenCLIP, Plain translation",B,20261005-072438,"C17 clip, plain translation, rerank off",28
+text_step,"SigLIP2, Expand (sentence)",A,20261005-072438,"C11 siglip2 only, rerank off",86
+text_step,"SigLIP2, Expand (sentence)",B,20261005-072438,"C11 siglip2 only, rerank off",28
+text_step,"SigLIP2, Expand (keywords)",A,20261005-072438,"C25 siglip2, Expand keywords, rerank off",86
+text_step,"SigLIP2, Expand (keywords)",B,20261005-072438,"C25 siglip2, Expand keywords, rerank off",28
+text_step,"SigLIP2, Plain translation",A,20261005-072438,"C18 siglip2, plain translation, rerank off",86
+text_step,"SigLIP2, Plain translation",B,20261005-072438,"C18 siglip2, plain translation, rerank off",28
+text_step,"All three, Expand (sentence)",A,20261005-072438,C08 rerank off,86
+text_step,"All three, Expand (sentence)",B,20261005-072438,C08 rerank off,28
+text_step,"All three, Expand (keywords)",A,20261005-072438,"C29 all three, Expand keywords, rerank off",86
+text_step,"All three, Expand (keywords)",B,20261005-072438,"C29 all three, Expand keywords, rerank off",28
+text_step,"All three, Plain translation",A,20261005-072438,"C22 all three, plain translation, rerank off",86
+text_step,"All three, Plain translation",B,20261005-072438,"C22 all three, plain translation, rerank off",28
+trake,"Whole-description ensemble search, Expand (sentence)",A+B,20261005-072438,"T02b TRAKE queries, plain ensemble, rerank off",8
+trake,"TRAKE-N (event-wise search), Expand (sentence)",A+B,20261005-072438,T01 TRAKE-N,8
+trake,"Whole-description ensemble search, Plain translation",A+B,20261005-072438,"T02g TRAKE queries, plain ensemble, rerank off, plain translation",8
+trake,"TRAKE-N (event-wise search), Plain translation",A+B,20261005-072438,"T01g TRAKE-N, plain translation",8
+trake,"Whole-description ensemble search, Expand (keywords)",A+B,20261005-072438,"T02k TRAKE queries, plain ensemble, rerank off, Expand keywords",8
+trake,"TRAKE-N (event-wise search), Expand (keywords)",A+B,20261005-072438,"T01k TRAKE-N, Expand keywords",8
+rerank_onoff,"BEiT-3, rerank on",A,20261005-072438,C02 beit3 only,86
+rerank_onoff,"BEiT-3, rerank on",B,20261005-072438,C02 beit3 only,28
+rerank_onoff,"BEiT-3, rerank off",A,20261005-072438,"C09 beit3 only, rerank off",86
+rerank_onoff,"BEiT-3, rerank off",B,20261005-072438,"C09 beit3 only, rerank off",28
+rerank_onoff,"OpenCLIP, rerank on",A,20261005-072438,C03 clip only,86
+rerank_onoff,"OpenCLIP, rerank on",B,20261005-072438,C03 clip only,28
+rerank_onoff,"OpenCLIP, rerank off",A,20261005-072438,"C10 clip only, rerank off",86
+rerank_onoff,"OpenCLIP, rerank off",B,20261005-072438,"C10 clip only, rerank off",28
+rerank_onoff,"SigLIP2, rerank on",A,20261005-072438,C04 siglip2 only,86
+rerank_onoff,"SigLIP2, rerank on",B,20261005-072438,C04 siglip2 only,28
+rerank_onoff,"SigLIP2, rerank off",A,20261005-072438,"C11 siglip2 only, rerank off",86
+rerank_onoff,"SigLIP2, rerank off",B,20261005-072438,"C11 siglip2 only, rerank off",28
+rerank_onoff,"BEiT-3 + OpenCLIP, rerank on",A,20261005-072438,C05 beit3+clip,86
+rerank_onoff,"BEiT-3 + OpenCLIP, rerank on",B,20261005-072438,C05 beit3+clip,28
+rerank_onoff,"BEiT-3 + OpenCLIP, rerank off",A,20261005-072438,"C12a beit3+clip, rerank off",86
+rerank_onoff,"BEiT-3 + OpenCLIP, rerank off",B,20261005-072438,"C12a beit3+clip, rerank off",28
+rerank_onoff,"BEiT-3 + SigLIP2, rerank on",A,20261005-072438,C06 beit3+siglip2,86
+rerank_onoff,"BEiT-3 + SigLIP2, rerank on",B,20261005-072438,C06 beit3+siglip2,28
+rerank_onoff,"BEiT-3 + SigLIP2, rerank off",A,20261005-072438,"C12b beit3+siglip2, rerank off",86
+rerank_onoff,"BEiT-3 + SigLIP2, rerank off",B,20261005-072438,"C12b beit3+siglip2, rerank off",28
+rerank_onoff,"OpenCLIP + SigLIP2, rerank on",A,20261005-072438,C07 clip+siglip2,86
+rerank_onoff,"OpenCLIP + SigLIP2, rerank on",B,20261005-072438,C07 clip+siglip2,28
+rerank_onoff,"OpenCLIP + SigLIP2, rerank off",A,20261005-072438,"C12c clip+siglip2, rerank off",86
+rerank_onoff,"OpenCLIP + SigLIP2, rerank off",B,20261005-072438,"C12c clip+siglip2, rerank off",28
+rerank_onoff,"All three, rerank on",A,20261005-072438,C01 baseline,86
+rerank_onoff,"All three, rerank on",B,20261005-072438,C01 baseline,28
+rerank_onoff,"All three, rerank off",A,20261005-072438,C08 rerank off,86
+rerank_onoff,"All three, rerank off",B,20261005-072438,C08 rerank off,28
+components,Full system,A,20261005-081235,F01 full system,86
+components,Full system,B,20261005-081235,F01 full system,28
+components,Without rerank,A,20261005-081235,F02 without rerank,86
+components,Without rerank,B,20261005-081235,F02 without rerank,28
+components,Plain translation instead of Expand,A,20261005-081235,F03 plain translation instead of Expand,86
+components,Plain translation instead of Expand,B,20261005-081235,F03 plain translation instead of Expand,28
+components,Without BEiT-3,A,20261005-081235,F04 without BEiT-3,86
+components,Without BEiT-3,B,20261005-081235,F04 without BEiT-3,28
+components,Without OpenCLIP,A,20261005-081235,F05 without OpenCLIP,86
+components,Without OpenCLIP,B,20261005-081235,F05 without OpenCLIP,28
+components,Without SigLIP2,A,20261005-081235,F06 without SigLIP2,86
+components,Without SigLIP2,B,20261005-081235,F06 without SigLIP2,28
+components,The other Expand output (keywords),A,20261005-081235,F07 the other Expand output (keywords),86
+components,The other Expand output (keywords),B,20261005-081235,F07 the other Expand output (keywords),28

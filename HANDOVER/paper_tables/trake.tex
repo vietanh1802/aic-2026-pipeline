@@ -1,0 +1,21 @@
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{5pt}
+\caption{TRAKE queries (A and B pooled).}
+\label{tab:trake}
+\begin{tabular}{l|cccc}
+\hline
+ & \multicolumn{4}{c}{TRAKE queries} \\
+ & H@1 & R@5 & R@10 & MRR \\
+\hline
+Whole-description ensemble search, Expand (sentence) & $12.5$ & $\mathbf{75.0}$ & $\mathbf{87.5}$ & $0.396$ \\
+TRAKE-N (event-wise search), Expand (sentence) & $\mathbf{50.0}$ & $50.0$ & $50.0$ & $0.524$ \\
+Whole-description ensemble search, Plain translation & $0.0$ & $25.0$ & $50.0$ & $0.184$ \\
+TRAKE-N (event-wise search), Plain translation & $\mathbf{50.0}$ & $50.0$ & $75.0$ & $\mathbf{0.530}$ \\
+Whole-description ensemble search, Expand (keywords) & $37.5$ & $\mathbf{75.0}$ & $\mathbf{87.5}$ & $0.499$ \\
+TRAKE-N (event-wise search), Expand (keywords) & $37.5$ & $50.0$ & $50.0$ & $0.463$ \\
+\hline
+\end{tabular}
+\end{table}
