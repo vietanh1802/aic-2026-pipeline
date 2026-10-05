@@ -79,7 +79,7 @@ def main() -> int :
     frozen = {
         "rule"        : "HANDOVER/rerank_selection_rule.md",
         "run_dir"     : run_dir.name,
-        "run_commit"  : provenance.get("commit") or provenance.get("git_commit"),
+        "run_commit"  : provenance.get("commit_full") or provenance.get("commit"),
         "frozen_at"   : datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "text_policy" : text_policy,
         "winner"      : winner,
