@@ -30,7 +30,7 @@ FIXTURE = [
     ("final", "F1", "KIS", "M01_V001", 1, 4, ()),
     ("final", "F2", "QA", "S01-V001", 2, 2, ()),
 ]
-DATASET = {"round1" : "round1-v3", "round2" : "round2-v2", "final" : "final-v1"}
+DATASET = {"round1" : "round1-v3", "round2" : "round2-v2", "final" : "final-v2"}
 
 
 def _row(config, slug, key, task, video, rank, flags) :

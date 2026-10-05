@@ -41,7 +41,7 @@ if hasattr(sys.stdout, "reconfigure") :
     sys.stdout.reconfigure(encoding = "utf-8")
 
 SEED = 20261004
-DATASETS = ("round1-v3", "round2-v2", "round3-v2", "final-v1")
+DATASETS = ("round1-v3", "round2-v2", "round3-v2", "final-v2")
 SKILL = {"beit3" : 0.0, "clip" : 0.25, "siglip2" : 0.45}
 PREFIX_OFFSET = {"L" : 0.0, "M" : -0.35, "N" : -0.7, "S" : -0.55}
 SLEEP_S = {"beit3" : 0.004, "clip" : 0.012, "siglip2" : 0.008}   # fake per-model search cost, only so timings are not all zero
@@ -128,9 +128,11 @@ def load_contexts(conn) -> tuple[dict[str, Context], dict[str, Context]] :
             by_text[f"EN::{row['query_key']}"] = ctx
             by_text[expand_text(row["query_key"])] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals, expand = True)
             by_text[row["query_vi"]] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals, raw = True)
+            by_text[f"KW::{row['query_key']}"] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], intervals, expand = True)
             for event in json.loads(row["trake_events_json"] or "[]") :
                 by_text[f"EN::{event['description_vi']}"] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], [], event = True)
                 by_text[expand_text(event["description_vi"])] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], [], event = True, expand = True)
+                by_text[f"KW::{event['description_vi']}"] = Context(dataset, row["query_key"], row["task_type"], row["video_id"], [], event = True, expand = True)
     return by_text, by_key
 
 
@@ -360,7 +362,8 @@ def main() -> int :
                 # The Expand text of the query and of each TRAKE event (task type of the row, as the runner asks for it).
                 labels = [(row["query_vi"], row["query_key"])] + [(e["description_vi"], e["description_vi"]) for e in json.loads(row["trake_events_json"] or "[]")]
                 for vi, label in labels :
-                    output = {"eng_query" : expand_text(label), "check_units" : ["a unit", "another unit"], "translated_query" : None}
+                    # One keyword per text so the expand_keywords arms (core3) find their query, like the sentence does.
+                    output = {"eng_query" : expand_text(label), "check_units" : [f"KW::{label}"], "translated_query" : None}
                     text_cache.store(conn, text_cache.make_key("expand_gemini", vi, row["task_type"]), vi, output, "gemini")
 
         patches = [

@@ -33,11 +33,22 @@ from typing import Any, Callable
 
 from app.db.connection import utcnow_iso
 
-TEXT_POLICIES = ("raw_vi", "translate_gtx", "expand_gemini")
+TEXT_POLICIES = ("raw_vi", "translate_gtx", "expand_gemini", "expand_keywords")
 
 # raw_vi needs no function at all. The other two map to the production function they replay.
 _POLICY_ID = {"translate_gtx" : "google_gtx_v1", "expand_gemini" : "expand_v1"}
-_NEEDS_KEY = {"raw_vi" : False, "translate_gtx" : False, "expand_gemini" : True}
+_NEEDS_KEY = {"raw_vi" : False, "translate_gtx" : False, "expand_gemini" : True, "expand_keywords" : True}
+
+# One Expand answer holds two texts: search_query (one rewritten sentence, stored as eng_query) and check_units
+# (a keyword list). expand_keywords searches the keywords joined by ", ". It reads the SAME recorded answer as
+# expand_gemini, so the two arms differ only in which part of one Gemini call they search, and it never needs a
+# call of its own.
+_SAME_ANSWER_AS = {"expand_keywords" : "expand_gemini"}
+
+
+def fetch_policy(policy : str) -> str :
+    """The policy whose recorded answer a policy reads (expand_keywords reads expand_gemini's)."""
+    return _SAME_ANSWER_AS.get(policy, policy)
 
 # Both Expand entry points in the UI wrap the text like this; see expansion._gemini_expand.
 _EXPAND_WRAPPER = "[type={task_type}]\n{text}"
@@ -109,6 +120,7 @@ def key_configured() -> bool :
 
 
 def make_key(policy : str, text : str, task_type : str = "") -> TextKey :
+    policy = fetch_policy(policy)
     if (policy not in _POLICY_ID) :
         raise ValueError(f"policy {policy} has no cache key")
     if (policy == "expand_gemini") :
@@ -168,8 +180,15 @@ def get_text(conn : sqlite3.Connection, policy : str, text : str, task_type : st
     if (hit is None) :
         raise TextCacheMiss(f"{policy}: no cached text for {normalize_text(text)[ : 60]!r} ({task_type or '-'})")
     output = hit["output"]
-    searched = output.get("eng_query") or output.get("text") or ""
-    return CachedText(searched, list(output.get("check_units") or []), hit["provider"], key.digest())
+    units = list(output.get("check_units") or [])
+    if (policy == "expand_keywords") :
+        searched = ", ".join(u.strip() for u in units if u.strip())
+        if (not searched) :
+            # Searching the sentence instead would silently turn this arm into expand_gemini.
+            raise TextCacheMiss(f"{policy}: the recorded Expand answer has no check_units for {normalize_text(text)[ : 60]!r}")
+    else :
+        searched = output.get("eng_query") or output.get("text") or ""
+    return CachedText(searched, units, hit["provider"], key.digest())
 
 
 def query_rows(conn : sqlite3.Connection, dataset_version : str) -> list[sqlite3.Row] :
@@ -205,11 +224,11 @@ def needed_texts(conn : sqlite3.Connection, config, dataset_versions : list[str]
                 events = json.loads(row["trake_events_json"] or "[]")
                 for event in events :
                     needed.append(NeededText(
-                        config.text_policy, version, f"{row['query_key']}/{event['event_id']}",
+                        fetch_policy(config.text_policy), version, f"{row['query_key']}/{event['event_id']}",
                         event["description_vi"], row["task_type"],
                     ))
             else :
-                needed.append(NeededText(config.text_policy, version, row["query_key"], row["query_vi"], row["task_type"]))
+                needed.append(NeededText(fetch_policy(config.text_policy), version, row["query_key"], row["query_vi"], row["task_type"]))
     return needed
 
 

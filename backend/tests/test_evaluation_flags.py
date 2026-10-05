@@ -25,22 +25,22 @@ def test_every_vfr_video_id_uses_the_hyphen_spelling_of_the_n_batch() :
 
 
 def test_n_reference_videos_of_the_seeds_have_the_same_spelling_as_the_flag_file() :
-    """If a final-v1 N reference video were listed in the flag file it would fire; the spelling cannot hide it."""
+    """If a final-v2 N reference video were listed in the flag file it would fire; the spelling cannot hide it."""
     by_video, _ = _load()
-    for dataset in ("round1-v3", "round2-v2", "round3-v2", "final-v1") :
+    for dataset in ("round1-v3", "round2-v2", "round3-v2", "final-v2") :
         for key, video in _reference_videos(dataset).items() :
             if (video.startswith("N")) :
                 assert N_ID.match(video), (dataset, key, video)
     listed = sorted(by_video["vfr_times"])[0]
-    assert flags_for("final-v1", "any-key", listed) == ["vfr_times"]
-    assert flags_for("final-v1", "any-key", listed.replace("-", "_")) == []   # an underscore spelling would not match
+    assert flags_for("final-v2", "any-key", listed) == ["vfr_times"]
+    assert flags_for("final-v2", "any-key", listed.replace("-", "_")) == []   # an underscore spelling would not match
 
 
 def test_flags_carried_by_the_seeds_today() :
-    """Pins the counts the docs state: no vfr_times query in any dataset, one whole_video_interval query in final-v1."""
+    """Pins the counts the docs state: no vfr_times query in any dataset, one whole_video_interval query in the final (final-v2)."""
     fired = {}
-    for dataset in ("round1-v3", "round2-v2", "round3-v2", "final-v1") :
+    for dataset in ("round1-v3", "round2-v2", "round3-v2", "final-v2") :
         for key, video in _reference_videos(dataset).items() :
             for flag in flags_for(dataset, key, video) :
                 fired.setdefault((dataset, flag), []).append(key)
-    assert fired == {("final-v1", "whole_video_interval") : ["f2-qa-03"]}
+    assert fired == {("final-v2", "whole_video_interval") : ["f2-qa-03"]}

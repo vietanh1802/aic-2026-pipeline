@@ -16,6 +16,8 @@ does not load torch or faiss.
 rerank_mode
   per_model     the shipped pipeline: search -> rerank each model -> fuse
   off           search -> fuse on the raw cosine scores (ensemble_search(use_rerank = False))
+  variant       search -> rerank each model with rerank_variants.rerank(variant) -> fuse. The variant
+                "shipped/sum/own none" equals per_model; the others are the development grid.
   after_fusion  the order before commit d09cf9b (2026-08-05): fuse the raw per-model lists first,
                 then rerank the fused list with neighbour scores. RE-CREATED, not recovered: git
                 history has no code for it (the commit before d09cf9b has no rerank at all), so this
@@ -50,6 +52,7 @@ def _pp() :
 
 def clear_memo() -> None :
     _MEMO.clear()
+    _VARIANT_MEMO.clear()
 
 
 def _text_hash(text : str) -> str :
@@ -147,12 +150,48 @@ def _after_fusion(text : str, models : list[str], top_k : int, top_m : int, timi
     return merged
 
 
+_VARIANT_MEMO : dict[tuple[str, str, int, str], tuple[list[dict], float]] = {}
+
+
+def _variant(text : str, models : list[str], top_k : int, top_m : int, variant, timing : dict[str, Any]) -> list[dict] :
+    """Per-model search from the shared memo, then the variant rerank of a COPY of the raw list (the memo's
+    lists stay untouched for the other arms), then the production merge."""
+    from app.evaluation import rerank_variants
+
+    if (variant is None) :
+        raise ValueError("rerank_mode variant needs a variant")
+    pp = _pp()
+    label = rerank_variants.variant_key(variant)
+    timing["variant"] = label
+    timing["models"] = {}
+    per_model : dict[str, list[dict]] = {}
+    for model in models :
+        entry, reused = _entry(text, model, top_m)
+        key = (_text_hash(text), model, top_m, label)
+        cached = _VARIANT_MEMO.get(key)
+        if (cached is None) :
+            started = time.perf_counter()
+            hits = rerank_variants.rerank(copy.deepcopy(entry["raw"]), text, model, variant) if entry["raw"] else []
+            cached = (hits, (time.perf_counter() - started) * 1000.0)
+            if (len(_VARIANT_MEMO) >= _MEMO_LIMIT) :
+                _VARIANT_MEMO.pop(next(iter(_VARIANT_MEMO)))
+            _VARIANT_MEMO[key] = cached
+        timing["models"][model] = {"search_ms" : entry["search_ms"], "rerank_ms" : cached[1], "reused" : reused}
+        if (cached[0]) :
+            per_model[model] = copy.deepcopy(cached[0])
+    started = time.perf_counter()
+    rows = pp._merge_ensemble(per_model, top_k)
+    timing["fuse_ms"] = (time.perf_counter() - started) * 1000.0
+    return rows
+
+
 def search(
     text : str,
     models : list[str],
     top_k : int = 100,
     top_m : int = 50,
     rerank_mode : str = "per_model",
+    variant = None,
 ) -> list[dict] :
     """Same rows as preprocess.ensemble_search(text, top_k, top_m, use_rerank, models) for
     per_model and off; the after_fusion order for after_fusion."""
@@ -164,6 +203,11 @@ def search(
 
     if (rerank_mode == "after_fusion") :
         rows = _after_fusion(text, ordered, top_k, top_m, timing)
+        _LAST.clear()
+        _LAST.update(timing)
+        return rows
+    if (rerank_mode == "variant") :
+        rows = _variant(text, ordered, top_k, top_m, variant, timing)
         _LAST.clear()
         _LAST.update(timing)
         return rows

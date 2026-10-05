@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SEEDS_DIR = REPO_ROOT / "backend" / "app" / "evaluation" / "seeds"
-SEED_FILES = ("round1-v3.json", "round2-v2.json", "round3-v2.json", "final-v1.json")
+SEED_FILES = ("round1-v3.json", "round2-v2.json", "round3-v2.json", "final-v2.json")
 
 if hasattr(sys.stdout, "reconfigure") :
     sys.stdout.reconfigure(encoding = "utf-8")

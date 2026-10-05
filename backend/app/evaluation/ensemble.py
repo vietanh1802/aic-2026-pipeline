@@ -135,8 +135,10 @@ def evaluate_with_config(
         search_fn = shared_search.search
 
     retrieval_started = time.monotonic()
+    # Passed only when set, so search stubs written before rerank variants keep working.
+    variant = {"variant" : config.rerank_variant} if config.rerank_variant is not None else {}
     frame_results = search_fn(
-        query_text, list(config.models), config.top_k, config.top_m, config.rerank_mode
+        query_text, list(config.models), config.top_k, config.top_m, config.rerank_mode, **variant
     )
     retrieval_ms = (time.monotonic() - retrieval_started) * 1000.0
     # Per-model search and rerank times as first measured (a reused memo entry reports its original

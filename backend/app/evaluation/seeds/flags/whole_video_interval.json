@@ -5,6 +5,10 @@
   {
    "dataset": "final-v1",
    "query_key": "f2-qa-03"
+  },
+  {
+   "dataset": "final-v2",
+   "query_key": "f2-qa-03"
   }
  ]
 }

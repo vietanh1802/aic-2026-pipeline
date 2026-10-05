@@ -248,6 +248,39 @@ rm -rf /opt/aic/ablation /tmp/ablation-out-$SHA.tgz
 The suite never calls an LLM per query: the text of every arm is recorded once (`evaluation_text_cache`) and replayed.
 A text that cannot be fetched stops the suite before any run is created.
 
+### From 2026-10-05: Benchmark B is `final-v2`, presets `core3`, `rerank_diag`, `final_table`
+
+`DEFAULT_DATASETS` now ends with `final-v2` (KIS and QA cut to the question plus the first two pieces of information).
+Never mix `final-v1` and `final-v2` numbers in one table.
+
+Expand returns two texts in one Gemini answer: the rewritten sentence (`search_query`, policy `expand_gemini`) and the
+keyword list (`check_units`, policy `expand_keywords`, joined by ", "). `expand_keywords` reads the same recorded answer,
+so it needs no extra call; prefetching `expand_gemini` covers it.
+
+`core3` (39 configurations, A and B) = `core2` plus:
+
+| Code | Configuration |
+|---|---|
+| C16 to C22 | plain translation, rerank off, the seven encoder sets (beit3, clip, siglip2, the three pairs, all three) |
+| C23 to C29 | Expand keywords, rerank off, the seven encoder sets |
+| C30 | all three, Expand keywords, rerank on |
+| T01g, T01k | TRAKE-N on plain translation, on Expand keywords |
+| T02b, T02g, T02k | TRAKE queries, whole-description ensemble, rerank off: Expand sentence, plain translation, Expand keywords |
+
+`rerank_diag` (24 configurations, **Benchmark A only**: `--datasets round1-v3,round2-v2,round3-v2`): the grid R01 to R12
+of `HANDOVER/rerank_selection_rule.md` on each Expand output (suffix S sentence, K keywords). Rerank variants run through
+`rerank_mode = "variant"` (`backend/app/evaluation/rerank_variants.py`); the shipped parameters reproduce
+`ensemble_search` (one more line in the equivalence gate, now 18 lines). Then on the PC:
+
+```bash
+python scripts/select_rerank_variant.py --run-dir <rerank_diag folder>   # refuses a folder with any B row
+git add backend/app/evaluation/frozen_selection.json && git commit -m "Freeze the rerank and text selection"
+```
+
+`final_table` (A and B, run once after the freeze) reads `frozen_selection.json`: F01 full system, F02 without rerank (left
+out when the frozen setting is rerank off), F03 plain translation, F04 to F06 one encoder removed, F07 the other Expand
+output.
+
 ## Reading the results
 
 - `results_long.csv`: one row per configuration x benchmark (A = rounds 1 to 3 pooled, B = final-v1, and each round) x

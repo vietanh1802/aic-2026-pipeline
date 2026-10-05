@@ -33,7 +33,7 @@ class Result :
     config_name : str
     run_id : int
     dataset : str
-    bench : str                # "A" (rounds 1 to 3) or "B" (final-v1)
+    bench : str                # "A" (rounds 1 to 3) or "B" (final-v2; final-v1 in runs before 2026-10-05)
     key : str
     task : str
     ref_video : str

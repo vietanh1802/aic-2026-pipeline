@@ -21,8 +21,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 ModelName = Literal["beit3", "clip", "siglip2"]
-TextPolicy = Literal["raw_vi", "translate_gtx", "expand_gemini"]
-RerankMode = Literal["per_model", "after_fusion", "off"]
+TextPolicy = Literal["raw_vi", "translate_gtx", "expand_gemini", "expand_keywords"]
+RerankMode = Literal["per_model", "after_fusion", "off", "variant"]
 
 # Canonical order = MODEL_NAMES in preprocess.py = the order the UI sends. _merge_ensemble breaks
 # score ties by insertion order, so the order of `models` is part of the result.
@@ -48,6 +48,15 @@ class TextFilterConfig(BaseModel) :
     what_if  : Literal["inject_exact_top10"] | None = None     # not shipped, labelled in outputs
 
 
+class RerankVariant(BaseModel) :
+    """A parameterised per-model rerank (rerank_mode "variant"), see rerank_variants.py. The shipped rerank is
+    neighbourhood "shipped", aggregate "sum", own_weight None."""
+    neighbourhood : Literal["shipped", "stored_style", "same_shot", "time_window"] = "shipped"
+    window_s      : float = Field(2.0, gt = 0, le = 60)
+    aggregate     : Literal["sum", "mean"] = "sum"
+    own_weight    : float | None = Field(None, ge = 0)
+
+
 class QuerySubset(BaseModel) :
     task_types    : list[Literal["KIS", "QA", "TRAKE"]] | None = None
     exclude_flags : list[str] = []
@@ -60,6 +69,8 @@ class RunConfig(BaseModel) :
     name        : str = "baseline"
     models      : list[ModelName] = list(CANONICAL_MODELS)
     rerank_mode : RerankMode = "per_model"
+    # Only with rerank_mode "variant". Left out of the hash when None, so every older config keeps its hash.
+    rerank_variant : RerankVariant | None = None
     top_k       : int = Field(100, ge = 1, le = 500)
     top_m       : int = Field(50, ge = 1, le = 200)
     text_policy : TextPolicy = "translate_gtx"
@@ -88,6 +99,8 @@ class RunConfig(BaseModel) :
             if (self.models != list(CANONICAL_MODELS) or self.rerank_mode != "per_model") :
                 raise ValueError("trake_n requires all three models and rerank_mode per_model")
             self.subset.task_types = ["TRAKE"]
+        if ((self.rerank_mode == "variant") != (self.rerank_variant is not None)) :
+            raise ValueError("rerank_variant is required with rerank_mode variant and only with it")
         if (self.text_filter.what_if and not self.text_filter.sources) :
             raise ValueError("what_if requires text_filter.sources")
         return self
@@ -98,13 +111,20 @@ class RunConfig(BaseModel) :
         return self.rerank_mode != "off"
 
 
+def _dump(config : RunConfig) -> dict[str, Any] :
+    payload = config.model_dump()
+    if (payload.get("rerank_variant") is None) :
+        payload.pop("rerank_variant", None)    # configs from before the field existed keep their hash
+    return payload
+
+
 def canonical_json(config : RunConfig) -> str :
-    return json.dumps(config.model_dump(), sort_keys = True, separators = (",", ":"), ensure_ascii = False)
+    return json.dumps(_dump(config), sort_keys = True, separators = (",", ":"), ensure_ascii = False)
 
 
 def config_hash(config : RunConfig) -> str :
     # The display name is not part of what was measured.
-    payload = config.model_dump()
+    payload = _dump(config)
     payload.pop("name", None)
     canonical = json.dumps(payload, sort_keys = True, separators = (",", ":"), ensure_ascii = False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

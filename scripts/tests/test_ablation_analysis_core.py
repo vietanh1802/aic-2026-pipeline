@@ -138,7 +138,7 @@ def tiny_run_folder(folder : Path, synthetic : bool) -> None :
             frame_results_json TEXT, ranked_videos_json TEXT, extra_json TEXT, error TEXT);
     """)
     config = {"config" : {"name" : "C01 baseline", "models" : ["beit3", "clip", "siglip2"], "rerank_mode" : "per_model", "text_policy" : "translate_gtx", "task_mode" : "ensemble"}, "config_name" : "C01 baseline"}
-    for i, (slug, version) in enumerate((("round1", "round1-v3"), ("final", "final-v1")), start = 1) :
+    for i, (slug, version) in enumerate((("round1", "round1-v3"), ("final", "final-v2")), start = 1) :
         conn.execute("INSERT INTO evaluation_datasets VALUES (?, ?, ?)", (i, slug, version))
         conn.execute("INSERT INTO evaluation_runs VALUES (?, ?, ?, ?, ?, 'completed')", (i, i, i, json.dumps(config), json.dumps({"device" : "cpu"})))
         for j, rank in enumerate((1, 3, None)) :

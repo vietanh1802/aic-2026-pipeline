@@ -119,7 +119,8 @@ def main() -> int :
         if (out.exists()) :
             text_cache.import_jsonl(conn, out.read_text(encoding = "utf-8"))
 
-        configs = [c for c in preset_configs(args.preset) if c.text_policy == args.policy]
+        # expand_keywords arms read the expand_gemini answer, so fetching expand_gemini covers them too.
+        configs = [c for c in preset_configs(args.preset) if text_cache.fetch_policy(c.text_policy) == args.policy]
         skipped = len(preset_configs(args.preset)) - len(configs)
         # The TRAKE-N configuration is what asks for per-event texts.
         configs.append(RunConfig(name = "trake events", text_policy = args.policy, task_mode = "trake_n"))

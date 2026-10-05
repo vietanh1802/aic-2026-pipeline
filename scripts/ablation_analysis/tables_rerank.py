@@ -23,7 +23,6 @@ Needs the features folder written by scripts/dump_corpus_features.py (column sha
 """
 from __future__ import annotations
 
-from typing import Any
 
 from ablation_analysis import metrics as M
 from ablation_analysis.context import Ctx

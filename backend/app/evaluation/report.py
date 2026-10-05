@@ -6,7 +6,7 @@ fixture and does not need a database. Metrics come from scoring._video_metrics, 
 Benchmark page uses, so a number here is the number the page shows for the same rows.
 
 Slices
-  benchmark   A = rounds 1 to 3 pooled (team self-labels), B = final-v1, plus each round alone
+  benchmark   A = rounds 1 to 3 pooled (team self-labels), B = the final (final-v2 from 2026-10-05, final-v1 before), plus each round alone
   task type   KIS, QA, TRAKE
   prefix      first letter of the reference video: L, M, N, S
   flags       all queries, or without the queries that carry a label flag (the automatic flags and

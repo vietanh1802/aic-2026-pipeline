@@ -9,10 +9,10 @@ from app.evaluation.seed import SEEDS_DIR, import_all_seeds, import_seed
 ROUND1 = SEEDS_DIR / "round1-v2.json"
 ROUND2 = SEEDS_DIR / "round2-v1.json"
 ROUND3 = SEEDS_DIR / "round3-v1.json"
-FINAL = SEEDS_DIR / "final-v1.json"
+FINAL = SEEDS_DIR / "final-v2.json"
 
 # 24 + 29 + 33 + 28, the current (highest-version) seed per round: round1-v3,
-# round2-v2, round3-v2, final-v1 -- see import_all_seeds()'s _discover_current_seed_files().
+# round2-v2, round3-v2, final-v2 -- see import_all_seeds()'s _discover_current_seed_files().
 TOTAL_QUERIES = 114
 
 
@@ -30,7 +30,7 @@ def test_seed_files_are_present() :
 def test_import_all_seeds_registers_every_round(conn) :
     results = import_all_seeds(conn)
     versions = {result["dataset_version"] for result in results}
-    assert versions == {"round1-v3", "round2-v2", "round3-v2", "final-v1"}
+    assert versions == {"round1-v3", "round2-v2", "round3-v2", "final-v2"}
 
     assert _count(conn, "evaluation_datasets") == 4
     assert _count(conn, "evaluation_queries") == TOTAL_QUERIES
@@ -67,9 +67,9 @@ def test_task_counts_match_the_declared_breakdown(conn) :
     assert counts[("round3-v2", "KIS")] == 25
     assert counts[("round3-v2", "QA")] == 6
     assert counts[("round3-v2", "TRAKE")] == 2
-    assert counts[("final-v1", "KIS")] == 14
-    assert counts[("final-v1", "QA")] == 11
-    assert counts[("final-v1", "TRAKE")] == 3
+    assert counts[("final-v2", "KIS")] == 14
+    assert counts[("final-v2", "QA")] == 11
+    assert counts[("final-v2", "TRAKE")] == 3
 
 
 # Round 3 keeps the original question numbers as ordinals, so 34 is simply

@@ -9,7 +9,8 @@ for every one of the 7 model subsets with rerank per_model and off. Frame order 
 A fourth check covers the re-created after_fusion order: with a single model there is nothing to
 fuse, so after_fusion must equal per_model for each of the 3 models. That cannot prove the
 multi-model after_fusion variant is right (no reference exists), but it does prove its candidate
-pool and second rerank pass are wired to the real encoders and indexes. Total: 14 + 3 = 17 lines.
+pool and second rerank pass are wired to the real encoders and indexes. Plus one line: the evaluation-side
+rerank (rerank_variants) with the shipped parameters equals ensemble_search with rerank on. Total: 14 + 3 + 1 = 18 lines.
 
 The suite script runs this before a full run and refuses to continue on a failure.
 """
@@ -92,4 +93,20 @@ def verify_shared_search(
                 break
         say(f"{'FAIL' if problem else 'PASS'} {label} ({len(queries)} queries){': ' + problem if problem else ''}")
         results.append({"subset" : [model], "mode" : "after_fusion==per_model", "ok" : problem is None, "detail" : problem})
+
+    # The evaluation-side rerank (rerank_variants) with the shipped parameters must reproduce the live search,
+    # so every other variant differs from production only in the parameter it changes.
+    from app.evaluation.config import RerankVariant
+
+    subset = list(CANONICAL_MODELS)
+    problem = None
+    for number, text in enumerate(queries, start = 1) :
+        expected = preprocess.ensemble_search(text, top_k = top_k, top_m = top_m, use_rerank = True, models = subset)
+        actual = shared_search.search(text, subset, top_k, top_m, "variant", RerankVariant())
+        problem = first_difference(expected, actual)
+        if (problem) :
+            problem = f"query {number}: {problem}"
+            break
+    say(f"{'FAIL' if problem else 'PASS'} shipped rerank variant == ensemble_search ({len(queries)} queries){': ' + problem if problem else ''}")
+    results.append({"subset" : subset, "mode" : "variant(shipped)", "ok" : problem is None, "detail" : problem})
     return {"ok" : all(r["ok"] for r in results), "queries" : len(queries), "results" : results}

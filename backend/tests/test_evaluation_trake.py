@@ -154,7 +154,7 @@ def test_trake_n_run_goes_through_process_run_and_the_report(conn, monkeypatch) 
 
 
 @pytest.mark.parametrize("dataset, reference_set", [
-    ("round1-v3", "r1-manual-v3"), ("round2-v2", "r2-manual-v2"), ("round3-v2", "r3-manual-v2"), ("final-v1", "final-appeal-v1"),
+    ("round1-v3", "r1-manual-v3"), ("round2-v2", "r2-manual-v2"), ("round3-v2", "r3-manual-v2"), ("final-v2", "final-appeal-v2"),
 ])
 def test_trake_n_completes_on_every_seed_with_exact_chains(conn, monkeypatch, dataset, reference_set) :
     """Smoke over the real seeds: whatever shape a seed's TRAKE events have (3 or 4 events, S and L
